@@ -273,18 +273,37 @@ class Scanner(
         val seen = scanChat(chat, full = true) ?: return false
         val client = td ?: return false
         val missing = mutableListOf<Song>()
-        for (s in repo.songsInChat(chat.id)) {
-            if (s.message_id in seen || s.remote_id == ACCOUNT_REMOTE) continue
-            // The read can come back empty for a post that exists, so each one is asked for by itself. Only
-            // Telegram saying it is gone removes the song.
-            try {
-                val m = client.call(request("getMessage") { put("chat_id", s.chat_id); put("message_id", s.message_id) })
-                val song = songFromMessage(m)
-                if (song == null) missing += s else repo.upsertBotSong(song)
-            } catch (e: TdError) {
-                if (e.code == 404 || e.message.contains("not found", ignoreCase = true)) missing += s
-                else return false
+        val unseen = repo.songsInChat(chat.id).filter { it.message_id !in seen && it.remote_id != ACCOUNT_REMOTE && botOwnerOf(it.remote_id) == null }
+        val gen = stopGen
+        try {
+            // First in batches of 100 (one call each); only songs a batch returned nothing for are asked about one by one.
+            val doubtful = mutableListOf<Song>()
+            val chunks = unseen.chunked(WALK_BATCH)
+            for ((c, chunk) in chunks.withIndex()) {
+                if (stopGen != gen) return false
+                _progress.value = ScanProgress("${tag()}Checking saved songs in ${chat.title}: ${minOf((c + 1) * WALK_BATCH, unseen.size)} of ${unseen.size}", (c + 1).toDouble() / chunks.size)
+                if (c > 0) delay(effectiveMinPause())
+                val page = retrying { client.call(request("getMessages") { put("chat_id", chat.id); put("message_ids", JsonArray(chunk.map { JsonPrimitive(it.message_id) })) }) }
+                val byId = (page["messages"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>().mapNotNull { m -> songFromMessage(m)?.let { it.message_id to it } }.toMap()
+                for (s in chunk) byId[s.message_id]?.let { repo.upsertBotSong(it) } ?: run { doubtful += s }
             }
+            for ((i, s) in doubtful.withIndex()) {
+                if (stopGen != gen) return false
+                _progress.value = ScanProgress("${tag()}Checking ${doubtful.size} songs one by one in ${chat.title}: ${i + 1} of ${doubtful.size}", (i + 1).toDouble() / doubtful.size)
+                delay(effectiveMinPause())
+                // The read can come back empty for a post that exists, so each one is asked for by itself. Only
+                // Telegram saying it is gone removes the song.
+                try {
+                    val m = retrying { client.call(request("getMessage") { put("chat_id", s.chat_id); put("message_id", s.message_id) }) }
+                    val song = songFromMessage(m)
+                    if (song == null) missing += s else repo.upsertBotSong(song)
+                } catch (e: TdError) {
+                    if (e.code == 404 || e.message.contains("not found", ignoreCase = true)) missing += s
+                    else return false
+                }
+            }
+        } finally {
+            _progress.value = null
         }
         if (prune) for (s in missing) repo.removePost(s.chat_id, s.message_id)
         else _gone.value = _gone.value.filter { it.chat_id != chat.id } + missing
