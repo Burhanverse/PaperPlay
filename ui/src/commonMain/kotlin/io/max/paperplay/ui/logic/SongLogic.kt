@@ -12,13 +12,16 @@ fun SongUi.searchScore(words: List<String>): Int {
     if (words.isEmpty()) return 1
     val t = searchWords(title); val a = searchWords(artist); val al = searchWords(album)
     val g = searchWords(genre ?: ""); val y = year?.toString()
+    // "japanese songs" or "lang:hindi": the filler words are dropped as long as another word is left to search for.
+    val core = words.filter { it !in io.max.paperplay.core.metadata.languageFiller }.ifEmpty { words }
     var total = 0
-    for (w in words) {
+    for (w in core) {
         total += when {
             t.any { it.startsWith(w) } -> 40
             a.any { it.startsWith(w) } -> 30
             al.any { it.startsWith(w) } -> 20
             g.any { it.startsWith(w) } || y == w -> 10
+            io.max.paperplay.core.metadata.languageMatches(w, languages) -> 15
             else -> return 0
         }
     }

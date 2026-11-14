@@ -20,6 +20,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -130,6 +132,24 @@ class Scanner(
     private var listener: Job? = null
     private var pause = minPause
     private val caughtUp = MutableStateFlow<Set<Long>>(emptySet())
+    /** Who is reading, shown in front of the progress during a full scan ("Bot 1", "Bot 2", "Your account"). Null for the normal background scan. */
+    @Volatile var reader: String? = null
+    private fun tag() = reader?.let { "$it: " } ?: ""
+
+    private var mainName: String? = null
+
+    /** The main bot's name as Telegram gives it (its display name, else @username), for the scan label. Asked once. */
+    suspend fun mainBotName(): String {
+        mainName?.let { return it }
+        val me = runCatching { td?.call(request("getMe")) }.getOrNull()
+        val name = me?.get("first_name")?.jsonPrimitive?.contentOrNull?.trim()?.ifEmpty { null }
+            ?: me?.get("usernames")?.jsonObject?.get("active_usernames")?.jsonArray?.firstOrNull()?.jsonPrimitive?.contentOrNull?.let { "@$it" }
+        return (name ?: "Main bot").also { if (name != null) mainName = it }
+    }
+
+    /** Shows [text] as the scan progress until the next update; null clears it. For readers that are not this scanner, such as the account. */
+    fun announce(text: String?) { _progress.value = text?.let { ScanProgress(it, null) } }
+
     private val _progress = MutableStateFlow<ScanProgress?>(null)
     private val _error = MutableStateFlow<String?>(null)
 
@@ -282,12 +302,12 @@ class Scanner(
     private fun lanes(): Int {
         val most = parallelBatches.coerceIn(1, 6)
         if (calm) return 1
-        val rpm = repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L) ?: return most
+        val rpm = readingRpm() ?: return most
         return (rpm / 30).toInt().coerceIn(1, most)
     }
 
     private fun effectiveMinPause(): Duration {
-        val rpm = repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L)
+        val rpm = readingRpm()
         // The pause is per round of requests, so it grows with the lanes and the total stays at the chosen speed.
         val base = if (rpm != null) (60_000L * lanes() / rpm).milliseconds else minPause
         // After a flood wait the rest of this scan goes one batch at a time with a longer pause.
@@ -317,6 +337,7 @@ class Scanner(
         if (pause < initialFloor) pause = initialFloor
         var chatTitle = chat.title
         _error.value = null
+        var ticker: kotlinx.coroutines.Job? = null
         try {
             val meta = introduceChat(client, chat.id)
             if (meta.title != null && meta.title != chatTitle) {
@@ -329,6 +350,23 @@ class Scanner(
             var lastWrite = clockMark.markNow() - 10.seconds
             var lastChatCheck = clockMark.markNow()
             var lastShown = lastWrite
+            // The numbers shown count up smoothly: pages arrive in bursts of 100 ids, so between pages the count is
+            // estimated from the speed measured so far and never runs more than the pages asked for ahead.
+            var shownDone = 0L
+            var shownAt = clockMark.markNow()
+            var shownRate = 0.0
+            var shownCounts = ""
+            var shownLive = false
+            ticker = scope.launch {
+                while (true) {
+                    delay(250)
+                    if (!shownLive || knownEnd <= 0) continue
+                    if (_progress.value?.text?.contains("Syncing") != true) continue
+                    val est = (shownDone + (shownRate * shownAt.elapsedNow().inWholeMilliseconds / 1000.0).toLong())
+                        .coerceIn(shownDone, minOf(shownDone + WALK_BATCH * lanes(), knownEnd / MESSAGE_ID_STEP))
+                    _progress.value = ScanProgress("${tag()}Syncing $chatTitle: $est of ${knownEnd / MESSAGE_ID_STEP} messages, $shownCounts", est.toDouble() * MESSAGE_ID_STEP / knownEnd)
+                }
+            }
             while (true) {
                 if (stopGen != gen) {
                     if (!full && persist) repo.setScan(chat.id, newest, chat.walk_done)
@@ -394,12 +432,23 @@ class Scanner(
                 }
                 next += WALK_BATCH * MESSAGE_ID_STEP
                 val share = if ((full || !chat.walk_done) && knownEnd > 0 && next <= knownEnd) next.toDouble() / knownEnd else null
+                shownCounts = "${seen.size} songs read, $added new"
+                shownLive = share != null
+                run {
+                    val done = minOf(next, knownEnd) / MESSAGE_ID_STEP
+                    val dt = shownAt.elapsedNow().inWholeMilliseconds / 1000.0
+                    if (dt >= 1.0 && done >= shownDone) {
+                        val inst = (done - shownDone) / dt
+                        shownRate = if (shownRate == 0.0) inst else shownRate * 0.6 + inst * 0.4
+                        shownDone = done; shownAt = clockMark.markNow()
+                    } else if (shownDone == 0L) { shownDone = done; shownAt = clockMark.markNow() }
+                }
                 if (lastShown.elapsedNow() >= 1.seconds || _progress.value == null) {
                     lastShown = clockMark.markNow()
                     val counts = "${seen.size} songs read, $added new"
                     _progress.value = ScanProgress(
-                        if (share == null) "Checking $chatTitle: $counts"
-                        else "Syncing $chatTitle: ${minOf(next, knownEnd) / MESSAGE_ID_STEP} of ${knownEnd / MESSAGE_ID_STEP} messages, $counts",
+                        if (share == null) "${tag()}Checking $chatTitle: $counts"
+                        else "${tag()}Syncing $chatTitle: ${minOf(next, knownEnd) / MESSAGE_ID_STEP} of ${knownEnd / MESSAGE_ID_STEP} messages, $counts",
                         share,
                     )
                 }
@@ -415,6 +464,7 @@ class Scanner(
             _error.value = "$chatTitle: scan failed, ${e.message}"
             return null
         } finally {
+            ticker?.cancel()
             _progress.value = null
         }
     }
@@ -459,14 +509,49 @@ class Scanner(
         }
     }
 
+    // Auto speed: starts at the chosen speed (or the last one that worked), creeps up while Telegram keeps answering, and drops
+    // after a flood wait. The speed of the flood is remembered as a ceiling, so the climb stays below it.
+    private var autoRpm = 0L
+    private var autoCeiling = 0L
+    private var autoOk = 0
+
+    private fun autoOn() = repo.pref("reading_auto") == "true"
+
+    /** Requests a minute for reading, or null for the built-in default: the chosen speed, or the self-adjusting one when that is on. */
+    private fun readingRpm(): Long? {
+        if (!autoOn()) return repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L)
+        if (autoRpm == 0L) autoRpm = (repo.pref("reading_auto_rpm") ?: repo.pref("rate_reading"))?.toLongOrNull()?.coerceIn(10L, 1200L) ?: 30L
+        return autoRpm
+    }
+
+    private fun speedUp() {
+        if (!autoOn() || calm || autoRpm == 0L) return
+        if (++autoOk < 8) return
+        autoOk = 0
+        val cap = if (autoCeiling > 0) autoCeiling * 85 / 100 else 1200L
+        val next = minOf(1200L, cap, autoRpm + maxOf(4L, autoRpm / 8))
+        if (next > autoRpm) { autoRpm = next; repo.setPref("reading_auto_rpm", "$autoRpm") }
+        if (autoCeiling > 0) autoCeiling = minOf(1200L, autoCeiling + autoCeiling / 20) // the limit is forgotten slowly
+    }
+
+    private fun slowDown() {
+        if (!autoOn()) return
+        val was = readingRpm() ?: return
+        autoCeiling = was
+        autoRpm = maxOf(10L, was * 6 / 10)
+        autoOk = 0
+        repo.setPref("reading_auto_rpm", "$autoRpm")
+    }
+
     /** Waits out Telegram rate limits and tries again. */
     private suspend fun retrying(call: suspend () -> JsonObject): JsonObject {
         while (true) {
             try {
-                return call()
+                return call().also { speedUp() }
             } catch (e: TdError) {
                 val wait = e.retryAfter ?: throw e
                 calm = true
+                slowDown()
                 pause = minOf(maxPause, pause * 1.5)
                 _progress.value = ScanProgress("Telegram rate limit, waiting ${wait}s", null)
                 delay(wait.seconds)

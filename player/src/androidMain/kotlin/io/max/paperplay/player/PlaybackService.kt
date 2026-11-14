@@ -79,6 +79,9 @@ class PlaybackService : MediaSessionService() {
         }
         val exo = PlaybackCore.createPlayer(this)
         exo.addListener(playerListener)
+        exo.addListener(PlaybackLogging.listener(exo))
+        exo.addAnalyticsListener(PlaybackLogging.analytics)
+        PlayLog.log("player", "service started")
         player = exo
         applyEqualizer(exo.audioSessionId)
         applyNormalize(exo.audioSessionId)

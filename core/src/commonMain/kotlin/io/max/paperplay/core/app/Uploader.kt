@@ -3,7 +3,9 @@ package io.max.paperplay.core.app
 import io.max.paperplay.core.library.newUuid
 import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdError
+import io.max.paperplay.core.telegram.audioContent
 import io.max.paperplay.core.telegram.request
+import io.max.paperplay.core.telegram.topicField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -53,8 +55,11 @@ data class UploadJob(
     val temporary: Boolean = false,
 )
 
-/** Result of [Uploader.enqueue]: queued, left out as not audio, or skipped as already in the library. */
-data class EnqueueResult(val queued: Int, val notAudio: Int, val known: Int)
+/** Songs smaller than this (2 MB) are never uploaded: they are clips, call recordings and voice notes, not music. */
+const val MIN_UPLOAD_BYTES = 2L * 1024 * 1024
+
+/** Result of [Uploader.enqueue]: queued, left out as not audio, skipped as already in the library, or left out as too small. */
+data class EnqueueResult(val queued: Int, val notAudio: Int, val known: Int, val tooSmall: Int = 0)
 
 /**
  * Sends audio files to a Telegram chat or topic as the bot, in a queue. Starts are spaced out (8-20 s, or 30-60 s
@@ -75,6 +80,9 @@ class Uploader(
     val jobs: StateFlow<List<UploadJob>> = _jobs
     private val paused = MutableStateFlow(false)
 
+    /** The queue came back from a restart and is paused only for that reason; the user has not pressed Pause. */
+    private var pausedByRestart = false
+
     init {
         // Files still waiting when the app closed come back, paused so the owner chooses when to send.
         val back = runCatching {
@@ -93,7 +101,7 @@ class Uploader(
         }.getOrDefault(emptyList())
         if (back.isNotEmpty()) {
             _jobs.value = back
-            if (back.any { it.status == UploadStatus.Queued }) paused.value = true
+            if (back.any { it.status == UploadStatus.Queued }) { paused.value = true; pausedByRestart = true }
         }
         scope.launch {
             _jobs.map { l -> l.filter { it.status != UploadStatus.Done }.map { it.copy(progress = 0f, status = if (it.status == UploadStatus.Failed) it.status else UploadStatus.Queued) } }
@@ -114,12 +122,13 @@ class Uploader(
     val isPaused: StateFlow<Boolean> = paused
     private var running = false
     private val gate = Mutex()
-    private var lastStart = 0L
+    private var uploaded = 0
 
     /** When a failed job may be tried again (Telegram's flood wait or a pause between attempts); workers skip it until then. */
     private val retryAt = MutableStateFlow<Map<String, Long>>(emptyMap())
 
     fun setPaused(on: Boolean) {
+        pausedByRestart = false
         paused.value = on
         if (!on) pump()
     }
@@ -127,19 +136,31 @@ class Uploader(
     fun enqueue(
         paths: List<String>, chatId: Long, chatTitle: String, topicId: Long? = null, topicName: String? = null, temporary: Boolean = false,
     ): EnqueueResult {
-        val known = if (pref("upload_skip_known") != "false") knownSongs() else emptySet()
+        val skipKnown = pref("upload_skip_known") != "false"
+        val known = if (skipKnown) knownSongs() else emptySet()
+        val sentBefore = if (skipKnown) sentFiles().keys else emptySet()
         var notAudio = 0
         var skipped = 0
+        var tooSmall = 0
         val fresh = mutableListOf<UploadJob>()
         for (p in paths.distinct()) {
             val name = p.substringAfterLast('/').substringAfterLast('\\')
             val size = fileLength(p)
+            appLog("enqueue", "$name size=$size temporary=$temporary path=$p")
             if (size <= 0 || name.substringAfterLast('.', "").lowercase() !in audioExtensions) {
                 notAudio++
                 if (temporary) deleteFile(p)
                 continue
             }
-            if ((name to size) in known) {
+            if (size < MIN_UPLOAD_BYTES) {
+                tooSmall++
+                if (temporary) deleteFile(p)
+                continue
+            }
+            // Known to the library, sent by this app before (the library only learns of a song after a scan), or already in the queue.
+            val key = sentKey(name, size)
+            val queuedAlready = skipKnown && _jobs.value.any { sentKey(it.name, it.size) == key && it.chatId == chatId && it.status != UploadStatus.Failed } || key in fresh.map { sentKey(it.name, it.size) }
+            if ((name to size) in known || key in sentBefore || queuedAlready) {
                 skipped++
                 if (temporary) deleteFile(p)
                 continue
@@ -149,8 +170,26 @@ class Uploader(
             fresh += UploadJob(newUuid(), p, name, size, chatId, chatTitle, topicId, topicName, temporary = temporary)
         }
         _jobs.update { it + fresh }
+        // Choosing songs to upload is asking for them to go: it lifts the pause a restart put on the saved queue (a Pause the user pressed stays).
+        if (fresh.isNotEmpty() && pausedByRestart) { pausedByRestart = false; paused.value = false }
         pump()
-        return EnqueueResult(fresh.size, notAudio, skipped)
+        return EnqueueResult(fresh.size, notAudio, skipped, tooSmall)
+    }
+
+    /** Name and size in lower case, how a file is told apart from the same file sent again (same as the Flutter app). */
+    private fun sentKey(name: String, size: Long) = "${name.lowercase()}|$size"
+
+    private var sent: MutableMap<String, Long>? = null
+
+    /** Files this app has sent, kept across restarts. */
+    private fun sentFiles(): MutableMap<String, Long> = sent ?: runCatching {
+        Json.parseToJsonElement(pref(SENT_PREF) ?: "{}").jsonObject.mapValues { it.value.jsonPrimitive.content.toLong() }.toMutableMap()
+    }.getOrElse { mutableMapOf() }.also { sent = it }
+
+    private fun rememberSent(job: UploadJob) {
+        val files = sentFiles()
+        files[sentKey(job.name, job.size)] = nowMs()
+        runCatching { setPref(SENT_PREF, kotlinx.serialization.json.JsonObject(files.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }).toString()) }
     }
 
     fun retry(id: String) {
@@ -190,7 +229,7 @@ class Uploader(
         running = true
         scope.launch {
             try {
-                val parallel = (pref("upload_parallel")?.toIntOrNull() ?: 6).coerceIn(1, 3)
+                val parallel = (pref("upload_parallel")?.toIntOrNull() ?: 6).coerceIn(1, 20)
                 List(parallel) { launch { worker() } }.joinAll()
             } finally {
                 running = false
@@ -219,18 +258,21 @@ class Uploader(
                 delay(wait.coerceAtLeast(100L))
                 continue
             }
-            spaceOut()
             send(job)
+            if (_jobs.value.any { it.status == UploadStatus.Queued }) delay(pause())
         }
     }
 
-    /** Waits until enough time has passed since the last start. */
-    private suspend fun spaceOut() = gate.withLock {
-        val rate = (pref("rate_uploads")?.toIntOrNull() ?: 6).coerceAtLeast(1)
-        val base = if (pref("upload_slower") == "true") Random.nextLong(30_000, 60_000) else Random.nextLong(8_000, 20_000)
-        val wait = lastStart + maxOf(base, 60_000L / rate) - nowMs()
-        if (lastStart != 0L && wait > 0) delay(wait)
-        lastStart = nowMs()
+    /**
+     * How long a worker rests after a file, as in the Flutter app: the "rate_uploads" gap (6 a minute is 10 s) varied by 30%,
+     * three times longer when "upload_slower" is on, and a longer rest after every 20 songs. Each worker rests on its own, so
+     * several workers (and bots) send side by side.
+     */
+    private fun pause(): Long {
+        val rate = (pref("rate_uploads")?.toIntOrNull() ?: 6).coerceIn(1, 1200)
+        val base = 60_000.0 / rate * (if (pref("upload_slower") == "true") 3 else 1)
+        val factor = if (uploaded > 0 && uploaded % 20 == 0) 4 + Random.nextDouble() * 4 else 0.7 + Random.nextDouble() * 0.6
+        return (base * factor).toLong()
     }
 
     private fun nowMs() = Clock.System.now().toEpochMilliseconds()
@@ -239,11 +281,17 @@ class Uploader(
         var botId = 0L
         try {
             val picked = pool?.pick()
+            // A copy made for an upload can vanish (the cache is cleared); Telegram would only answer "InputFile is not specified".
+            if (fileLength(job.path) <= 0) throw TdError(400, "The file is gone from this device. Remove it and add the song again.")
+            appLog("upload", "start ${job.name} size=${job.size} path=${job.path} exists=${fileLength(job.path)} chat=${job.chatId} topic=${job.topicId} attempt=${job.attempts + 1} pool=${picked?.id}")
             val c = picked?.client ?: client() ?: throw TdError(0, "The bot is not connected.")
             botId = picked?.id ?: 0L
             if (botId != 0L) runCatching { c.call(request("getChat") { put("chat_id", job.chatId) }) }
             sendOne(c, job)
             pool?.recordSent(botId)
+            appLog("upload", "done ${job.name}")
+            rememberSent(job)
+            uploaded++
             update(job.id) { it.copy(status = UploadStatus.Done, progress = 1f, error = null) }
             if (job.temporary) deleteFile(job.path)
         } catch (e: CancellationException) {
@@ -251,14 +299,17 @@ class Uploader(
         } catch (e: Throwable) {
             val attempts = job.attempts + 1
             val td = e as? TdError
+            appLog("upload", "failed ${job.name} attempt=$attempts code=${td?.code} ${e::class.simpleName}: ${e.message}")
             td?.retryAfter?.let { pool?.recordFlood(botId, it) }
-            val retryable = attempts < MAX_ATTEMPTS && (td == null || td.code == 429 || td.code == 408 || td.code == 0 || td.code >= 500)
+            // Telegram sometimes answers "InputFile is not specified" or "Internal Server Error during file upload" and accepts the same file a moment later.
+            val flaky = td?.message?.let { it.contains("InputFile is not specified") || it.contains("Internal Server Error", ignoreCase = true) } == true
+            val retryable = attempts < MAX_ATTEMPTS && (td == null || flaky || td.code == 429 || td.code == 408 || td.code == 0 || td.code >= 500)
             if (retryable) {
                 // The wait is recorded first, so no worker can pick the job up before it is over.
                 retryAt.update { it + (job.id to nowMs() + ((td?.retryAfter ?: (10 * attempts)) + 1) * 1000L) }
                 update(job.id) { it.copy(status = UploadStatus.Queued, attempts = attempts, error = e.message, progress = 0f) }
             } else {
-                update(job.id) { it.copy(status = UploadStatus.Failed, attempts = attempts, error = e.message ?: "Failed") }
+                update(job.id) { it.copy(status = UploadStatus.Failed, attempts = attempts, error = (e.message ?: "Failed") + if (td?.message?.contains("InputFile") == true) " (${job.size / 1024 / 1024} MB, name ${job.name.length} characters)" else "") }
             }
         }
     }
@@ -285,18 +336,14 @@ class Uploader(
             }
         }
         try {
+            val newApi = c.newApi()
+            val (artist, title) = parseFileName(job.name)
+            val seconds = runCatching { io.max.paperplay.core.metadata.readDurationSeconds(io.max.paperplay.core.metadata.TagSource(fileLength(job.path)) { off, n -> readRange(job.path, off, n) }) }.getOrDefault(0)
+            appLog("upload", "duration ${job.name} = $seconds s")
             val sent = c.call(request("sendMessage") {
                 put("chat_id", job.chatId)
-                if (job.topicId != null && job.topicId > 1L) {
-                    put("topic_id", buildJsonObject { put("@type", "messageTopicForum"); put("forum_topic_id", job.topicId) })
-                }
-                put("input_message_content", buildJsonObject {
-                    put("@type", "inputMessageAudio")
-                    put("audio", buildJsonObject { put("@type", "inputFileLocal"); put("path", job.path) })
-                    val (artist, title) = parseFileName(job.name)
-                    if (title.isNotEmpty()) put("title", title)
-                    if (artist.isNotEmpty()) put("performer", artist)
-                })
+                topicField(job.topicId, newApi)
+                put("input_message_content", audioContent(buildJsonObject { put("@type", "inputFileLocal"); put("path", job.path) }, newApi, title, artist, seconds))
             }, 2.minutes)
             sent.obj("content")?.obj("audio")?.obj("audio")?.long("id")?.let { fileId.complete(it) }
             sentId.complete(sent.long("id") ?: throw TdError(0, "Telegram did not accept the file."))
@@ -313,5 +360,6 @@ class Uploader(
     private companion object {
         const val MAX_ATTEMPTS = 4
         const val QUEUE_PREF = "upload_queue"
+        const val SENT_PREF = "uploaded_files"
     }
 }

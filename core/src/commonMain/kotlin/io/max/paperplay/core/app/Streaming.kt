@@ -4,6 +4,7 @@ import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdError
 import io.max.paperplay.core.telegram.request
+import io.max.paperplay.player.PlayLog
 import io.max.paperplay.player.QueueItem
 import io.max.paperplay.player.StreamSource
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,7 +51,21 @@ class TdStreamSource(
     /** TDLib file ids do not outlive a session, so the file is looked up through its message (with offline fallback). */
     private suspend fun client(): TdClient = td() ?: throw TdError(0, "Not logged in")
 
+    @Volatile private var loggedFile = false
+
     private fun applyFile(file: JsonObject) {
+        if (!loggedFile) {
+            loggedFile = true
+            val tgSize = file.long("size") ?: 0L
+            val expected = file.long("expected_size") ?: 0L
+            val l = file.obj("local")
+            PlayLog.log(
+                "file",
+                "\"${song.title}\" by ${song.artist}: stored size=${song.size} telegram size=$tgSize expected=$expected duration=${song.duration_sec}s " +
+                    "downloaded=${l?.long("downloaded_size")} prefix=${l?.long("downloaded_prefix_size")} done=${(l?.get("is_downloading_completed") as? JsonPrimitive)?.booleanOrNull} " +
+                    (if (tgSize > 0 && tgSize != song.size) "SIZE MISMATCH stored vs telegram " else "") + "msg=${song.chat_id}/${song.message_id} remote=${song.remote_id.take(12)}",
+            )
+        }
         file.long("id")?.toInt()?.let { if (it != 0) fileId = it }
         val local = file.obj("local")
         local?.str("path")?.takeIf { it.isNotEmpty() }?.let { path = it }
@@ -186,7 +201,10 @@ class TdStreamSource(
 
     private suspend fun readAt(offset: Long, length: Int): ByteArray {
         val end = minOf(song.size, offset + length)
-        if (offset < 0 || offset >= end) return ByteArray(0)
+        if (offset < 0 || offset >= end) {
+            PlayLog.log("file", "\"${song.title}\": read at $offset is past the end ($end of stored size ${song.size}), returning nothing")
+            return ByteArray(0)
+        }
         resolve()
         val want = (end - offset).toInt()
         val c = client()
@@ -217,7 +235,10 @@ class TdStreamSource(
                     if (bytes != null) return bytes
                 }
             }
-            if (progressAt.elapsedNow() > STALL) throw TdError(0, "Download stalled. Check your connection.")
+            if (progressAt.elapsedNow() > STALL) {
+                PlayLog.log("file", "\"${song.title}\": download stalled at byte $offset (prefix=$prefix, active=$active, requestedUntil=$requestedUntil)")
+                throw TdError(0, "Download stalled. Check your connection.")
+            }
             val before = progressTick
             withTimeoutOrNull(1000.milliseconds) { progress.receive() }
             if (progressTick != before) progressAt = TimeSource.Monotonic.markNow()

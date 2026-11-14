@@ -46,9 +46,11 @@ internal fun SpotifyPage(backend: CoreBackend) {
     var version by remember { mutableIntStateOf(0) }
     var reviewing by remember { mutableStateOf<Long?>(null) }
 
+    val toast = LocalListActions.current?.notice
     fun run(url: String) {
         busy = true
         message = null
+        toast?.invoke("Refreshing from Spotify...")
         scope.launch {
             message = try {
                 val r = withContext(Dispatchers.Default) { importPlaylist(store, url, backend.http, backend.services.spotify::fetchPlaylist) }
@@ -59,6 +61,7 @@ internal fun SpotifyPage(backend: CoreBackend) {
             }
             busy = false
             version++
+            message?.let { toast?.invoke(it) }
         }
     }
 

@@ -83,23 +83,29 @@ fun HomeScreen(
     name: String = "",
 ) {
     val songs = (lib.songs as? Load.Ready)?.value.orEmpty()
-    // Quick tiles: favorites, up to three playlists, then generated collections to make six.
+    // Quick tiles: favorites, every playlist, then generated collections to make at least six. Three stack in a column; swipe sideways for more.
     val tileRows = remember(favorites, lib.playlists, home.tiles, actions) {
         buildList<Pair<GroupUi, () -> Unit>> {
             if (favorites.isNotEmpty()) add(GroupUi("fav", "Favorites", coverUris = favorites.map { it.coverUri }) to { actions.play(favorites, 0) })
-            lib.playlists.take(3).forEach { g -> add(g to { onOpen(Detail.Playlist(g.id, g.name)) }) }
-            home.tiles.take(6 - size).forEach { c -> add(GroupUi(c.id, c.name, coverUris = listOf(c.coverUri)) to { onOpen(Detail.Songs(c.name, c.songs)) }) }
-        }.chunked(2)
+            lib.playlists.forEach { g -> add(g to { onOpen(Detail.Playlist(g.id, g.name)) }) }
+            home.tiles.take((6 - size).coerceAtLeast(0)).forEach { c -> add(GroupUi(c.id, c.name, coverUris = listOf(c.coverUri)) to { onOpen(Detail.Songs(c.name, c.songs)) }) }
+        }.chunked(3)
     }
+    // Until the library and the plan are ready the page shows the shape of what is coming, so it looks loaded at once.
+    val planning = songs.isNotEmpty() && home.tiles.isEmpty() && home.shelves.isEmpty()
+    val skeleton = lib.songs is Load.Loading || planning
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name) }
+        if (skeleton && tileRows.isEmpty()) item { SkeletonTiles() }
+        if (skeleton) item { SkeletonShelf() }
         if (tileRows.isNotEmpty()) item {
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                tileRows.forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        pair.forEach { (g, click) ->
+            // Each column holds three tiles; two columns fill the screen and the rest wait a swipe away.
+            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(tileRows) { column ->
+                    Column(Modifier.fillParentMaxWidth(if (tileRows.size > 2) 0.46f else 0.485f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        column.forEach { (g, click) ->
                             Row(
-                                Modifier.weight(1f).height(56.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp))
+                                Modifier.fillMaxWidth().height(56.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp))
                                     .clickable(onClick = click),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -107,7 +113,6 @@ fun HomeScreen(
                                 Text(g.name, Modifier.padding(horizontal = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
                             }
                         }
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
             }
@@ -119,6 +124,8 @@ fun HomeScreen(
                     items(home.mixes, key = { it.id }) { m -> MixCard(m) { onOpen(Detail.Mix(m.name, m.id, m.songs)) } }
                 }
             }
+        } else if (skeleton) {
+            if (songs.isNotEmpty()) item { SkeletonShelf() }
         } else if (songs.isNotEmpty()) item {
             Text("Daily mixes appear as Paper Play learns your music.", Modifier.padding(16.dp, 20.dp, 16.dp, 0.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

@@ -48,8 +48,8 @@ class AppEnv(
     val clearCrash: () -> Unit = {},
     /** Opens a multi-file audio picker; calls back with file paths and whether they are temporary copies. Null where unsupported. */
     val pickAudio: ((onPicked: (List<String>, Boolean) -> Unit) -> Unit)? = null,
-    /** Opens a folder picker and calls back with every audio file path inside it (subfolders too), never temporary. Null where unsupported. */
-    val pickAudioFolder: ((onPicked: (List<String>) -> Unit) -> Unit)? = null,
+    /** Opens a folder picker and calls back with what the folder holds: its own songs, and each subfolder's songs apart. Null where unsupported. */
+    val pickAudioFolder: ((onPicked: (io.max.paperplay.ui.app.FolderScan) -> Unit) -> Unit)? = null,
     /** Opens an image picker and calls back with the image bytes, or null if canceled. Null where unsupported. */
     val pickImage: ((onPicked: (ByteArray?) -> Unit) -> Unit)? = null,
     /** Opens Spotify's login page and returns the callback on [authRedirectUri]. Null where unsupported. */

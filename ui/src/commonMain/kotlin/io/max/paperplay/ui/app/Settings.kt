@@ -125,16 +125,23 @@ private fun SettingsScreen(
         // The chat pages hold long lists, so they scroll lazily instead of inside the shared scroll column.
         val isLazy = page == "index" || page == "missing" || page == "log" || page?.startsWith("index:") == true
         if (page == "index") IndexPage(backend, stack, bottomPadding)
+        else if (page == "dupes") DuplicatesPage(backend, bottomPadding)
         else if (page != null && page.startsWith("index:")) ChatSongsPage(backend, page.removePrefix("index:").toLongOrNull() ?: 0L, stack, bottomPadding)
         else Column(
             Modifier.fillMaxSize()
-                .then(if (isLazy) Modifier else Modifier.verticalScroll(rememberScrollState()))
-                .padding(bottom = bottomPadding)
+                // A scrolling page keeps the room for the bottom bar as padding at its end. A lazy list pads its own content instead
+                // (LocalPageBottomPadding), so it scrolls under the bar and is not cut off at a hard edge above it.
+                .then(if (isLazy) Modifier else Modifier.verticalScroll(rememberScrollState()).padding(bottom = bottomPadding))
         ) {
-            if (page == null) SettingsList(prefs, stack) else SettingsPage(page, stack, prefs, conn, songCount, backend, onRestore)
+            androidx.compose.runtime.CompositionLocalProvider(LocalPageBottomPadding provides bottomPadding) {
+                if (page == null) SettingsList(prefs, stack) else SettingsPage(page, stack, prefs, conn, songCount, backend, onRestore)
+            }
         }
     }
 }
+
+/** The room a Settings page leaves for the bottom bar, for pages that are one lazy list. */
+internal val LocalPageBottomPadding = androidx.compose.runtime.compositionLocalOf { 0.dp }
 
 internal val subTitles = mapOf(
     "channels" to "Channels and chats", "bots" to "Bots", "account" to "Your account", "log" to "Activity log",
@@ -180,7 +187,14 @@ private fun Modifier.clickableRow(onClick: () -> Unit): Modifier = this.then(Mod
 
 @Composable
 fun Avatar(photo: String?, name: String, size: Dp) {
-    if (photo != null) CoverImage(photo, "avatar", size = size, radius = size / 2)
+    // Onboarding shows the photo before the main screen (which provides the image loader) exists, so it brings its own.
+    if (photo != null) {
+        if (io.max.paperplay.ui.components.LocalCoverLoader.current == null) {
+            androidx.compose.runtime.CompositionLocalProvider(io.max.paperplay.ui.components.LocalCoverLoader provides SharedCovers.loader) {
+                CoverImage(photo, "avatar", size = size, radius = size / 2)
+            }
+        } else CoverImage(photo, "avatar", size = size, radius = size / 2)
+    }
     else Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
         Text(name.firstOrNull()?.uppercase() ?: "?", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
     }
@@ -301,16 +315,30 @@ internal fun SettingsPage(
             SettingsRow("Log out and delete all data", icon = Icons.Rounded.DeleteForever, subtitle = "Removes the library and everything else from this device, for a fresh start", onClick = { confirm = "erase" })
         }
         "library" -> {
+            // What it is doing now, then the actions that matter, then the settings behind drop-downs.
+            LibraryStatusRows(backend) { stack.add("missing") }
+            SectionLabel("Main tools")
             NavRow("Repair library", "Read every chat again and fill in what is missing", Icons.Rounded.Build) { stack.add("repair") }
-            NavRow("Music folders", "Songs on this device, optionally sent to Telegram", Icons.Rounded.Folder) { stack.add("folders") }
-            NavRow("Recover songs the bot cannot read", "Songs another bot posted. Your account posts them again", Icons.Rounded.Restore) { stack.add("recover") }
-            RateSlider("filing", backend, notice)
-            NavRow("Sort General", "Suggests topics for songs in General. Nothing moves till you confirm", Icons.Rounded.DriveFileMove) { stack.add("sort") }
-            NavRow("Find duplicates", "Repeated songs in your main chat, and deleting them", Icons.Rounded.ContentCopy) { stack.add("dupes") }
-            NavRow("Saved export lists", "Songs not in your library, with Spotify and Apple Music links", Icons.Rounded.IosShare) { stack.add("exports") }
-            RateSlider("reading", backend, notice)
             SettingsRow("Full rescan", icon = Icons.Rounded.Sync, subtitle = "Also removes songs deleted while the app was closed", onClick = { confirm = "rescan" })
-            RateSlider("lookups", backend, notice)
+            NavRow("Find duplicates", "Repeated songs in your main chat, and deleting them", Icons.Rounded.ContentCopy) { stack.add("dupes") }
+            NavRow("Sort General", "Suggests topics for songs in General. Nothing moves till you confirm", Icons.Rounded.DriveFileMove) { stack.add("sort") }
+            SettingsGroup("Speeds", "How fast the app asks Telegram for things", Icons.Rounded.Speed) {
+                RateSlider("reading", backend, notice)
+                var auto by remember { mutableStateOf(pref("reading_auto") == "true") }
+                SwitchRow(
+                    "Adjust the reading speed by itself", auto, { auto = it; backend.setPref("reading_auto", "$it") }, Icons.Rounded.Speed,
+                    "Starts at the speed above, speeds up while Telegram keeps answering and slows down after a rate limit. It remembers what worked, up to what your account and Telegram allow.",
+                )
+                RateSlider("filing", backend, notice)
+                RateSlider("lookups", backend, notice)
+                RateSlider("covers", backend, notice)
+            }
+            SettingsGroup("Song info, covers and lyrics", "Looking things up in the background", Icons.Rounded.Lyrics) {
+                var fastLookups by remember { mutableStateOf(pref("lookups_fast") != "false") }
+                SwitchRow(
+                    "Fast song info", fastLookups, { fastLookups = it; backend.setPref("lookups_fast", "$it") }, Icons.Rounded.Speed,
+                    "When Deezer is sure of a song (same title, artist and length) its answer is used and the slower sources are skipped. Turn off to ask every source for every song: slower, with a little more detail.",
+                )
             val lyricsRunning by backend.lyricsRunning.collectAsState()
             var lyricsAuto by remember { mutableStateOf(backend.lyricsAuto) }
             SwitchRow("Fill in missing info in the background", lyricsAuto, { lyricsAuto = it; backend.setLyricsAuto(it) }, Icons.Rounded.Lyrics, "Looks up song info, covers, genres and lyrics for songs that lack them, ahead of time. Needs song lookups on")
@@ -320,8 +348,12 @@ internal fun SettingsPage(
                 subtitle = "Looks up lyrics on LRCLIB for songs without them. Progress shows in Tasks",
                 onClick = { if (lyricsRunning) backend.stopLyricsRun() else backend.startLyricsRun() },
             )
-            RateSlider("covers", backend, notice)
-            LibraryStatusRows(backend) { stack.add("missing") }
+            }
+            SettingsGroup("More tools", "Music folders, recovery and export lists", Icons.Rounded.Folder) {
+                NavRow("Music folders", "Songs on this device, optionally sent to Telegram", Icons.Rounded.Folder) { stack.add("folders") }
+                NavRow("Recover songs the bot cannot read", "Songs another bot posted. Your account posts them again", Icons.Rounded.Restore) { stack.add("recover") }
+                NavRow("Saved export lists", "Songs not in your library, with Spotify and Apple Music links", Icons.Rounded.IosShare) { stack.add("exports") }
+            }
         }
         "mixes" -> {
             NavRow("Mixes and learning", "What your taste is learned from, and clearing it", Icons.Rounded.AutoAwesome) { stack.add("mixlearn") }
@@ -330,12 +362,12 @@ internal fun SettingsPage(
         "uploads" -> {
             NavRow("Upload songs", "Pick songs, see the queue, retry failures", Icons.Rounded.Upload) { stack.add("uploadhub") }
             RateSlider("uploads", backend, notice)
-            var parallel by remember { mutableStateOf((pref("upload_parallel")?.toIntOrNull() ?: 6).coerceIn(1, 10)) }
-            SliderRow("Uploads at once: $parallel", parallel.toFloat(), 1f..10f, { parallel = it.toInt() }, steps = 8,
+            var parallel by remember { mutableStateOf((pref("upload_parallel")?.toIntOrNull() ?: 6).coerceIn(1, 20)) }
+            SliderRow("Uploads at once: $parallel", parallel.toFloat(), 1f..20f, { parallel = it.toInt() }, steps = 18,
                 hint = "Telegram lets a bot post about 20 messages a minute in one group, so keep this modest.",
                 onDone = { backend.setPref("upload_parallel", "$parallel") })
             var slower by remember { mutableStateOf(pref("upload_slower") == "true") }
-            SwitchRow("Upload more slowly", slower, { slower = it; backend.setPref("upload_slower", "$it") }, Icons.Rounded.HourglassBottom, "30-60 seconds between songs instead of 8-20. For really big uploads.")
+            SwitchRow("Upload more slowly", slower, { slower = it; backend.setPref("upload_slower", "$it") }, Icons.Rounded.HourglassBottom, "Each upload waits three times longer between songs. For really big uploads.")
             var skip by remember { mutableStateOf(pref("upload_skip_known") != "false") }
             SwitchRow("Skip songs already in my library", skip, { skip = it; backend.setPref("upload_skip_known", "$it") }, Icons.Rounded.Rule, "Matches the file name and size")
         }
@@ -360,7 +392,7 @@ internal fun SettingsPage(
                 SwitchRow("Keep running in the background", keep, { keep = it; backend.setPref("keep_running", "$it"); env?.setKeepRunning?.invoke(it) },
                     Icons.Rounded.Sync, "Syncing carries on after you leave. A notification shows what the app is doing")
             }
-            if (env?.permissions != null) NavRow("Permissions", "Notifications, Bluetooth and battery: what is allowed", Icons.Rounded.Security) { stack.add("permissions") }
+            if (env?.permissions != null) NavRow("Permissions", "Notifications, music files, Bluetooth and battery: what is allowed", Icons.Rounded.Security) { stack.add("permissions") }
             NavRow("Connection", "Devices on this network, pairing, addresses and encryption", Icons.Rounded.SettingsEthernet) { stack.add("conn") }
             NavRow("Network play", "Listen together with people on the same network", Icons.Rounded.Devices) { stack.add("netplay") }
         }
@@ -427,7 +459,16 @@ internal fun SettingsPage(
         "savebackup" -> BackupPasswordDialog({ pw ->
             backend.services.scope.launch { notice.value = backend.saveBackup(pw, "paperplay-backup-${io.max.paperplay.core.app.dayOf(io.max.paperplay.ui.nowMoment().epochMs)}.zip") }
         }) { confirm = null }
-        "rescan" -> ConfirmDialog("Run a full rescan?", "Re-reads every message in your music chats at the speed set under Reading channels (Library settings or Telegram). A slower speed takes longer but avoids Telegram's rate limit.", "Rescan", backend::rescan) { confirm = null }
+        "rescan" -> ConfirmDialog("Run a full rescan?", "Re-reads every message in your music chats at the speed set under Reading channels (Library settings or Telegram). A slower speed takes longer but avoids Telegram's rate limit.", "Rescan", { backend.rescan { if (backend.services.botPool.readyBots().isNotEmpty() || backend.account.loggedIn.value) confirm = "rescanmore" } }) { confirm = null }
+        "rescanmore" -> {
+            val withAccount = backend.account.loggedIn.value
+            ConfirmDialog(
+                "Read with the other bots too?",
+                "The rescan read the chats with the main bot. Songs another bot posted" + (if (withAccount) ", or that only your account can see," else "") +
+                    " may still be missing. Read the chats now with the other bots" + (if (withAccount) " and your account" else "") + "? Nothing is deleted.",
+                "Read", { backend.services.scope.launch { readWithOthers(backend, true, withAccount); notice.value = "Finished reading with the other bots." } },
+            ) { confirm = null }
+        }
         "restore" -> ConfirmDialog("Restore a backup?", "This replaces your library, playlists and favorites with the backup.", "Restore", onRestore) { confirm = null }
         "clearcache" -> ConfirmDialog("Clear the cache?", "Streamed songs stored on this device are deleted. Stop playback first. They download again when played.", "Clear", { backend.clearCache { notice.value = it } }) { confirm = null }
         "accountout" -> ConfirmDialog("Log out of your account?", "Your index stays on this device. Chats and channels need a new login. The bot is not affected.", "Log out", backend::logOutAccount) { confirm = null }
@@ -442,11 +483,23 @@ internal fun SettingsPage(
     }
 }
 
+/** A row that opens and closes a group of settings under it, so the page shows the important things and keeps the rest one tap away. */
+@Composable
+private fun SettingsGroup(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, content: @Composable () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    SettingsRow(title, icon = icon, subtitle = subtitle, onClick = { open = !open }) {
+        AppIcon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (open) "Close" else "Open")
+    }
+    androidx.compose.animation.AnimatedVisibility(open) { Column { content() } }
+}
+
 @Composable
 internal fun RateSlider(key: String, backend: CoreBackend, notice: androidx.compose.runtime.MutableState<String?>) {
     val w = rateWorks.getValue(key)
-    var v by remember { mutableStateOf(backend.pref(w.key)?.toIntOrNull()?.coerceIn(1, 1200) ?: w.default) }
-    SliderRow("${w.label}: $v a minute", v.toFloat(), 1f..120f, { v = it.toInt() }, hint = "Requests to Telegram a minute. Slower avoids its rate limit, which pauses the work for a while; faster finishes sooner.",
+    // Reading can go far faster than the others: a bot is allowed many requests a second, and Auto speed finds the real limit.
+    val top = if (key == "reading") 300 else 120
+    var v by remember { mutableStateOf(backend.pref(w.key)?.toIntOrNull()?.coerceIn(1, top) ?: w.default) }
+    SliderRow("${w.label}: $v a minute", v.toFloat(), 1f..top.toFloat(), { v = it.toInt() }, hint = "Requests to Telegram a minute. Slower avoids its rate limit, which pauses the work for a while; faster finishes sooner.",
         onDone = { backend.setPref(w.key, "$v") })
 }
 

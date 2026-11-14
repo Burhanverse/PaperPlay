@@ -61,6 +61,16 @@ private fun audioFilesIn(roots: List<File>): List<String> = roots.flatMap { r ->
     if (r.isDirectory) r.walkTopDown().filter { it.isFile }.toList() else listOf(r)
 }.filter { it.extension.lowercase() in io.max.paperplay.core.app.audioExtensions }.map { it.path }
 
+/** A picked folder: its own songs, and each subfolder's songs (nested folders included) apart, for the user to confirm. */
+private fun scanFolder(dir: File): io.max.paperplay.ui.app.FolderScan {
+    fun songs(files: Sequence<File>, base: File) = files.filter { it.isFile && it.extension.lowercase() in io.max.paperplay.core.app.audioExtensions }
+        .map { io.max.paperplay.ui.app.FolderSong(it.path, it.relativeTo(base).path, it.length()) }.toList()
+    val top = songs(dir.listFiles().orEmpty().asSequence(), dir)
+    val subs = dir.listFiles().orEmpty().filter { it.isDirectory }.sortedBy { it.name.lowercase() }
+        .associate { it.name to songs(it.walkTopDown(), it) }.filterValues { it.isNotEmpty() }
+    return io.max.paperplay.ui.app.FolderScan(top, subs) { chosen, ready -> ready(chosen.map { it.id }, false) }
+}
+
 /** Lets files and folders be dropped on the window; they go to the uploads page. */
 private fun installFileDrop(window: java.awt.Window) {
     val target = java.awt.dnd.DropTarget(window, java.awt.dnd.DnDConstants.ACTION_COPY, object : java.awt.dnd.DropTargetAdapter() {
@@ -92,6 +102,20 @@ private fun installFileDrop(window: java.awt.Window) {
 private var instanceLock: Any? = null
 private val showMain = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
+/** One line of JVM memory numbers: heap, non-heap, direct and mapped buffers, loaded classes, threads. */
+private fun jvmMemoryLine(): String {
+    val mb = 1024.0 * 1024.0
+    fun f(x: Long) = "%.1f".format(x / mb)
+    val mem = java.lang.management.ManagementFactory.getMemoryMXBean()
+    val heap = mem.heapMemoryUsage
+    val non = mem.nonHeapMemoryUsage
+    val pools = java.lang.management.ManagementFactory.getPlatformMXBeans(java.lang.management.BufferPoolMXBean::class.java)
+    fun pool(name: String) = pools.firstOrNull { it.name == name }?.memoryUsed ?: 0L
+    return "Heap: ${f(heap.used)}/${f(heap.committed)} MB (max ${f(heap.max)}) | NonHeap: ${f(non.used)}/${f(non.committed)} MB | " +
+        "DirectBuf: ${f(pool("direct"))} MB, mapped ${f(pool("mapped"))} MB | Classes: ${java.lang.management.ManagementFactory.getClassLoadingMXBean().loadedClassCount} | " +
+        "Threads: ${java.lang.management.ManagementFactory.getThreadMXBean().threadCount}"
+}
+
 fun main() {
     if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
         System.getProperty("skiko.renderApi") == null &&
@@ -99,6 +123,8 @@ fun main() {
     ) {
         System.setProperty("skiko.renderApi", "OPENGL")
     }
+    io.max.paperplay.core.app.MemoryProbe.sample = ::jvmMemoryLine
+    io.max.paperplay.core.app.MemoryProbe.echo = { println(it) }
     val logDir = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PaperPlay")
     runCatching { File(logDir, "startup.log").takeIf { it.length() > 64_000 }?.delete() }
     mark(logDir, "main start")
@@ -178,7 +204,7 @@ fun main() {
                 if (files.isNotEmpty()) onPicked(files.map { it.path }, false)
             },
             pickAudioFolder = { onPicked ->
-                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(audioFilesIn(listOf(it))) } }.start()
+                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(scanFolder(it)) } }.start()
             },
             pickFolderPath = { onPicked ->
                 Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(it.path) } }.start()

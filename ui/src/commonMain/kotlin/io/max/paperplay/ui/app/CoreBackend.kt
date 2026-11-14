@@ -199,6 +199,9 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
 
     val http: HttpFetcher = io.max.paperplay.core.integrations.defaultHttpFetcher()
+
+    /** Cover art for tracks a playlist lists but the library does not have (saved in the covers folder, fetched once). */
+    val missingArt: io.max.paperplay.core.integrations.MissingArt by lazy { io.max.paperplay.core.integrations.MissingArt(http, services.platform.dataDir) }
     private val weatherService = WeatherService(http)
 
     val weatherPlace = MutableStateFlow(
@@ -535,8 +538,24 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** Running background jobs and their history; features call tasks.start/update/finish. */
     val tasks = io.max.paperplay.core.app.TaskQueue(scope, load = { repo.pref("task_history") }, save = { repo.setPref("task_history", it) }).also { q -> scope.launch(Dispatchers.Default) { q.watchServices(services) } }
 
+    /** Every playback event and every activity line, on disk and kept across restarts, so a whole listening session can be shared. */
+    val playLog = io.max.paperplay.core.app.PlayLogFile(services.platform.dataDir, scope) { at ->
+        io.max.paperplay.ui.localTimeLabel(at) + "." + (at % 1000).toString().padStart(3, '0')
+    }.also { f ->
+        io.max.paperplay.player.PlayLog.nowMs = { nowMoment().epochMs }
+        io.max.paperplay.player.PlayLog.sink = { at, tag, m -> f.add(at, tag, m) }
+    }
+
+    init {
+        io.max.paperplay.core.app.MemoryProbe.start(scope) { "Jobs: ${tasks.running.value.size}" }
+    }
+
+    /** The text to share: a short header, then the full playback and activity log from the first line on. */
+    fun fullLogText(header: String): String = header + "\n\n" + playLog.readAll()
+
     fun addLog(source: String, message: String, error: Boolean = false) {
         val clean = message.replace(Regex("\\b\\d{5,}:[A-Za-z0-9_-]{20,}\\b"), "<bot token>")
+        io.max.paperplay.player.PlayLog.log("app/$source", clean + if (error) "  [error]" else "")
         log.value = (log.value + LogLine(nowMoment().epochMs, source, clean, error)).takeLast(3000)
     }
 
@@ -562,6 +581,9 @@ class CoreBackend(val services: AppServices) : PlayerControls {
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     @Volatile private var homePlanned = false
+
+    /** The daily mixes last shown: a plan that comes back empty (a partly loaded library, a failed build) must not take them away. */
+    @Volatile private var lastMixes: List<DailyMix> = emptyList()
     private fun sizeBucket(n: Int) = if (n < 200) n else 200 + n / 100
     private val homePlan: Flow<HomePlanState> = combine(
         repo.allSongs(), repo.recents(30), repo.favorites(), library,
@@ -589,13 +611,18 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 }
             }.distinctBy { it.unique_id }
             if (leadSongs.isNotEmpty()) services.covers.prioritize(leadSongs)
+            // Covers already on disk are decoded now, so Home shows its art as soon as it is drawn instead of a moment later.
+            SharedCovers.loader.preload(plan.tiles.mapNotNull { it.cover.cover_path }, 160)
+            SharedCovers.loader.preload(leadSongs.mapNotNull { it.cover_path }, 512)
             // Tiles and shelves show at once; the slower daily mixes join when they are ready.
             if (!input.taste.showMixes) { emit(HomePlanState(plan = plan)); return@transformLatest }
             // Saved mixes show at once, even from an older day or library; fresh ones replace them when computed.
             val votes = runCatching { io.max.paperplay.core.recs.MoodVotes.verdicts(repo.repo, input.songs) }.getOrDefault(emptyList())
             val mixKey = "${now.dayKey}:${sizeBucket(input.songs.size)}:${input.favorites.size}:${input.taste.at}:${input.weather}:${votes.size}:${services.moodScanner.scanned / 50}"
             val cached = runCatching { DailyMixCache.decode(repo.pref(DailyMixCache.PREF), input.songs.associateBy { it.unique_id }) }.getOrNull()
-            emit(HomePlanState(plan = plan, mixes = cached?.second.orEmpty()))
+            val shown = cached?.second.orEmpty().ifEmpty { lastMixes }
+            if (shown.isNotEmpty()) lastMixes = shown
+            emit(HomePlanState(plan = plan, mixes = shown))
             if (cached != null && cached.first == mixKey && cached.second.isNotEmpty()) return@transformLatest
             // Building mixes is heavy: not while the library is scanning or covers are loading.
             if (input.busy) return@transformLatest
@@ -605,7 +632,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             val mixLead = daily.flatMap { it.songs.take(4) }.distinctBy { it.unique_id }
             if (mixLead.isNotEmpty()) services.covers.prioritize(mixLead)
             if (daily.isNotEmpty()) runCatching { repo.setPref(DailyMixCache.PREF, DailyMixCache.encode(mixKey, daily)) }
-            emit(HomePlanState(plan = plan, mixes = daily))
+            // An empty build keeps what is on screen instead of making the mixes disappear.
+            val mixes = daily.ifEmpty { shown }
+            if (mixes.isNotEmpty()) lastMixes = mixes
+            emit(HomePlanState(plan = plan, mixes = mixes))
         }
 
     val home: StateFlow<HomeUi> = combine(repo.allSongs(), homePlan) { songs, state ->
@@ -1069,8 +1099,15 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         return null
     }
 
-    fun rescan() {
-        scope.launch { repo.chatList().forEach { services.scanner.rescanChat(it) } }
+    /** Rescans every chat with the main bot; [onDone] runs when it has finished, so a caller can offer to read with the other bots too. */
+    fun rescan(onDone: () -> Unit = {}) {
+        scope.launch {
+            repo.chatList().forEach {
+                services.scanner.reader = services.scanner.mainBotName()
+                try { services.scanner.rescanChat(it) } finally { services.scanner.reader = null }
+            }
+            onDone()
+        }
     }
 }
 
@@ -1099,6 +1136,7 @@ internal fun Song.toUi(): SongUi {
     return SongUi(
         id = unique_id, title = title, artist = artist, album = album, genre = genre, coverUri = cover_path,
         durationSec = duration_sec.toInt(), sizeBytes = size, year = year?.toInt(), plays = plays.toInt(),
+        languages = io.max.paperplay.core.metadata.languagesOfText(title, artist, album),
         addedAt = date, qualityLabel = label, qualityRank = if (lossless) 100_000 + (bit_depth ?: 16).toInt() * 1000 else kbps.toInt(),
         lossless = lossless, favorite = favorite, pinned = pinned, offline = size > 0 && cached_bytes >= size,
     )

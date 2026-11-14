@@ -20,6 +20,9 @@ internal class StreamDataSource(private val sources: Map<String, StreamSource>) 
     private var source: StreamSource? = null
     private var position = 0L
     private var remaining = 0L
+    private var opened = 0L
+    private var firstRead = true
+    private var reads = 0
 
     override fun open(dataSpec: DataSpec): Long {
         transferInitializing(dataSpec)
@@ -32,24 +35,43 @@ internal class StreamDataSource(private val sources: Map<String, StreamSource>) 
         position = dataSpec.position
         val left = s.size - position
         remaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) left else minOf(dataSpec.length, left)
+        opened = position
+        firstRead = true
+        reads = 0
+        PlayLog.log("stream", "open ${dataSpec.uri} from byte $position, will serve $remaining of ${s.size} bytes (requested length ${dataSpec.length})")
         transferStarted(dataSpec)
         return remaining
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
-        if (remaining == 0L) return C.RESULT_END_OF_INPUT
+        if (remaining == 0L) {
+            PlayLog.log("stream", "end of data at byte $position of ${source?.size} (all promised bytes served)")
+            return C.RESULT_END_OF_INPUT
+        }
+        val want = minOf(length.toLong(), remaining).toInt()
+        val t0 = System.nanoTime()
         val chunk = try {
-            source!!.read(position, minOf(length.toLong(), remaining).toInt())
+            source!!.read(position, want)
         } catch (e: IOException) {
+            PlayLog.log("stream", "read failed at byte $position (wanted $want): ${e::class.java.simpleName} ${e.message}")
             throw e
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             throw InterruptedIOException(e.message ?: "Stream read interrupted").apply { initCause(e) }
         } catch (e: Exception) {
+            PlayLog.log("stream", "read failed at byte $position (wanted $want): ${e::class.java.simpleName} ${e.message}")
             throw IOException(e.message ?: "Stream read failed", e)
         }
-        if (chunk.isEmpty()) return C.RESULT_END_OF_INPUT
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        reads++
+        if (firstRead) { firstRead = false; PlayLog.log("stream", "first read: ${chunk.size} bytes at $position took ${ms}ms") }
+        else if (ms >= 1000) PlayLog.log("stream", "slow read: ${chunk.size} bytes at $position took ${ms}ms")
+        if (chunk.isEmpty()) {
+            PlayLog.log("stream", "EMPTY read at byte $position of ${source?.size} (wanted $want, $remaining still promised): the player takes this as the end of the song")
+            return C.RESULT_END_OF_INPUT
+        }
+        if (chunk.size < want && remaining - chunk.size > 0) PlayLog.log("stream", "short read: got ${chunk.size} of $want at byte $position")
         System.arraycopy(chunk, 0, buffer, offset, chunk.size)
         position += chunk.size
         remaining -= chunk.size
@@ -60,7 +82,10 @@ internal class StreamDataSource(private val sources: Map<String, StreamSource>) 
     override fun getUri(): Uri? = uri
 
     override fun close() {
-        if (source != null) transferEnded()
+        if (source != null) {
+            PlayLog.log("stream", "close ${uri} at byte $position of ${source?.size}, read ${position - opened} bytes in $reads reads, $remaining promised bytes never read")
+            transferEnded()
+        }
         source = null
         uri = null
     }

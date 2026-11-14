@@ -63,7 +63,7 @@ class MetadataEnricher(
     private val itunesIntervalMs: Long = 3500L,
     private val retryAfterMs: Long = 60_000L,
     private val maxBusyRetries: Int = 6,
-    private val workers: Int = 2,
+    private val workers: Int = 4,
     private val deezerIntervalMs: Long = 150L,
     private val audioDbIntervalMs: Long = 2100L,
 ) {
@@ -239,11 +239,19 @@ class MetadataEnricher(
         val artist = fresh.artist
         val dur = fresh.duration_sec.toInt()
         val term = "${searchTitle(cleanTitle(title, artist))} ${firstArtist(artist)}"
-        val (mbR, dzR, adbR) = coroutineScope {
+        // Deezer answers fast, and its hit is checked on title, artist and length. When it is sure of the song, the slow sources are
+        // skipped (MusicBrainz is limited to one request a second and AudioDB to one every two), so most songs take a fraction of a
+        // second instead of waiting in line. A song Deezer is not sure of still asks every source, as before.
+        val fast = repo.pref("lookups_fast") != "false"
+        val dzFirst = if (fast) probe(15_000) { deezerRaw(term) } else null
+        val dzSure = dzFirst?.getOrNull()?.let { l -> pickExternal(l.map { it.match }, title, artist, dur) } != null
+        val (mbR, dzR, adbR) = if (dzFirst != null && dzSure) {
+            Triple(Result.success(emptyList<MbMatch>()), dzFirst, Result.success(emptyList<ExternalMatch>()))
+        } else coroutineScope {
             val mb = async { probe(45_000) { search(title, artist) } }
-            val dz = async { probe(15_000) { deezerRaw(term) } }
+            val dz = if (dzFirst != null) null else async { probe(15_000) { deezerRaw(term) } }
             val adb = async { probe(15_000) { audioDb(searchTitle(cleanTitle(title, artist)), firstArtist(artist)) } }
-            Triple(mb.await(), dz.await(), adb.await())
+            Triple(mb.await(), dzFirst ?: dz!!.await(), adb.await())
         }
         val match = mbR.getOrNull()?.let { pickMatch(it, dur) }
         val dzList = dzR.getOrNull() ?: emptyList()

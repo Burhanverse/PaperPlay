@@ -21,3 +21,6 @@ internal actual fun deleteFile(path: String) { runCatching { java.io.File(path).
 
 internal actual fun listFiles(dir: String): List<String> =
     runCatching { java.io.File(dir).listFiles()?.filter { it.isFile }?.map { it.path } }.getOrNull().orEmpty()
+
+// System.err reaches Logcat on Android.
+actual fun appLog(tag: String, message: String) = System.err.println("PaperPlay $tag: $message")

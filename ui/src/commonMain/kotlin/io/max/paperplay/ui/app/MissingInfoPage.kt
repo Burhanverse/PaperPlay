@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.HorizontalDivider
@@ -47,6 +48,12 @@ import io.max.paperplay.core.library.Song
 import io.max.paperplay.ui.components.AppIcon
 
 /** Something a song still lacks. [todo] ones are work not done yet; the rest were looked for and not found. */
+/** A filter to open the page with, set by whoever sends the owner here (the Tasks page). Read once. */
+internal object MissingStart {
+    var filter: Missing? = null
+    fun take(): Missing? = filter.also { filter = null }
+}
+
 internal enum class Missing(val label: String, val todo: Boolean = false) {
     Waiting("Waiting for song info", true),
     ScanPending("Lyrics and genre not looked up yet", true),
@@ -85,7 +92,7 @@ internal fun MissingInfoPage(backend: CoreBackend) {
     val coversQueued by backend.services.covers.queued.collectAsState()
     val clipboard = LocalClipboardManager.current
     val listActions = LocalListActions.current
-    var only by remember { mutableStateOf<Missing?>(null) }
+    var only by remember { mutableStateOf(MissingStart.take()) }
     var note by remember { mutableStateOf<String?>(null) }
     var selection by remember { mutableStateOf(Selection()) }
 
@@ -97,71 +104,94 @@ internal fun MissingInfoPage(backend: CoreBackend) {
         .sortedWith(compareByDescending<Pair<Song, Set<Missing>>> { it.second.size }.thenBy { it.first.title })
     val scheme = MaterialTheme.colorScheme
 
-    LazyColumn(Modifier.fillMaxWidth()) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LocalPageBottomPadding.current)) {
         item {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    if (rows.isEmpty()) "All ${songs.size} songs are complete" else "${songs.size - rows.size} of ${songs.size} songs are complete",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    listOfNotNull(
-                        if (running) "Looking up song info now" else "No song info lookup running",
-                        if (coversQueued > 0) "Loading $coversQueued covers" else null,
-                    ).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    for (m in Missing.entries) if (counts.getValue(m) > 0) {
-                        FilterChip(selected = only == m, onClick = { only = if (only == m) null else m }, label = { Text("${m.label} (${counts.getValue(m)})") })
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FilledTonalButton(onClick = {
-                        val picked = selection.ids
-                        val list = shown.map { it.first }.let { l -> if (picked.isEmpty()) l else l.filter { it.unique_id in picked } }
-                        val n = backend.services.enricher.retrySongs(list)
-                        selection = Selection()
-                        note = if (n == 0) "Nothing to look up." else "Looking up $n songs again, info and covers."
-                    }) {
-                        AppIcon(Icons.Rounded.Refresh, null, Modifier.padding(end = 8.dp))
-                        Text("Look up again")
-                    }
+            Column(Modifier.fillMaxWidth()) {
+                // 1. Where the library stands.
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        note ?: "Redoes only the songs shown by the chosen filter, or the ones you selected. Songs you edited keep their info.",
-                        Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
+                        if (rows.isEmpty()) "All ${songs.size} songs are complete" else "${songs.size - rows.size} of ${songs.size} songs are complete",
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    if (songs.isNotEmpty()) androidx.compose.material3.LinearProgressIndicator(
+                        progress = { (songs.size - rows.size).toFloat() / songs.size }, modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        listOfNotNull(
+                            if (running) "Looking up song info now" else "No song info lookup running",
+                            if (coversQueued > 0) "Loading $coversQueued covers" else null,
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(enabled = shown.isNotEmpty(), onClick = { selection = Selection(shown.map { it.first.unique_id }.toSet()) }) { Text("Select all") }
-                    if (selection.ids.isNotEmpty()) OutlinedButton(onClick = { selection = Selection() }) { Text("Clear ${selection.ids.size}") }
-                    val noMatch = rows.filter { Missing.NoMatch in it.second }.map { it.first }
-                    if (noMatch.isNotEmpty()) OutlinedButton(onClick = {
-                        val n = backend.services.enricher.retrySongs(noMatch)
-                        note = if (n == 0) "Nothing to look up." else "Retrying $n songs with no match."
-                    }) { Text("Retry no match (${noMatch.size})") }
-                    OutlinedButton(enabled = shown.isNotEmpty(), onClick = {
-                        val list = ExportList("missing", "Songs missing info", 0, shown.map { (s, _) -> ExportRow(s.title, s.artist, s.duration_sec.toInt()) })
-                        clipboard.setText(AnnotatedString(exportCsv(list)))
-                        note = "Copied ${shown.size} songs as CSV."
-                    }) { Text("Copy as CSV") }
-                    OutlinedButton(enabled = shown.isNotEmpty(), onClick = {
-                        val list = ExportList("missing", "Songs missing info", 0, shown.map { (s, _) -> ExportRow(s.title, s.artist, s.duration_sec.toInt()) })
-                        saveText(backend.services.platform.dataDir, "paperplay-missing-info", exportCsv(list)) { note = it }
-                    }) { Text("Save to file") }
+                if (rows.isNotEmpty()) {
+                    HorizontalDivider()
+                    // 2. What is missing: tap one to see only those songs.
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Show only", style = MaterialTheme.typography.labelLarge, color = scheme.primary)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                            for (m in Missing.entries) if (counts.getValue(m) > 0) {
+                                FilterChip(selected = only == m, onClick = { only = if (only == m) null else m }, label = { Text("${m.label} (${counts.getValue(m)})") })
+                            }
+                        }
+                    }
+                    HorizontalDivider()
+                    // 3. What to do with them. The buttons wrap, so none is squeezed.
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Actions", style = MaterialTheme.typography.labelLarge, color = scheme.primary)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            FilledTonalButton(onClick = {
+                                val picked = selection.ids
+                                val list = shown.map { it.first }.let { l -> if (picked.isEmpty()) l else l.filter { it.unique_id in picked } }
+                                val n = backend.services.enricher.retrySongs(list)
+                                selection = Selection()
+                                note = if (n == 0) "Nothing to look up." else "Looking up $n songs again, info and covers."
+                            }) {
+                                AppIcon(Icons.Rounded.Refresh, null, Modifier.padding(end = 8.dp))
+                                Text("Look up again")
+                            }
+                            OutlinedButton(enabled = shown.isNotEmpty(), onClick = { selection = Selection(shown.map { it.first.unique_id }.toSet()) }) { Text("Select all") }
+                            if (selection.ids.isNotEmpty()) OutlinedButton(onClick = { selection = Selection() }) { Text("Clear ${selection.ids.size}") }
+                            val noMatch = rows.filter { Missing.NoMatch in it.second }.map { it.first }
+                            if (noMatch.isNotEmpty()) OutlinedButton(onClick = {
+                                val n = backend.services.enricher.retrySongs(noMatch)
+                                note = if (n == 0) "Nothing to look up." else "Retrying $n songs with no match."
+                            }) { Text("Retry no match (${noMatch.size})") }
+                            OutlinedButton(enabled = shown.isNotEmpty(), onClick = {
+                                val list = ExportList("missing", "Songs missing info", 0, shown.map { (s, _) -> ExportRow(s.title, s.artist, s.duration_sec.toInt()) })
+                                clipboard.setText(AnnotatedString(exportCsv(list)))
+                                note = "Copied ${shown.size} songs as CSV."
+                            }) { Text("Copy CSV") }
+                            OutlinedButton(enabled = shown.isNotEmpty(), onClick = {
+                                val list = ExportList("missing", "Songs missing info", 0, shown.map { (s, _) -> ExportRow(s.title, s.artist, s.duration_sec.toInt()) })
+                                saveText(backend.services.platform.dataDir, "paperplay-missing-info", exportCsv(list)) { note = it }
+                            }) { Text("Save file") }
+                        }
+                        Text(
+                            note ?: "Look up again redoes the songs shown by the filter, or the ones you selected. Songs you edited keep their info.",
+                            style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
+                        )
+                    }
+                    HorizontalDivider()
+                    Text(
+                        "${shown.size} ${if (shown.size == 1) "song" else "songs"}" + (only?.let { " · ${it.label}" } ?: ""),
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant,
+                    )
                 }
-                if (rows.isNotEmpty()) HorizontalDivider(Modifier.padding(top = 8.dp))
             }
         }
         items(shown, key = { it.first.unique_id }) { (s, missing) ->
             val picked = s.unique_id in selection.ids
             val ui = remember(s) { s.toUi() }
-            MissingSongRow(
-                ui, s.title, s.artist, missing, picked,
-                onClick = { if (selection.ids.isNotEmpty()) selection = selection.toggle(s.unique_id) },
-                onLongClick = { selection = selection.toggle(s.unique_id) },
-                menu = listActions?.let { la -> @Composable { SongMenu(ui, la.rowActions()) } },
-            )
+            Column {
+                MissingSongRow(
+                    ui, s.title, s.artist, missing, picked,
+                    onClick = { if (selection.ids.isNotEmpty()) selection = selection.toggle(s.unique_id) },
+                    onLongClick = { selection = selection.toggle(s.unique_id) },
+                    menu = listActions?.let { la -> @Composable { SongMenu(ui, la.rowActions()) } },
+                )
+                HorizontalDivider(Modifier.padding(start = 72.dp), color = scheme.outlineVariant.copy(alpha = 0.5f))
+            }
         }
     }
 }

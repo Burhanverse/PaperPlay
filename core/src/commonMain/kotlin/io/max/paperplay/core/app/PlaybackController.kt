@@ -110,6 +110,11 @@ class PlaybackController(
         scope.launch {
             engine.currentIndex.collect { idx ->
                 val song = meta.value.queue.getOrNull(idx)
+                io.max.paperplay.player.PlayLog.log(
+                    "controller",
+                    "now playing #$idx of ${meta.value.queue.size}: \"${song?.title}\" by ${song?.artist} size=${song?.size} duration=${song?.duration_sec}s id=${song?.unique_id?.take(12)} " +
+                        "chat=${song?.chat_id} remote=${song?.remote_id?.take(10)} pinned=${song?.pinned}",
+                )
                 if (song?.unique_id != listening?.unique_id) {
                     finishListening()
                     listening = song
@@ -153,6 +158,12 @@ class PlaybackController(
         }
         scope.launch {
             engine.state.collect { state ->
+                val cs = meta.value.queue.getOrNull(engine.currentIndex.value)
+                io.max.paperplay.player.PlayLog.log(
+                    "controller",
+                    "state $state position=${engine.positionMs.value}ms engineDuration=${engine.durationMs.value}ms songDuration=${(cs?.duration_sec ?: 0) * 1000}ms song=\"${cs?.title}\" repeat=${meta.value.repeat}" +
+                        if (state == PlayerState.Ended) "  <- the player says the song ended; compare position with the durations" else "",
+                )
                 if (state == PlayerState.Paused || state == PlayerState.Idle || state == PlayerState.Ended || state == PlayerState.Error) {
                     launch { runCatching { resolver.pauseAll() } }
                 }

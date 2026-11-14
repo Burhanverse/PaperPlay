@@ -1,7 +1,12 @@
 package io.max.paperplay.ui.app
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -27,6 +32,7 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 import io.max.paperplay.core.app.TaskKind
 import io.max.paperplay.core.app.TaskState
 import io.max.paperplay.core.dupes.DefaultSongRules
+import io.max.paperplay.core.dupes.GENERAL_TOPIC_ID
 import io.max.paperplay.core.dupes.DeleteStatus
 import io.max.paperplay.core.dupes.DuplicateGroup
 import io.max.paperplay.core.dupes.DuplicatePost
@@ -43,29 +49,38 @@ private typealias PostKey = Pair<Long, Long>
 
 private val DuplicatePost.key: PostKey get() = chatId to messageId
 
+/** dd/MM/yyyy (UTC) of a time in seconds. */
+private fun dateText(seconds: Long): String {
+    val z = seconds / 86400 + 719468
+    val era = (if (z >= 0) z else z - 146096) / 146097
+    val doe = z - era * 146097
+    val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    val mp = (5 * doy + 2) / 153
+    val day = doy - (153 * mp + 2) / 5 + 1
+    val month = if (mp < 10) mp + 3 else mp - 9
+    val year = yoe + era * 400 + if (month <= 2) 1 else 0
+    return "${day.toString().padStart(2, '0')}/${month.toString().padStart(2, '0')}/$year"
+}
+
 private fun sizeText(bytes: Long) = "${(bytes * 10 / 1_048_576) / 10.0} MB"
 
 private fun postsOf(g: DuplicateGroup) = listOf(g.keep) + g.others
 
-/** The best copy of a group by quality (lossless, bit depth, rate, size); posts without a library row rank last. */
-private fun bestQuality(g: DuplicateGroup): DuplicatePost = postsOf(g).reduce { a, b ->
-    val sa = a.song
-    val sb = b.song
-    when {
-        sa != null && sb != null -> if (DefaultSongRules.compareQuality(sb, sa) < 0) b else a
-        sb == null -> a
-        else -> b
-    }
-}
-
 /** Settings > Library > Find duplicates. Tick the posts to delete; nothing goes before the confirmation. */
 @Composable
-internal fun DuplicatesPage(backend: CoreBackend) {
+internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compose.ui.unit.Dp = 0.dp) {
     var groups by remember { mutableStateOf<List<DuplicateGroup>?>(null) }
     var reload by remember { mutableStateOf(0) }
     var ticked by remember { mutableStateOf(setOf<PostKey>()) }
     var confirm by remember { mutableStateOf(false) }
-    val topicNames = remember { backend.taste.value.topicNames }
+    // The topic names Telegram gave (the same table the Upload page lists), with any name the owner set on top.
+    val topicNames = remember {
+        val names = HashMap<String, String>()
+        backend.services.library.repo.db.miscQueries.topics().executeAsList().forEach { names["topic:${it.chat_id}:${it.topic_id}"] = it.name }
+        names.putAll(backend.taste.value.topicNames)
+        names
+    }
     val queue = backend.services.deleteQueue
     val jobs by queue.jobs.collectAsState()
     val main = backend.mainChatId()
@@ -84,7 +99,9 @@ internal fun DuplicatesPage(backend: CoreBackend) {
         // A post Telegram no longer has would be listed as a repeat forever; drop what is gone and list again.
         if (found.isNotEmpty() && queue.dropGonePosts(found.flatMap { g -> postsOf(g).map { it.key } }) > 0) found = find()
         groups = found
-        ticked = emptySet()
+        // The extras are ticked at once: repeats in the same topic and clearly worse copies. The best copy of every song is never in it.
+        ticked = found.filter { sectionOf(it) == DuplicateSection.Extras }
+            .flatMap { g -> g.others.filter { it.messageId in g.suggested }.map { it.key } }.toSet()
     }
 
     fun jobOf(p: DuplicatePost) = jobs.lastOrNull { it.isDuplicate && it.postChat == p.chatId && it.postMessage == p.messageId }
@@ -97,88 +114,133 @@ internal fun DuplicatesPage(backend: CoreBackend) {
         if (survivorOf(g) { it.key in next } != null) ticked = next
     }
 
-    val found = groups
-    when {
-        found == null -> Text("Looking for repeats", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        found.isEmpty() -> Text("No repeated songs in your main chat.", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        else -> {
-            Text(
-                "${found.size} songs appear more than once in your main chat. Tick the posts to delete from Telegram. One copy of every song always stays.",
-                Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { found.forEach { g -> tick(g, g.others.filter { it.messageId in g.suggested }) } }, enabled = !active) { Text("Tick extras") }
-                OutlinedButton(onClick = {
-                    // Keep the highest quality copy (FLAC over MP3) of every group; tick the rest.
-                    found.forEach { g ->
-                        val best = bestQuality(g)
-                        tick(g, postsOf(g).filter { it.key != best.key })
+    // Posts that are gone leave the page at once; a group with no extra copy left goes with them.
+    val goneNow = jobs.filter { it.isDuplicate && it.status == DeleteStatus.Done }.map { it.postChat to it.postMessage }.toSet()
+    val found = remember(groups, goneNow) {
+        groups?.let { l -> if (goneNow.isEmpty()) l else l.mapNotNull { g -> g.copy(others = g.others.filter { (it.chatId to it.messageId) !in goneNow }).takeIf { it.others.isNotEmpty() } } }
+    }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var toTop by remember { mutableStateOf(0) }
+    LaunchedEffect(toTop) { if (toTop > 0) listState.scrollToItem(0) }
+    val labels = mapOf(
+        DuplicateSection.Extras to "Extra copies",
+        DuplicateSection.OtherTopics to "Also in other topics",
+        DuplicateSection.Maybe to "Might be the same song",
+    )
+    // Only the rows on screen are built: hundreds of groups, each with covers, made the page slow when it was one long column.
+    val sections = remember(found) { found.orEmpty().groupBy { sectionOf(it) } }
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = bottomPadding + 96.dp)) {
+            when {
+                found == null -> item { Text("Looking for repeats", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                found.isEmpty() -> item { Text("No repeated songs in your main chat.", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                else -> {
+                    item {
+                        Text(
+                            "${found.size} songs appear more than once in your main chat. Tick the posts to delete from Telegram. One copy of every song always stays.",
+                            Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                }, enabled = !active) { Text("Keep best quality") }
-                TextButton(onClick = { ticked = emptySet() }, enabled = ticked.isNotEmpty()) { Text("Clear") }
-            }
-            if (jobs.isNotEmpty()) {
-                val done = jobs.count { it.status == DeleteStatus.Done }
-                val failed = jobs.count { it.status == DeleteStatus.Failed }
-                val skipped = jobs.count { it.status == DeleteStatus.Skipped }
-                Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Deleting: $done of ${jobs.size} done" + (if (failed > 0) ", $failed failed" else "") + (if (skipped > 0) ", $skipped kept" else ""),
-                        Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (active) TextButton(onClick = { queue.cancel() }) { Text("Stop") }
-                    else TextButton(onClick = { reload++ }) { Text("Refresh") }
-                }
-                jobs.firstOrNull { it.status == DeleteStatus.Failed }?.error?.let {
-                    Text(it, Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error)
-                }
-            }
-            val labels = mapOf(
-                DuplicateSection.Extras to "Extra copies",
-                DuplicateSection.OtherTopics to "Also in other topics",
-                DuplicateSection.Maybe to "Might be the same song",
-            )
-            for (section in DuplicateSection.entries) {
-                val inSection = found.filter { sectionOf(it) == section }
-                if (inSection.isEmpty()) continue
-                SectionLabel("${labels.getValue(section)} (${inSection.size})")
-                for (g in inSection) {
-                    val art = (listOf(g.keep) + g.others).firstNotNullOfOrNull { it.song?.cover_path }
-                    SettingsRow(
-                        "${g.title} - ${g.artist}", icon = Icons.Rounded.ContentCopy,
-                        subtitle = describeDuplicate(g) { p -> p.topicId?.let { topicNames["topic:${p.chatId}:$it"] } },
-                        leading = { io.max.paperplay.ui.components.CoverImage(art, "${g.title}|${g.artist}", size = 52.dp, radius = 8.dp) },
-                    )
-                    for (p in postsOf(g)) {
-                        val job = jobOf(p)
-                        val state = when (job?.status) {
-                            DeleteStatus.Queued -> "Waiting"
-                            DeleteStatus.Deleting -> "Deleting"
-                            DeleteStatus.Done -> "Deleted"
-                            DeleteStatus.Failed -> job?.error ?: "Failed"
-                            DeleteStatus.Skipped -> job?.error ?: "Kept"
-                            null -> null
-                        }
-                        Row(Modifier.fillMaxWidth().padding(start = 36.dp, end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(p.key in ticked, { on ->
-                                if (on) tick(g, postsOf(g).filter { it.key in ticked || it.key == p.key })
-                                else ticked = ticked - p.key
-                            }, enabled = !busy(p) && !active)
-                            io.max.paperplay.ui.components.CoverImage(p.song?.cover_path ?: art, "${g.title}|${g.artist}", Modifier.padding(end = 12.dp), size = 36.dp, radius = 6.dp)
-                            Text(
-                                "${p.format}, ${sizeText(p.size)}" + (state?.let { " - $it" } ?: ""),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (job?.status == DeleteStatus.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                            )
+                    item {
+                        Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { found.forEach { g -> tick(g, g.others.filter { it.messageId in g.suggested }) } }, enabled = !active) { Text("Tick extras") }
+                            // The same file in several topics (topics act as playlists, so it is never ticked on its own): keep one copy per
+                            // song, a named topic before General, and tick the others.
+                            OutlinedButton(
+                                onClick = {
+                                    sections[DuplicateSection.OtherTopics].orEmpty().forEach { g ->
+                                        val named = postsOf(g).filter { it.topicId != null && it.topicId != 1L && it.topicId != GENERAL_TOPIC_ID }
+                                        val keep = named.firstOrNull { it.key == g.keep.key } ?: named.firstOrNull() ?: g.keep
+                                        tick(g, postsOf(g).filter { it.key != keep.key })
+                                    }
+                                },
+                                enabled = !active && sections[DuplicateSection.OtherTopics].orEmpty().isNotEmpty(),
+                            ) { Text("Tick topic repeats") }
+                            TextButton(onClick = { ticked = emptySet() }, enabled = ticked.isNotEmpty()) { Text("Clear") }
                         }
                     }
+                    if (jobs.isNotEmpty()) item {
+                        val done = jobs.count { it.status == DeleteStatus.Done }
+                        val failed = jobs.count { it.status == DeleteStatus.Failed }
+                        val skipped = jobs.count { it.status == DeleteStatus.Skipped }
+                        androidx.compose.foundation.layout.Column {
+                            Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Deleting: $done of ${jobs.size} done" + (if (failed > 0) ", $failed failed" else "") + (if (skipped > 0) ", $skipped kept" else ""),
+                                    Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (active) TextButton(onClick = { queue.cancel() }) { Text("Stop") }
+                                else TextButton(onClick = { reload++ }) { Text("Refresh") }
+                            }
+                            jobs.firstOrNull { it.status == DeleteStatus.Failed }?.error?.let {
+                                Text(it, Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                    for (section in DuplicateSection.entries) {
+                        val inSection = sections[section].orEmpty()
+                        if (inSection.isEmpty()) continue
+                        item(key = "section:$section") { SectionLabel("${labels.getValue(section)} (${inSection.size})") }
+                        for (g in inSection) {
+                            val groupKey = "${g.keep.chatId}:${g.keep.messageId}"
+                            val art = postsOf(g).firstNotNullOfOrNull { it.song?.cover_path }
+                            item(key = "group:$groupKey") {
+                                SettingsRow(
+                                    "${g.title} - ${g.artist}", icon = Icons.Rounded.ContentCopy,
+                                    subtitle = describeDuplicate(g) { p -> p.topicId?.let { topicNames["topic:${p.chatId}:$it"] } },
+                                    leading = { io.max.paperplay.ui.components.CoverImage(art, "${g.title}|${g.artist}", size = 52.dp, radius = 8.dp) },
+                                )
+                            }
+                            items(postsOf(g), key = { "post:${it.chatId}:${it.messageId}" }) { p ->
+                                val job = jobOf(p)
+                                val state = when (job?.status) {
+                                    DeleteStatus.Queued -> "Waiting"
+                                    DeleteStatus.Deleting -> "Deleting"
+                                    DeleteStatus.Done -> "Deleted"
+                                    DeleteStatus.Failed -> job?.error ?: "Failed"
+                                    DeleteStatus.Skipped -> job?.error ?: "Kept"
+                                    null -> null
+                                }
+                                val enabled = !busy(p) && !active
+                                // Tapping anywhere on the row ticks it, not only the box.
+                                val toggle = {
+                                    if (p.key !in ticked) tick(g, postsOf(g).filter { it.key in ticked || it.key == p.key }) else ticked = ticked - p.key
+                                }
+                                Row(
+                                    Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = toggle).padding(start = 36.dp, end = 20.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Checkbox(p.key in ticked, { toggle() }, enabled = enabled)
+                                    io.max.paperplay.ui.components.CoverImage(p.song?.cover_path ?: art, "${g.title}|${g.artist}", Modifier.padding(end = 12.dp), size = 36.dp, radius = 6.dp)
+                                    val topic = p.topicId?.takeIf { it != 1L && it != GENERAL_TOPIC_ID }?.let { topicNames["topic:${p.chatId}:$it"] ?: "Unnamed topic" } ?: "General"
+                                    val verdict = state ?: if (p.key in ticked) "Will be deleted" else "Stays"
+                                    androidx.compose.foundation.layout.Column(Modifier.padding(vertical = 6.dp)) {
+                                        Text(
+                                            "$topic · ${p.format} · ${sizeText(p.size)} · ${dateText(p.date)}",
+                                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        Text(
+                                            verdict, style = MaterialTheme.typography.bodySmall,
+                                            color = if (job?.status == DeleteStatus.Failed || (state == null && p.key in ticked)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                        )
+                                        Text(
+                                            p.fileName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            Button(
-                onClick = { confirm = true }, enabled = ticked.isNotEmpty() && !active && main != null,
-                modifier = Modifier.padding(20.dp),
-            ) { Text("Delete ${ticked.size} posts") }
         }
+        if (ticked.isNotEmpty() && !active && main != null) androidx.compose.material3.ExtendedFloatingActionButton(
+            onClick = { confirm = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = bottomPadding + 16.dp),
+            icon = { io.max.paperplay.ui.components.AppIcon(Icons.Rounded.Delete, null) },
+            text = { Text("Delete ${ticked.size}") },
+        )
     }
 
     if (confirm) {
@@ -194,6 +256,7 @@ internal fun DuplicatesPage(backend: CoreBackend) {
                         postsOf(g).filter { it.key in ticked }.map { it to keep }
                     }
                     ticked = emptySet()
+                    toTop++
                     if (pairs.isEmpty()) return@TextButton
                     val tasks = backend.tasks
                     val id = tasks.start(TaskKind.Other, "Deleting duplicates", pairs.size, "Starting", onStop = { queue.cancel() })

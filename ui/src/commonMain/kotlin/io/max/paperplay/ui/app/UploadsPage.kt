@@ -7,6 +7,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
+import io.max.paperplay.core.app.MIN_UPLOAD_BYTES
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.AlertDialog
@@ -44,6 +48,20 @@ object IncomingDrops {
     val files = MutableStateFlow<List<String>>(emptyList())
 }
 
+/** A song found in a folder. [id] is a file path (desktop) or a document URI (Android); [name] is its path inside the folder. */
+class FolderSong(val id: String, val name: String, val size: Long)
+
+/**
+ * What a picked folder holds: the songs directly in it, and each subfolder's songs kept apart. Subfolders are only uploaded when the
+ * user looks at their contents and agrees. [resolve] makes real files of the chosen songs (Android copies them) and calls back with
+ * their paths and whether they are temporary copies.
+ */
+class FolderScan(
+    val top: List<FolderSong>,
+    val subfolders: Map<String, List<FolderSong>>,
+    val resolve: (List<FolderSong>, (List<String>, Boolean) -> Unit) -> Unit,
+)
+
 private data class UploadTarget(val chatId: Long, val chatTitle: String, val topicId: Long? = null, val topicName: String? = null)
 
 /** The uploads hub: where songs go, picking files, and the queue with retry. */
@@ -68,13 +86,37 @@ internal fun UploadsPage(backend: CoreBackend) {
         if (t == null) { message = "Choose where to upload first."; return }
         val r = uploader.enqueue(paths, t.chatId, t.chatTitle, t.topicId, t.topicName, temporary)
         message = when {
-            r.queued == 0 && r.known == 0 -> "No audio files found."
+            r.queued == 0 && r.known == 0 && r.tooSmall == 0 -> "No audio files found."
             else -> buildString {
                 append("Added ${r.queued} song${if (r.queued == 1) "" else "s"}.")
                 if (r.known > 0) append(" ${r.known} already in your library.")
                 if (r.notAudio > 0) append(" Left out ${r.notAudio} that are not audio.")
+                if (r.tooSmall > 0) append(" Left out ${r.tooSmall} under 2 MB.")
             }
         }
+    }
+
+    // Gets real files for songs found in a folder (Android copies them) and queues them; says so when some could not be copied.
+    fun copyAndQueue(scan: FolderScan, songs: List<FolderSong>) {
+        message = "Copying ${songs.size} song${if (songs.size == 1) "" else "s"} for upload..."
+        scan.resolve(songs) { paths, temp ->
+            queue(paths, temp)
+            val missed = songs.size - paths.size
+            if (missed > 0) message = "${message.orEmpty()} Could not copy $missed: the phone is low on free space or the file cannot be read."
+        }
+    }
+
+    // A picked folder: its own songs go in at once; subfolders wait here until the user has seen what is in them and agreed.
+    var subfolders by remember { mutableStateOf<Pair<FolderScan, Map<String, List<FolderSong>>>?>(null) }
+    fun takeFolder(scan: FolderScan) {
+        val big = { l: List<FolderSong> -> l.filter { it.size >= MIN_UPLOAD_BYTES } }
+        val top = big(scan.top)
+        val subs = scan.subfolders.mapValues { big(it.value) }.filterValues { it.isNotEmpty() }
+        val small = scan.top.size - top.size
+        if (top.isNotEmpty()) copyAndQueue(scan, top)
+        else message = if (subs.isEmpty()) "No songs of 2 MB or more in that folder." else "No songs directly in that folder."
+        if (top.isNotEmpty() && small > 0) message = "Left out $small under 2 MB."
+        if (subs.isNotEmpty()) subfolders = scan to subs
     }
 
     val shared by IncomingShares.files.collectAsState()
@@ -103,13 +145,16 @@ internal fun UploadsPage(backend: CoreBackend) {
             onClick = { choosing = true }, enabled = chats.isNotEmpty(),
         )
         val pick = env?.pickAudio
-        Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Button(onClick = { pick?.invoke { paths, temp -> queue(paths, temp) } }, enabled = pick != null && target != null) {
                 AppIcon(Icons.Rounded.Upload, null, Modifier.size(18.dp))
                 Text("Choose songs", Modifier.padding(start = 8.dp))
             }
             val pickFolder = env?.pickAudioFolder
-            if (pickFolder != null) OutlinedButton(onClick = { pickFolder { paths -> queue(paths, false) } }, enabled = target != null) { Text("Choose folder") }
+            if (pickFolder != null) OutlinedButton(onClick = { pickFolder { scan -> takeFolder(scan) } }, enabled = target != null) { Text("Choose folder") }
             OutlinedButton(onClick = { uploader.setPaused(!paused) }, enabled = jobs.isNotEmpty()) { Text(if (paused) "Resume" else "Pause") }
         }
         message?.let { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -129,6 +174,12 @@ internal fun UploadsPage(backend: CoreBackend) {
         }
     }
 
+    subfolders?.let { (scan, subs) ->
+        SubfolderDialog(subs, onDismiss = { subfolders = null }) { chosen ->
+            subfolders = null
+            copyAndQueue(scan, chosen)
+        }
+    }
     if (choosing) TargetDialog(chats.map { it.id to it.title }, topics.map { Triple(it.chat_id, it.topic_id, it.name) }, target, { target = it; choosing = false }) { choosing = false }
 }
 
@@ -152,19 +203,52 @@ private fun JobRow(job: UploadJob, onRetry: () -> Unit, onRemove: () -> Unit) {
     }
 }
 
+/** Lists what each subfolder holds, so nothing like call recordings goes up unseen. Nothing is ticked at first. */
+@Composable
+private fun SubfolderDialog(subs: Map<String, List<FolderSong>>, onDismiss: () -> Unit, onAdd: (List<FolderSong>) -> Unit) {
+    var ticked by remember { mutableStateOf(emptySet<String>()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Songs in subfolders") },
+        text = {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("These were left out. Read the file names and tick only the folders you want to upload.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                for ((folder, songs) in subs) {
+                    val on = folder in ticked
+                    Row(Modifier.fillMaxWidth().clickable { ticked = if (on) ticked - folder else ticked + folder }, verticalAlignment = Alignment.Top) {
+                        Checkbox(on, { ticked = if (on) ticked - folder else ticked + folder })
+                        Column(Modifier.padding(top = 12.dp)) {
+                            Text("$folder (${songs.size} song${if (songs.size == 1) "" else "s"})", style = MaterialTheme.typography.titleSmall)
+                            for (s in songs.take(8)) Text(s.name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (songs.size > 8) Text("and ${songs.size - 8} more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onAdd(subs.filterKeys { it in ticked }.values.flatten()) }, enabled = ticked.isNotEmpty()) {
+                Text("Add ${subs.filterKeys { it in ticked }.values.sumOf { it.size }} songs")
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Skip subfolders") } },
+    )
+}
+
 @Composable
 private fun TargetDialog(
     chats: List<Pair<Long, String>>, topics: List<Triple<Long, Long, String>>, current: UploadTarget?,
     onPick: (UploadTarget) -> Unit, onDismiss: () -> Unit,
 ) {
     var chat by remember { mutableStateOf(chats.firstOrNull { it.first == current?.chatId } ?: chats.firstOrNull()) }
-    val mine = topics.filter { it.first == chat?.first }
+    // "General" is its own row below (it means no topic); Telegram's own General topic would only repeat it.
+    val mine = topics.filter { it.first == chat?.first && !it.third.equals("General", ignoreCase = true) }
     var topic by remember { mutableStateOf(current?.topicId) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Upload to") },
         text = {
-            Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                 for (c in chats) {
                     Row(Modifier.fillMaxWidth().clickable { chat = c; topic = null }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(chat?.first == c.first, { chat = c; topic = null })

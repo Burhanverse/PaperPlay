@@ -29,6 +29,9 @@ fun interface CoverLoader {
 }
 
 val LocalCoverLoader = compositionLocalOf<CoverLoader?> { null }
+
+/** True while covers are still being fetched: a song without art shows a placeholder shape, not the final mosaic, until they are done. */
+val LocalCoversPending = compositionLocalOf { false }
 val LocalOnMissingCover = compositionLocalOf<((String) -> Unit)?> { null }
 
 /** Cover art, or the mosaic for [key] when there is none. */
@@ -48,7 +51,7 @@ fun CoverImage(
     }
     // Decode at about the pixels shown, rounded up to a few sizes so covers share cache entries; large art stays sharp on sharp screens.
     val px = with(androidx.compose.ui.platform.LocalDensity.current) { size.toPx() }
-    val decode = when { px <= 160f -> 160; px <= 384f -> 384; px <= 640f -> 768; else -> 1280 }
+    val decode = when { px <= 160f -> 160; px <= 384f -> 384; px <= 512f -> 512; px <= 768f -> 768; else -> 1280 }
     val painter = if (uri != null && loader != null) loader.painter(uri, decode) else null
     val shape = io.max.paperplay.ui.app.appShape(radius)
     // A cover that arrives after the row is shown fades in over the mosaic; one already loaded appears at once.
@@ -56,7 +59,10 @@ fun CoverImage(
     val fadeSpec = io.max.paperplay.ui.theme.motionTween<Float>(io.max.paperplay.ui.theme.Motion.FAST)
     LaunchedEffect(painter != null) { if (painter != null) fade.animateTo(1f, fadeSpec) }
     Box(modifier.size(size).clip(shape)) {
-        if (painter == null || fade.value < 1f) CoverMosaic(key, Modifier.size(size))
+        if (painter == null || fade.value < 1f) {
+            if (uri == null && LocalCoversPending.current) androidx.compose.foundation.layout.Spacer(Modifier.size(size).then(io.max.paperplay.ui.app.skeletonFill()))
+            else CoverMosaic(key, Modifier.size(size))
+        }
         if (painter != null) {
             Image(painter, contentDescription = null, Modifier.size(size).graphicsLayer { alpha = fade.value }, contentScale = ContentScale.Crop)
         }

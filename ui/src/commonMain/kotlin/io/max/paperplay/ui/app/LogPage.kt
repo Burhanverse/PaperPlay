@@ -46,11 +46,26 @@ internal fun LogPage(backend: CoreBackend) {
     val dataDir = backend.services.platform.dataDir
     LogBody(
         lines, crash, note,
-        onSaveLog = { text -> saveText(dataDir, "paperplay-log", text) { note = it } },
+        onSaveLog = { _ -> saveText(dataDir, "paperplay-log", backend.fullLogText(BackupFiles.deviceInfo)) { note = it } },
         onSaveCrash = { crash?.let { text -> saveText(dataDir, "paperplay-crash", text) { note = it } } },
         onClearCrash = { env?.clearCrash?.invoke(); crash = null },
         onNote = { note = it },
         onClear = backend::clearLog,
+        onShare = { asFile ->
+            val m = nowMoment()
+            fun two(n: Int) = n.toString().padStart(2, '0')
+            val header = "${BackupFiles.deviceInfo}\nShared ${m.year}-${two(m.month)}-${two(m.day)} ${localTimeLabel(m.epochMs)}"
+            val text = backend.fullLogText(header)
+            val share = BackupFiles.shareFile
+            val shareText = BackupFiles.shareText
+            when {
+                share == null && shareText == null -> note = "Sharing is not supported here. Use Save instead."
+                // A message body is limited in size; a long log always goes as a file so nothing is cut.
+                !asFile && shareText != null && text.length < 200_000 -> { shareText(text); note = "Shared the full log (${text.length / 1024} KB)" }
+                share != null -> { share("paperplay-log-${m.year}-${two(m.month)}-${two(m.day)}.txt", text); note = "Shared the full log as a file (${text.length / 1024} KB)${if (!asFile) ", too long for a message" else ""}" }
+                else -> note = "Sharing a file is not supported here."
+            }
+        },
     )
 }
 
@@ -82,6 +97,7 @@ internal fun LogBody(
     onClearCrash: () -> Unit,
     onNote: (String) -> Unit,
     onClear: () -> Unit,
+    onShare: ((asFile: Boolean) -> Unit)? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var problemsOnly by remember { mutableStateOf(false) }
@@ -103,6 +119,10 @@ internal fun LogBody(
             IconButton({ onSaveLog(lines.joinToString("\n", transform = ::lineText)) }, enabled = lines.isNotEmpty()) { AppIcon(Icons.Rounded.Download, "Save the whole log as a text file") }
             IconButton(onSaveCrash, enabled = crash != null) { AppIcon(Icons.Rounded.BugReport, "Save the crash log as a text file") }
             IconButton(onClear, enabled = lines.isNotEmpty()) { AppIcon(Icons.Rounded.DeleteOutline, "Clear the log") }
+        }
+        if (onShare != null) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.FilledTonalButton({ onShare(true) }) { Text("Share full log as file") }
+            OutlinedButton({ onShare(false) }) { Text("Share as text") }
         }
         PillField(query, { query = it }, "Search the log", Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -126,7 +146,7 @@ internal fun LogBody(
                 Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else SelectionContainer(Modifier.weight(1f)) {
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LocalPageBottomPadding.current)) {
                 items(shown) { l ->
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         Text(

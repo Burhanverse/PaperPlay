@@ -5,6 +5,9 @@ expect object Fs {
     fun mkdirs(path: String)
     fun exists(path: String): Boolean
     fun write(path: String, bytes: ByteArray)
+    fun append(path: String, text: String)
+    fun readText(path: String): String
+    fun size(path: String): Long
     fun deleteRecursively(path: String)
     /** Renames [from] to [to]; [to] must not exist. */
     fun rename(from: String, to: String)

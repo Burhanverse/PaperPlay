@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import kotlin.time.Clock
@@ -48,6 +49,7 @@ class TaskQueue(
     @Synchronized
     fun start(kind: TaskKind, title: String, total: Int = 0, detail: String = "", onStop: (() -> Unit)? = null): Long {
         val id = next++
+        appLog("task", "start ${kind.name} $title")
         if (onStop != null) stops[id] = onStop
         _running.update { it + TaskItem(id, kind, title, detail, 0, total, null, clock(), stoppable = onStop != null) }
         return id
@@ -98,6 +100,7 @@ class TaskQueue(
         stops.remove(id)
         _running.update { l -> l.filter { it.id != id } }
         val ended = t.copy(state = state, endedAt = clock(), detail = detail ?: t.detail, stoppable = false)
+        appLog("task", "end ${t.kind.name} ${t.title} ${state.name} ${ended.done}/${ended.total} ${ended.detail}")
         _history.update { (listOf(ended) + it).take(200) }
         persist()
     }
@@ -160,6 +163,28 @@ class TaskQueue(
         watch(TaskKind.Sync, "Refreshing playlists", services.playlistSync.progress, { it }, onStop = { services.playlistSync.stopRun() })
         watchEnricher(services.enricher)
         watchUploads(services.uploader)
+        watchCovers(services.covers)
+    }
+
+    /**
+     * The cover run becomes one task: songs missing a cover and low-quality thumbnails, each with how many are left. The task stays open for 20 seconds after the
+     * queue empties, so the scan handing over its next batch continues it instead of ending it and starting another.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun watchCovers(covers: CoverService) {
+        scope.launch {
+            var id = 0L
+            covers.progress.collectLatest { p ->
+                if (p == null) {
+                    kotlinx.coroutines.delay(20_000)
+                    if (id != 0L) finish(id)
+                    id = 0L
+                } else {
+                    if (id == 0L) id = start(TaskKind.Covers, "Loading covers")
+                    update(id, done = p.done + p.lowDone, total = p.total + p.lowTotal, detail = coverText(p), fraction = if (p.total + p.lowTotal > 0) (p.done + p.lowDone).toFloat() / (p.total + p.lowTotal) else null)
+                }
+            }
+        }
     }
 
     /** The upload queue becomes one task while files wait or send; stopping it clears the files not yet started. */
@@ -217,3 +242,9 @@ private fun restore(load: () -> String?): List<TaskItem> = runCatching {
         )
     }
 }.getOrDefault(emptyList())
+
+/** "108 missing, 60 left" and, when there are low-quality thumbnails to replace, "340 low quality, 200 left". */
+private fun coverText(p: CoverProgress): String = listOfNotNull(
+    if (p.total > 0) "${p.total} missing, ${p.total - p.done} left" else null,
+    if (p.lowTotal > 0) "${p.lowTotal} low quality, ${p.lowTotal - p.lowDone} left" else null,
+).joinToString(" - ")

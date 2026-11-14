@@ -15,6 +15,7 @@ import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdConfig
 import io.max.paperplay.core.telegram.TdError
 import io.max.paperplay.core.telegram.TdRuntime
+import io.max.paperplay.core.telegram.documentContent
 import io.max.paperplay.core.telegram.request
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -406,13 +407,13 @@ class UserSession(
                 }
             }
             try {
+                val newApi = c.newApi()
                 val sent = call(c, request("sendMessage") {
                     put("chat_id", chat)
-                    put("input_message_content", buildJsonObject {
-                        put("@type", "inputMessageDocument")
-                        put("document", buildJsonObject { put("@type", "inputFileLocal"); put("path", path) })
-                        put("caption", buildJsonObject { put("@type", "formattedText"); put("text", tag) })
-                    })
+                    put("input_message_content", documentContent(
+                        buildJsonObject { put("@type", "inputFileLocal"); put("path", path) }, newApi,
+                        buildJsonObject { put("@type", "formattedText"); put("text", tag) },
+                    ))
                 })
                 sentId.complete(sent.long("id") ?: throw TdError(0, "Telegram did not accept the file."))
                 val done = withTimeoutOrNull(5.minutes) { outcome.await() } ?: throw TdError(408, "Upload timed out")

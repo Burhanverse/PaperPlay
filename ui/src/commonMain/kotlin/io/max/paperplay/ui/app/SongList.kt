@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -118,12 +119,19 @@ fun SongList(
     header: (@Composable () -> Unit)? = null,
     onRemove: ((SongUi) -> Unit)? = null,
     empty: String = "No songs here yet.",
+    /** Names this list so its sort order is remembered for it alone; null uses the shared order. */
+    listKey: String? = null,
+    /** Songs the list wants but the library does not have: shown greyed out after the songs, tapping one opens it in Spotify. */
+    ghosts: List<GhostSong> = emptyList(),
+    /** True when [songs] are in the order the ghosts were placed for (a playlist's own order), so each ghost goes where its song belongs. */
+    ghostsInline: Boolean = false,
 ) {
     var query by remember { mutableStateOf("") }
     // The sort is remembered between lists and launches.
     val uiPrefs = LocalUiPrefs.current
-    var sort by remember { mutableStateOf(uiPrefs?.songSort ?: SongSort.Added) }
-    var reverse by remember { mutableStateOf(uiPrefs?.songSortReverse ?: false) }
+    val savedSort = listKey?.let { uiPrefs?.getString("list_sort:$it") }
+    var sort by remember(listKey) { mutableStateOf(SongSort.entries.firstOrNull { it.name == savedSort?.substringBefore(':') } ?: uiPrefs?.songSort ?: SongSort.Added) }
+    var reverse by remember(listKey) { mutableStateOf(if (savedSort != null) savedSort.substringAfter(':') == "true" else uiPrefs?.songSortReverse ?: false) }
     var selection by remember { mutableStateOf(Selection()) }
     var sortSheet by remember { mutableStateOf(false) }
 
@@ -271,7 +279,7 @@ fun SongList(
                     )
                 }
             }
-            itemsIndexed(shown, key = { _, s -> s.id }) { i, song ->
+            val songRow: @Composable androidx.compose.foundation.lazy.LazyItemScope.(SongUi, Int) -> Unit = { song, i ->
                 val songCoverUri = song.coverUri
                     ?: (if (song.album.isNotBlank()) songCovers["album:${song.album}"] else null)
                     ?: (if (song.artist.isNotBlank()) songCovers["artist:${song.artist}"] else null)
@@ -286,6 +294,29 @@ fun SongList(
                     modifier = motionItem().padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
                 )
             }
+            // The songs the list wants but the library lacks sit where they belong in the order, greyed out. When the list is sorted or
+            // searched, that place no longer means anything, so they are gathered after the songs instead.
+            val inline = ghosts.isNotEmpty() && ghostsInline && query.isBlank()
+            if (inline) {
+                val before = ghosts.groupBy { it.after.coerceIn(0, shown.size) }
+                for (i in 0..shown.size) {
+                    before[i]?.forEach { g -> item(key = "ghost:${g.key}") { GhostRow(g, Modifier.padding(horizontal = 16.dp, vertical = 3.dp)) } }
+                    if (i < shown.size) { val song = shown[i]; item(key = song.id) { songRow(song, i) } }
+                }
+            } else {
+                itemsIndexed(shown, key = { _, s -> s.id }) { i, song -> songRow(song, i) }
+            }
+            // While searching, the ghosts that match are gathered after the songs (their place in the order means nothing for a result list).
+            val tail = if (query.isBlank()) ghosts else ghosts.filter { it.title.contains(query.trim(), ignoreCase = true) || it.artist.contains(query.trim(), ignoreCase = true) }
+            if (tail.isNotEmpty() && !inline) {
+                item(key = "ghost-header") {
+                    Text(
+                        "Not in your library (${tail.size})", Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp),
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                items(tail, key = { "ghost:${it.key}" }) { g -> GhostRow(g, Modifier.padding(horizontal = 16.dp, vertical = 3.dp)) }
+            }
         }
         if (sortSheet) {
             ModalBottomSheet(onDismissRequest = { sortSheet = false }) {
@@ -298,7 +329,7 @@ fun SongList(
                         TextButton(
                             onClick = {
                                 if (option == sort) reverse = !reverse else { sort = option; reverse = false }
-                                uiPrefs?.setSongSort(sort, reverse)
+                                if (listKey != null) uiPrefs?.putString("list_sort:$listKey", "${sort.name}:$reverse") else uiPrefs?.setSongSort(sort, reverse)
                                 sortSheet = false
                             },
                             modifier = Modifier.fillMaxWidth(),

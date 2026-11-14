@@ -46,6 +46,12 @@ import kotlin.time.Duration.Companion.seconds
  * Archive -> Telegram message `album_cover_thumbnail` / `thumbnail` -> Deezer -> iTunes.
  * Saved image bytes are copied into `${dataDir}/covers/` so clearing TDLib cache never breaks covers.
  */
+/**
+ * The cover run in two counts: songs missing a cover ([done] of [total] finished) and songs that only have a low-quality thumbnail
+ * that a full-size cover can replace ([lowDone] of [lowTotal]). What is left of each is its total minus its done.
+ */
+data class CoverProgress(val done: Int, val total: Int, val lowDone: Int = 0, val lowTotal: Int = 0)
+
 class CoverService(
     private val dataDir: String,
     private val td: () -> TdClient?,
@@ -83,6 +89,32 @@ class CoverService(
 
     /** Covers waiting to load (on screen first, then the library backlog), for the progress UI. */
     val queued: StateFlow<Int> = _queued
+
+    private var finished = 0
+    private var finishedLow = 0
+
+    /** Songs queued or running to replace a low-quality thumbnail; everything else in the queue is a missing cover. */
+    private val upgradeWork = HashSet<String>()
+    private val _progress = MutableStateFlow<CoverProgress?>(null)
+
+    /**
+     * The whole cover run: songs finished so far of all that this run has to look at, or null when nothing is left. Songs waiting
+     * on a rate limit or on Telegram still count as left, so a pause between batches does not look like the end.
+     */
+    val progress: StateFlow<CoverProgress?> = _progress
+
+    private fun refreshQueued() {
+        _queued.value = highPriority.size + background.size
+        publishProgress()
+    }
+
+    private fun publishProgress() {
+        val queued = highPriority.size + background.size + inFlight.size + rateLimited.size + awaitingTd.size
+        val lowLeft = upgradeWork.size.coerceAtMost(queued)
+        val missingLeft = queued - lowLeft
+        if (queued == 0) { finished = 0; finishedLow = 0 }
+        _progress.value = if (queued == 0) null else CoverProgress(finished, finished + missingLeft, finishedLow, finishedLow + lowLeft)
+    }
 
     @Volatile private var started = false
     @Volatile private var startQueued = false
@@ -126,7 +158,7 @@ class CoverService(
 
     /** Queues [songs] ahead of background cover work so visible cards and playback populate immediately. */
     fun prioritize(songs: Collection<Song>) {
-        val need = songs.filter { needsCover(it) || coverWorkFor(it) == CoverWork.Upgrade }.map { it.unique_id }
+        val need = songs.filter { needsCover(it) }.map { it.unique_id }
         if (need.isEmpty()) return
         ensureStarted()
         scope.launch {
@@ -140,7 +172,7 @@ class CoverService(
                     }
                 }
             }
-            _queued.value = highPriority.size + background.size
+            refreshQueued()
             if (enqueued) wake.trySend(Unit)
         }
     }
@@ -206,7 +238,9 @@ class CoverService(
     fun kick(retryTdMissing: Boolean = false) {
         ensureStarted()
         scope.launch {
-            val missing = repo.coverCandidateIds().filter { !gaveUpRecently(it) }
+            // Songs missing a cover (none, or the file is gone), then low-quality thumbnails with a full-size source. Good covers are left alone.
+            val missing = (repo.coverMissingIds() + repo.coverFileMissingIds { Fs.exists(it) }).distinct().filter { !gaveUpRecently(it) }
+            val lowQuality = repo.coverUpgradeIds().filter { !gaveUpRecently(it) }
             var enqueued = false
             queueMutex.withLock {
                 if (retryTdMissing && awaitingTd.isNotEmpty()) {
@@ -223,7 +257,13 @@ class CoverService(
                         if (background.add(uid)) enqueued = true
                     }
                 }
-                _queued.value = highPriority.size + background.size
+                // Low-quality thumbnails come after the missing covers and are counted on their own.
+                for (uid in lowQuality) {
+                    if (uid !in inFlight && uid !in attempted && uid !in highPriority && uid !in awaitingTd && uid !in rateLimited && uid !in background) {
+                        if (background.add(uid)) { upgradeWork.add(uid); enqueued = true }
+                    }
+                }
+                refreshQueued()
             }
             if (enqueued) wake.trySend(Unit)
         }
@@ -249,7 +289,7 @@ class CoverService(
             } catch (_: Throwable) {
                 // Keep workers alive across unexpected IO/parse issues on one track.
             } finally {
-                queueMutex.withLock { inFlight.remove(uid) }
+                queueMutex.withLock { inFlight.remove(uid); if (upgradeWork.remove(uid)) finishedLow++ else finished++; publishProgress() }
             }
         }
     }
@@ -259,17 +299,17 @@ class CoverService(
         if (high != null) {
             highPriority.remove(high)
             inFlight.add(high)
-            _queued.value = highPriority.size + background.size
+            refreshQueued()
             return@withLock high to true
         }
         val bg = if (allowBackground) background.firstOrNull() else null
         if (bg != null) {
             background.remove(bg)
             inFlight.add(bg)
-            _queued.value = highPriority.size + background.size
+            refreshQueued()
             return@withLock bg to false
         }
-        if (allowBackground) _queued.value = 0
+        if (allowBackground) { _queued.value = 0; publishProgress() }
         null
     }
 
@@ -386,8 +426,9 @@ class CoverService(
                     notifyWake.trySend(Unit)
                     recordGiveUp(uid, found = true)
                     markDone(uid, Outcome.Done)
-                    // The thumbnail is only a stand-in; the full-size cover comes right after.
+                    // The thumbnail is only a stand-in; the full-size cover comes right after (not counted in the missing-cover progress).
                     if (lookups) queueUpgrade(uid)
+                    // The thumbnail is only a stand-in; the full-size cover comes right after.
                     return
                 }
             }
@@ -423,7 +464,8 @@ class CoverService(
             attempted.remove(uid)
             upgradeAsked.add(uid)
             val ok = uid !in inFlight && background.add(uid)
-            _queued.value = highPriority.size + background.size
+            if (ok) upgradeWork.add(uid)
+            refreshQueued()
             ok
         }
         if (added) wake.trySend(Unit)

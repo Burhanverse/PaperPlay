@@ -61,6 +61,9 @@ internal expect fun readRange(path: String, offset: Long, length: Int): ByteArra
 /** Size of the file at [path] in bytes, or -1 when it is not a readable file. */
 internal expect fun fileLength(path: String): Long
 
+/** Writes one line to the platform log (Logcat on Android, the console on desktop) as "PaperPlay <tag>: <message>". */
+expect fun appLog(tag: String, message: String)
+
 internal expect fun deleteFile(path: String)
 
 /** Full paths of the files directly in [dir], not its subfolders. Empty when it cannot be read. */

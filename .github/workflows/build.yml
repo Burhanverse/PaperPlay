@@ -116,16 +116,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The app's own jars are Java 25 classes (and two libraries need 21), so the runtime bundled in the installer must be 25.
+      # Zulu ships jmods, which ProGuard reads the JDK classes from; Temurin 25 does not. A Java 17 runtime made the app fail at start-up.
       - uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '17'
+          distribution: zulu
+          java-version: '25'
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # libvlc and TDLib are not in the repository. libvlc comes from the official VLC zip.
-      # TDLib comes from a release named "deps" in this repository (asset tdlib-windows.zip holding
-      # tdjson.dll and its DLLs). Without it the app still builds but cannot reach Telegram.
+      # libvlc is not in the repository; it comes from the official VLC zip.
+      # TDLib's Windows DLLs are in the repository (desktopApp/third_party/tdlib).
       - name: Get libvlc
         shell: pwsh
         run: |
@@ -143,22 +144,10 @@ jobs:
           Copy-Item "$($src.FullName)\plugins" "$dst\plugins" -Recurse
           "PAPERPLAY_VLC=$($src.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
-      - name: Get TDLib for Windows
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download deps --repo "${{ github.repository }}" --pattern "tdlib-windows.zip" --dir "$env:RUNNER_TEMP" 2>$null
-          $global:LASTEXITCODE = 0 # a missing release is expected; the step must not inherit gh's exit code
-          if (Test-Path "$env:RUNNER_TEMP\tdlib-windows.zip") {
-            Expand-Archive "$env:RUNNER_TEMP\tdlib-windows.zip" -DestinationPath "$env:RUNNER_TEMP\tdlib" -Force
-            "PAPERPLAY_TDLIB=$env:RUNNER_TEMP\tdlib" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          } else {
-            Write-Warning "No 'deps' release with tdlib-windows.zip: the Windows build will not include TDLib."
-          }
-
       - name: Build release app image
         shell: cmd
+        env:
+          PAPERPLAY_JAVA_HOME: ${{ env.JAVA_HOME }} # Zulu 25 from the step above
         # Same build as scripts/release.ps1: the minified release image, then the Inno Setup installer.
         run: gradlew.bat :desktopApp:createReleaseDistributable -PappVersion=${{ needs.version.outputs.version }} -PappVersionCode=${{ needs.version.outputs.code }} --no-daemon
 

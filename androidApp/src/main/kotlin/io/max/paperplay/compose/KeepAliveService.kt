@@ -61,7 +61,9 @@ class KeepAliveService : Service() {
 
         /** Redraws the notification with the current activity. Does nothing while the service is off. */
         fun update(context: Context, title: String, text: String, progress: Int?, max: Int?, indeterminate: Boolean) {
-            if (!running) return
+            // Off ("keep running" is not chosen): the notification is still shown while there is work, as an ordinary one that can be swiped away.
+            val idleText = text == "Everything is up to date" || text == "Connecting to Telegram"
+            if (!running && idleText) { clear(context); return }
             val key = listOf(title, text, progress, max, indeterminate)
             val now = android.os.SystemClock.elapsedRealtime()
             synchronized(this) {
@@ -71,6 +73,13 @@ class KeepAliveService : Service() {
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.notify(NOTIFICATION, build(context, title, text, progress, max, indeterminate))
+        }
+
+        /** Takes the ordinary progress notification away (the foreground service keeps its own). */
+        fun clear(context: Context) {
+            if (running) return
+            lastKey = null
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIFICATION)
         }
 
         private fun build(context: Context, title: String, text: String, progress: Int?, max: Int?, indeterminate: Boolean): Notification {
@@ -92,7 +101,7 @@ class KeepAliveService : Service() {
                 .setContentText(text.lineSequence().firstOrNull().orEmpty())
                 .setStyle(Notification.BigTextStyle().bigText(text))
                 .setContentIntent(open)
-                .setOngoing(true)
+                .setOngoing(running)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
             if (max != null && progress != null) builder.setProgress(max, progress, false)

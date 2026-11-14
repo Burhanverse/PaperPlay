@@ -20,6 +20,12 @@ fun interface HttpPoster {
 fun interface BotDeleter {
     /** Deletes up to 100 posts in one call. Telegram skips the ones it can't delete and still answers ok. */
     suspend fun deleteMessages(chatId: Long, tdlibMessageIds: List<Long>): Boolean
+
+    /** True when [deleteOne] asks Telegram's server about one post, so its answer can be trusted over TDLib's. */
+    val perPost: Boolean get() = false
+
+    /** Deletes one post and returns null when it is gone (deleted now, or already gone); otherwise Telegram's reason it is refused. */
+    suspend fun deleteOne(chatId: Long, tdlibMessageId: Long): String? = null
 }
 
 /**
@@ -29,6 +35,14 @@ fun interface BotDeleter {
  */
 class BotApi(private val token: suspend () -> String?, private val http: HttpPoster) : BotDeleter {
     private var botId: Long? = null
+
+    override val perPost: Boolean get() = true
+
+    override suspend fun deleteOne(chatId: Long, tdlibMessageId: Long): String? {
+        val reason = deleteMessage(chatId, tdlibMessageId) ?: return null
+        // "message to delete not found" means it is already gone, which is what was wanted.
+        return if (reason.contains("not found", ignoreCase = true)) null else reason
+    }
 
     private suspend fun call(method: String, params: Map<String, String>): JsonObject? {
         val t = token() ?: return null

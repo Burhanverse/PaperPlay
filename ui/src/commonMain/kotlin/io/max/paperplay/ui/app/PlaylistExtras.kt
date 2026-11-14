@@ -165,6 +165,7 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
                 )
             }
         }
+        CopyLinksButton(backend, t)
         if (p != null && state == null && backend.pref("index_auto_copy") != "true") IconButton({
             state = "Adding"
             scope.launch {
@@ -193,6 +194,39 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
                 if (ok) onChanged()
             }
         }) { Text("Add") }
+    }
+}
+
+/**
+ * Copies a link to a song that is not in the library: its own page on Spotify, then Apple Music, then the other services that have it
+ * (Deezer, Tidal, Amazon Music, YouTube Music). Only real pages of the song are listed, never search pages.
+ */
+@Composable
+private fun CopyLinksButton(backend: CoreBackend, t: MissingTrack) {
+    var open by remember { mutableStateOf(false) }
+    var links by remember(t.track_key) { mutableStateOf<List<io.max.paperplay.core.integrations.TrackLink>?>(null) }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val notice = LocalListActions.current?.notice
+    LaunchedEffect(open) {
+        if (open && links == null) links = withContext(Dispatchers.Default) { io.max.paperplay.core.integrations.resolveLinks(backend.http, t.track_key, t.title, t.artist, t.duration_sec.toInt()) }
+    }
+    Box {
+        IconButton({ open = true }) { AppIcon(Icons.Rounded.Link, "Copy a link to this song") }
+        androidx.compose.material3.DropdownMenu(open, { open = false }) {
+            val list = links
+            if (list == null) androidx.compose.material3.DropdownMenuItem(text = { Text("Looking for the song...") }, onClick = {}, enabled = false)
+            else if (list.isEmpty()) androidx.compose.material3.DropdownMenuItem(text = { Text("No links found for this song") }, onClick = {}, enabled = false)
+            else list.forEach { link ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Copy ${link.service} link") },
+                    onClick = {
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(link.url))
+                        notice?.invoke("Copied the ${link.service} link")
+                        open = false
+                    },
+                )
+            }
+        }
     }
 }
 

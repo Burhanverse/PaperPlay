@@ -300,7 +300,11 @@ class DeleteQueue(
         var retries = 0
         while (true) {
             try {
-                val left = deletePostsBest(chat, entries.map { it.post.messageId }).toSet()
+                val byId = entries.associateBy { it.post.messageId }
+                // Each post is marked as it goes, so the page counts up one by one.
+                val left = deletePostsBest(chat, entries.map { it.post.messageId }) { id ->
+                    byId[id]?.let { e -> store.removePost(e.post.chatId, e.post.messageId); set(e.key, DeleteStatus.Done) }
+                }.toSet()
                 for (e in entries) {
                     if (e.post.messageId in left) {
                         set(
@@ -339,7 +343,7 @@ class DeleteQueue(
      * Deletes as many of [ids] as it can, in calls of up to 100 at each step, and returns the ones
      * nobody could remove. Bot first, then the Bot API, then the owner's account. A 429 from the bot is thrown.
      */
-    private suspend fun deletePostsBest(chat: Long, ids: List<Long>): List<Long> {
+    private suspend fun deletePostsBest(chat: Long, ids: List<Long>, onGone: suspend (Long) -> Unit = {}): List<Long> {
         try {
             td.call(
                 request("deleteMessages") {
@@ -348,9 +352,23 @@ class DeleteQueue(
                     put("revoke", true)
                 },
             )
-            return emptyList()
+            if (!bot.perPost) return emptyList()
         } catch (e: TdError) {
             if (e.code == 429) throw e
+        }
+        if (bot.perPost) {
+            // TDLib says ok for posts this bot never saw (another bot's posts) without deleting them, so its answer proves nothing.
+            // Telegram's own answer for each post does: deleted now, already gone, or refused with a reason.
+            val refused = LinkedHashMap<Long, String>()
+            for (id in ids) {
+                val why = bot.deleteOne(chat, id)
+                if (why == null) onGone(id) else refused[id] = why
+            }
+            if (refused.isNotEmpty()) log("Telegram refused ${refused.size} of ${ids.size}: ${refused.values.first()}")
+            if (refused.isEmpty()) return emptyList()
+            val rest = if (account.isLoggedIn) account.deleteBatch(chat, refused.keys.toList()) else refused.keys.toList()
+            if (account.isLoggedIn) log("Your account removed ${refused.size - rest.size} of ${refused.size}")
+            return rest
         }
         // TDLib refuses the whole call if one post can't go. Ask Telegram directly, which skips those it can't delete.
         for (part in ids.chunked(BATCH)) bot.deleteMessages(chat, part)

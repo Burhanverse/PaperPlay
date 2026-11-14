@@ -4,7 +4,10 @@ import io.max.paperplay.core.library.LibraryRepo
 import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdError
+import io.max.paperplay.core.telegram.audioContent
+import io.max.paperplay.core.telegram.documentContent
 import io.max.paperplay.core.telegram.request
+import io.max.paperplay.core.telegram.topicField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -144,14 +147,12 @@ class TopicMover(
         try {
             val asDocument = now.mime.isNotEmpty() && !now.mime.startsWith("audio/")
             val file = buildJsonObject { put("@type", "inputFileRemote"); put("id", now.remote_id) }
+            val newApi = c.newApi()
             val sent = c.call(request("sendMessage") {
                 put("chat_id", now.chat_id)
-                put("topic_id", buildJsonObject { put("@type", "messageTopicForum"); put("forum_topic_id", job.topicId) })
+                topicField(job.topicId, newApi)
                 put("options", buildJsonObject { put("@type", "messageSendOptions"); put("disable_notification", true) })
-                put("input_message_content", buildJsonObject {
-                    put("@type", if (asDocument) "inputMessageDocument" else "inputMessageAudio")
-                    put(if (asDocument) "document" else "audio", file)
-                })
+                put("input_message_content", if (asDocument) documentContent(file, newApi) else audioContent(file, newApi, "", ""))
             }, 60.seconds)
             sentId.complete(sent.long("id") ?: throw TdError(0, "Telegram did not accept the repost"))
             val done = withTimeoutOrNull(120.seconds) { outcome.await() } ?: throw TdError(408, "Repost timed out")

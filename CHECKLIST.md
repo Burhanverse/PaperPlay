@@ -508,3 +508,118 @@ Open:
 - [x] The Inno setup warns when an older install exists in Program Files; the 1.3.1 release on GitHub still has the old jpackage installer
 - [x] The MSI copy in Program Files was uninstalled on the PC (exit 3010, restart or closing the running app finishes it)
 - [ ] Open: the GitHub setup exe should be near 82 MB but the goal is under 80 MB. Biggest parts of the 162 MB image: `tdjson.dll` 28 MB, JVM runtime 49 MB, `skiko` 14 MB, `icudtl.dat` 10 MB. Try `Compression=lzma2/ultra64` first, then measure the CI build before cutting anything
+
+## Update 2026-11-14 (CI fixes, TDLib in the Windows build)
+- [x] CI ProGuard failed (`IncompleteClassHierarchyException`): Gradle runs on a downloaded JDK 25 (`gradle-daemon-jvm.properties`) that has no jmods. The workflow now sets `PAPERPLAY_JAVA_HOME` to the Temurin 17 and `desktopApp/build.gradle.kts` uses it as `javaHome`. Worked: `v1.4.0-beta.1` has a 65 MB setup exe, a 76 MB zip and no MSI
+- [x] That beta had no `tdjson.dll` (the `deps` release was never made), so it could not reach Telegram. TDLib's four Windows DLLs now live in `desktopApp/third_party/tdlib` and the Gradle default reads them; the `deps` download step is gone from the workflow. The Windows installer should grow back toward 80 MB
+- [ ] Linux still has no TDLib
+- [ ] Not tried: installing the CI setup exe over the script-built install (same `AppId`, should upgrade in place); the update dialog on launch
+
+## Update 2026-11-14 (evening: Android uploads, TDLib shapes, duplicates page). Key: [x] seen working on the phone, [~] built and installed but not tried, [ ] open
+### Uploads (Android)
+- [x] Cause of "InputFile is not specified": TDLib 1.8.60+ wants `inputMessageAudio.audio` as an `inputAudio` object (and `topic_id: messageTopicForum`); older TDLib wants the flat shape. `core/telegram/TdCompat.kt` picks the shape from `getOption version` (cached in `TdClient.newApi()`), as the Flutter app's `td_compat.dart` does. Uploads are accepted since (several bots posted). Same fix in `TopicMover` (reposts) and `UserSession` (backup document), both [~] not tried
+- [x] Parallel uploading as in Flutter: 6 workers by default, up to 20, each worker rests on its own after a file (the `rate_uploads` gap, 6 a minute is about 10 s, varied 30%, 3x with "Upload more slowly", longer after every 20). The old global gate (one start every 8-20 s, 3 workers at most) was why it felt stuck. About 12 songs went up in 13 s. [~] The Settings slider now goes to 20 and the "Upload more slowly" text was corrected: not tried
+- [x] Duration is read from the file header (`core/metadata/Duration.kt`: FLAC, MP3, M4A, Ogg Vorbis/Opus, WAV) and sent with the song, so Telegram shows the time. `DurationTest` has 3 passing tests; the log has `duration <name> = N s`
+- [ ] A file TDLib has already uploaded from the same path is re-sent from its first upload with the first upload's attributes (no duration): 3 songs (Yot Club, Duvet, Alexander Stewart) still show `-:--`. Explanation from the log, not proven. Rename the file, or log in fresh (new TDLib database), to test
+- [ ] Cover art is not sent as a thumbnail (Flutter sends `album_cover_thumbnail`); Telegram showed covers itself
+- [ ] Bot rights are not checked before a bot is picked (Flutter's `canWriteWith`): a bot that is not an admin of the target chat would fail its files
+- [x] Skip rule: songs under 2 MB are never uploaded (`MIN_UPLOAD_BYTES`, in `Uploader.enqueue` and the folder scan); the page says how many were left out. [~] The "Left out N under 2 MB" message has not been seen
+- [x] Restart pause: a queue restored after a restart is paused by design, and adding songs did not lift it (the "it paused by itself" report). [~] Fixed so adding songs lifts a restart pause only (`pausedByRestart`); a Pause the user pressed stays. Not tried
+- [~] Duplicate uploads: the app now remembers every file it sent by name and size (pref `uploaded_files`, the Flutter format) and skips a file that is already queued or sent; before, the same files were sent twice because the library only learns of a song after a scan. Turn off "Skip songs already in my library" to send a deleted song again. Not tried
+- [~] "Internal Server Error during file upload" (Telegram side, seen on 3 songs) and "InputFile is not specified" now retry (up to 4 attempts) instead of failing at once; a missing file fails at once with a clear message. Not tried
+- [x] Logging: `appLog` writes `PaperPlay <tag>: ...` lines (enqueue, upload start/done/failed, duration, every Telegram error with the sendMessage request, folder scan, copy failures) to Logcat. The phone's log buffer is 256 KiB; `adb logcat -G 8M` raises it until a reboot
+### Android folders and files
+- [x] Cause of the crash and the failures on the phone: the data partition was almost full (about 0.9 GB free), TDLib aborts the process when it cannot write `td.binlog`. Picking a folder copied every song into the cache. Free space is still the owner's to make
+- [x] Folder upload reads songs where they are, as Flutter does (no copy): audio access is asked at the first "Choose folder", and a folder on the phone's own storage is scanned by path (`FolderTree.kt`). Seen working: songs under `/storage/emulated/0/Music` uploaded without copies
+- [~] The same for an SD card (`/storage/<volume>/...`) and for songs chosen one by one (`pickedFile`): not tried. TDLib cannot read a content URI, so cloud, Downloads and other providers are still copied to the cache first; copying keeps 300 MB free and skips what would not fit, with "Could not copy N" in the page message
+- [~] Subfolders are left out; the "Songs in subfolders" dialog lists each subfolder's song count and the first 8 file names, nothing ticked at first, "Skip subfolders" or "Add N songs": not seen yet. Dropping a folder on the desktop window still includes subfolders
+- [~] Settings > Permissions has a "Music files" row (Allow / opens settings): not tried
+- [~] Feedback after picking a folder ("Copying N songs for upload...", "Could not copy N"), the three buttons wrap (the Pause button was squashed into a column: seen fixed), the Upload-to dialog scrolls and no longer lists General twice: not tried
+### Duplicates page
+- [x] Floating "Delete N" button (not at the very bottom), extras ticked on load (repeats in the same topic and clearly worse copies; the best copy is never ticked), the "Keep best quality" button is gone, each copy says "Stays" or "Will be deleted". Seen on the phone
+- [~] Each copy shows its topic (playlist) name from the Telegram topic table (`forum_topics`), format, size, date and file name; "Unnamed topic" appeared because the page used the owner-edited name list instead. Not tried after the fix
+- [~] The page is a lazy list (it was one long column that built hundreds of rows with covers: slow and laggy) and tapping anywhere on a copy ticks it. "Tick topic repeats" keeps one copy of a song posted in several topics (a named topic before General) and ticks the others; it can take a song out of a topic playlist. Not tried
+- [ ] Both copies of "The Night We Met" showed ticked once, against the rule that one copy always stays. No cause found
+- [ ] Unclear whether the 172 deletes removed the posts: the page said 172 of 172 done, but Telegram's Music count stayed 3513 (before and after, also after reopening Telegram). Check by searching the channel for "Golden (Glowin" and "Airplanes". `deletePostsBest` returns success as soon as TDLib accepts the call and only re-checks when it fails
+- [ ] The auto-ticked "clearly worse" copies include a smaller FLAC of a different release (Maroon 5 "Memories", different cover): the size-only rule (under two thirds of the best) may tick a different version
+- [ ] The Chats and channels index only fills a separate catalog; songs reach the library with "Add all shown" / "Add N" (not a bug, but the progress text "Indexing ...: N songs" reads as if they were added)
+### Player
+- [~] The mini player can be swiped away while paused or stopped and comes back when playback starts (`Shell.kt`). Not tried. In several screenshots a faded mini player sits at the right edge while the page shows no mini player: possibly stuck partway. To check
+### Windows build and updates
+- [x] CI builds the release image and the same Inno installer as the script (per-user, one `AppId`), ProGuard reads the JDK 17 classes (`PAPERPLAY_JAVA_HOME`; Gradle runs on a JDK 25 without jmods), TDLib's four DLLs live in `desktopApp/third_party/tdlib`. `v1.4.0-beta.2`: setup exe 77.2 MB (under the 80 MB goal), zip 94.3 MB, no MSI; the zip has `tdjson.dll`; checksums match
+- [~] `v1.4.0-beta.2` was installed silently over the script-built 1.3.0 (exit 0, now 1.4.0, `tdjson.dll` present). The PC app was not opened: Telegram connection, playback and the in-place upgrade are not verified. The old `C:\Program Files\PaperPlay` MSI install was removed, its folder may be left
+- [~] Setup warns about an older Program Files install; the update dialog on every launch; themed in-app logo; the settings screens after the resources fix: none seen yet
+- [ ] Linux has no TDLib; the 1.3.1 GitHub release still has the old installer
+### Not committed
+- [ ] All of the above since commit `ed49815` is uncommitted (uploads, TDLib shapes, duration, folders, permissions, duplicates page, mini player, logging, tests). Split into commits when the [~] items are confirmed
+## Update 2026-11-14 (standby visualizer follows the audio)
+- [x] Cause found: `StandbyVisual` was purely procedural (a tempo and phases from the song id, level from the volume), so it never reacted to the audio
+- [~] Fix: `player/AudioTap.kt` (1024-point FFT, 32 log bands, auto gain) fed by `TapProcessor` in the ExoPlayer audio sink (`PlaybackCore` uses `TapRenderersFactory`); the visual reads it, 60 fps, fast attack and slow release smoothing, rings jump on bass hits. Falls back to the old motion when no audio arrives (desktop). Not compiled or tried
+- [ ] Check on the phone: bars follow the music, silence settles, pause settles, no audio glitch from the processor, battery use in standby. The tap runs ~0.1 s ahead of the sound (sink buffer): add a delay if it feels early
+- [ ] Standby ideas: auto-start while charging; spectrum for the desktop (vlcj audio callback); cover-art colour pulse; synced lyrics large mode; album art as the visual; a sleep timer countdown and alarm clock; next alarm; notification count; now playing from the lock screen; night mode that dims by time; tap-hold for brightness; double tap to play/pause; swipe left/right to skip; visual styles: mirrored bars, circular spectrum, particles; peak-hold caps on the bars
+- [~] Seven new standby styles in `StandbyVisual.kt` and `StandbyVisualMore.kt`: Mirror, Peaks (falling caps), Circle (spokes), Particles (burst on bass), ASCII bars, Matrix (rain, speed follows the bands), ASCII pulse (text ring). Not compiled or tried; check text cost on the phone (monospace rows, ~16 text draws per frame)
+
+## Update 2026-11-14 (night: start-up, toasts, Spotify lists, Home). Key as above: [x] seen working, [~] built but not tried, [ ] open
+### Start-up and toasts
+- [~] Daily mixes flickered or vanished at start: Home is replanned several times while the library loads, and a build that came back empty (a partly loaded library, saved mixes that could not be read yet) replaced the mixes on screen. `CoreBackend` now remembers the last mixes shown (`lastMixes`) and an empty result never replaces them. Not tried
+- [~] Home shows skeleton shapes (`HomeSkeleton.kt`: six tiles, card rows, the mix row) while the library and the plan load, and a cover without art shows a pulsing shape instead of the coloured mosaic, only during start-up (`LocalCoversPending`, until the cover queue first empties or 10 s). An earlier version kept covers as skeletons while scrolling; fixed. Not tried
+- [~] Covers blinked away and came back on scroll: the cover cache held 32 MB and Home decoded each 150 dp card at 768 px (about 2.4 MB), so about 13 fitted. Cards now decode at 512 px (new size step in `Cover.kt`), the cache is 64 MB, and `FileCoverLoader.preload` decodes the covers of the planned tiles and shelves ahead of drawing, so art should be ready when Home is drawn (it showed about 2 s late). Not built after this change (see Build)
+- [~] Connection toasts ("Connecting to ...", "Connected to ...") wait until the app has been open 10 s (`waitForQuietStart` in `Shell.kt`); every snackbar is coloured with the page tint and swipes sideways away (`Toasts.kt`, `AppSnackbarHost`, also used by the playlist page). Not tried
+- [ ] Start-up order: favorites first, then the rest, then the art about 2 s later. The skeletons and the preload should cover it; `HomeShelves.plan` and the 2 s re-plan delay were not changed
+### Spotify lists and Home
+- [~] Refreshing from Spotify shows a toast when it starts and the result when it ends (Spotify settings page and the playlist page's "Refresh from Spotify link")
+- [~] Songs a Spotify playlist has but the library does not are listed greyed out after the songs under "Not in your library (N)", with their art (`GhostRow.kt`; the art comes once from Spotify's oEmbed page and is saved as `covers/spotify_<id>.jpg` by `MissingArt`); tapping one opens it in Spotify
+- [~] The "N not in your library" sheet has a link button per song with copy items: Spotify, Apple Music, Deezer, Tidal, Qobuz, Amazon Music, YouTube Music (`TrackLinks.kt`; direct pages from song.link, otherwise a search page marked "(search)"). `TrackLinksTest` has 2 passing tests. song.link is unofficial and rate limited
+- [~] Sort order is remembered for each list that has none saved (Songs, Favorites, albums, artists, generated lists; playlists already kept theirs): `SongList(listKey = ...)`, stored with `UiPrefs.putString("list_sort:<key>")`. Filters and search text are not saved
+- [~] The six quick tiles on Home are a row you swipe sideways (three tiles per column, every playlist included, at least six tiles). Not tried
+### Build
+- [ ] The Android build is blocked by another session's unfinished player work: `player/.../TapProcessor.kt` (untracked) calls `DefaultAudioSink.Builder.setEnableAudioOutputPlaybackParams`, which this Media3 version lacks. Those files are not ours; do not touch them
+
+### Windows installer did not start (found 2026-11-14 on a second PC)
+- [x] Cause: the `v1.4.0-beta.2` Windows installer bundled a Java 17 runtime (`PAPERPLAY_JAVA_HOME` pointed at Temurin 17 to give ProGuard its jmods), but the app jars (`core`, `player`, `ui`) are Java 25 classes and `backdrop`/`shapes` need Java 21: `UnsupportedClassVersionError` before `main()`, so no window, no `startup.log`, launcher exit code 1. The script-built installer bundles Zulu 25 and works. Seen with a class-version scan of the installed jars and `runtime\release` (JAVA_VERSION 17.0.21)
+- [~] Fix: the Windows CI job now uses Zulu 25 (jmods included) for Gradle and for `PAPERPLAY_JAVA_HOME`. Not built by CI yet. Until then use the script-built installer. Check next release: `runtime\release` says JAVA_VERSION 25
+
+## Update 2026-11-14 (late night: deletes, language search, reading speed, Windows start-up). Key as above: [x] seen working, [~] built and installed but not tried, [ ] open
+### Covers, toasts and the mini player
+- [x] The progress notification and the Tasks page show the cover run (seen: "Loading covers", "Covers: 50 left", "2906 of 3014"). The count kept growing because it was finished plus waiting, and each cover found queued a full-size upgrade job
+- [~] The cover run now works only on songs missing a cover (none, or the file is gone) and low-quality thumbnails with a full-size source, counted separately ("N missing, M left", "N low quality, M left"); the Tasks entry stays open 20 s after the queue empties so batches are one entry. Installed 21:34, numbers not seen yet
+- [~] The mini player swipe finishes fully gone or fully back (the drag is a plain value; the settle animation could be cancelled by per-step coroutines); toasts sit above the mini player and the bar instead of over the page title. Installed, not tried
+### Spotify lists
+- [~] Greyed-out songs are rows of the playlist, placed by the chosen order (Playlist order by Spotify position, Title, Artist, Newest, Oldest by Spotify added date), not queued, not in recommendations, tap opens Spotify; a search gathers the matching ones after the songs. Placement is exact only for the original import
+- [~] Copy links list only real song pages: the song's Spotify page, then song.link's pages (Apple Music, Deezer, Tidal, Amazon Music, YouTube Music), then an Apple Music or Deezer page matched by title, artist and length within 5 s; no search pages, no Qobuz. `TrackLinksTest` 2 tests pass
+- [ ] Lyrics and song info are not fetched for songs that are not in the library (only the cover, from Spotify's oEmbed page)
+### Deleting duplicates
+- [x] Cause of "172 of 172 done" with the posts still in Telegram: `deleteMessages` through the bot's TDLib answers ok and skips posts that bot's local database does not have (older posts, other bots' posts), and the queue took ok as done and dropped the posts from the library
+- [~] Fix: after that call the queue asks Telegram's server about each post (Bot API delete-one: deleted, already gone, or refused with a reason) and only then marks it Done; refused posts go to the account if it is logged in, else Failed. Installed 22:04, not tried on a real delete. The 172 posts the old version dropped must be brought back with Repair library
+### Search and reading
+- [~] Search by language: typed words (japanese, hindi, tamil, malayalam, korean, russian ...), also "japanese songs" and "lang:hindi". A song's language comes from its writing (`core/metadata/Language.kt`) and, in the Search tab, from the language its topic is named for (Japanese, Bollywood, Mollywood, Tollywood, Kollywood, Hollywood ...). Latin-letter songs outside such a topic cannot be told. `LanguageTest` 3 tests pass
+- [~] "Adjust the reading speed by itself" (Settings > Library > Speeds, off by default): starts at the chosen or last good speed, +1/8 every 8 good requests, 60% after a flood wait with the old speed kept as a ceiling; saved as `reading_auto_rpm`; the reading slider now reaches 300 a minute. A Full rescan hit a flood wait at 20 a minute before this
+- [~] The Library settings page: status first, then Repair library, Full rescan, Find duplicates and Sort General, then drop-downs for Speeds, Song info/covers/lyrics and More tools. Installed 22:27
+- [ ] Idea, not built: after the normal scan, let every extra bot read the chat on its own, slowly, in the background (Repair library already does it by hand). With "Remain anonymous" on, new uploads are visible to every bot
+### Windows
+- [x] The `v1.4.0-beta.2` installer never started on any PC: it bundled Java 17 while `core`, `player` and `ui` are Java 25 classes (`backdrop` and `shapes` need 21). The script installer bundles Zulu 25. CI now uses Zulu 25; not run by CI yet (check `runtime\release` says 25)
+- [x] The `v1.3.1` GitHub installer has no `tdjson.dll` (built before the DLLs were committed), so "Save and connect" does nothing there; likely, not checked inside the installer. A clean uninstall, deleting `%APPDATA%\PaperPlay` and reinstalling made it open on the second PC; the earlier non-start was probably old data or the one-copy lock
+- [~] Onboarding showed the chosen profile photo as a mosaic (no image loader before the main screen) and the bot page said "Not ready yet" after a successful save; both fixed, not tried on the PC
+- [ ] Before the next release: a start-up smoke test in CI (install the setup exe on the runner and start it), one Java target for all modules, a launcher that reports a start-up error, a software-drawing fallback. ARM Windows: x64 under emulation is untried; a native ARM build needs a JDK, skiko, libvlc and TDLib for ARM64
+### Repository
+- [x] Everything above is committed and pushed to `main` (`222d1e9`, then `3c5c03f` and `427f18b` on top of the release bot's `3771c21`); `beta` was brought level with `main` at `222d1e9`. The release workflow bumped `version.properties` to 1.4.0, wrote `CHANGELOG.md` and tagged `v1.4.0` by itself. Left uncommitted on purpose: the other session's audio-tap files.
+- [ ] Build note: the Android build in this folder fails while those other files do not compile. A clean copy (`D:\PaperPlayBuild`, a git worktree of `HEAD` with this session's files copied over) builds the phone APK; remove it with `git worktree remove` when done
+
+## Update 2026-11-14 (last round: tasks, sync counter, live duplicate delete, reader labels). Key as above: [x] seen working, [~] built and installed but not tried, [ ] open
+### Song info page and Tasks
+- [~] "Song info left" page redesigned: where the library stands (complete count and bar, lookups running, covers queued), "Show only" filter chips with counts, an Actions block that wraps (Look up again, Select all, Retry no match, Copy CSV, Save file), a thin divider between songs.
+- [~] The page no longer hides its last rows behind the bottom bar: lazy pages (Song info left, Log) pad their list by the bar height instead of clipping it.
+- [~] Tapping a running Looking up song info or Loading covers task opens that page on the Waiting or No cover filter, so the live list is one tap away.
+- [~] Fast song info (Settings, Song info, covers and lyrics): 4 workers, Deezer asked first and, when it is sure (title, artist, length), the slow MusicBrainz and AudioDB calls are skipped. Off switch asks every source, as before.
+### Reading and scanning
+- [~] The sync banner counts up smoothly: the shown number is estimated between pages from the measured speed (never more than the pages asked for ahead) and snaps to the real count on each page, instead of jumping by 100.
+- [~] A full scan or Repair names who is reading: "Bot 1" (main bot), "Bot 2", "Bot 3" for the extra bots, and "Your account: reading <chat>, N songs" for the account. The normal background scan stays unlabeled.
+- [~] After a Full rescan the app offers to read with the other bots (and the account) too. Nothing is deleted.
+- [~] The indexing count ("Indexing <chat>: N songs") counts up smoothly the same way: estimated between batches, snapped to the real count when a batch lands.
+- [~] The scan label shows the bot's own name (display name, else @username) instead of Bot 1, Bot 2; the account shows as "Your account".
+### Deleting duplicates
+- [~] The delete counts one post at a time ("Deleting: n of 152 done"): each post is marked Done as soon as Telegram confirms it. The page drops a deleted post at once, and a song with no extra copy left goes with it. Pressing Delete scrolls the page to the top.
+### Repository
+- [x] Commits this round: language search, duplicate delete through the Bot API, auto reading speed, faster song info, Song info page with the Tasks tap, Library settings in drop-downs with the other-bot read, docs, then the live duplicate delete and the sync counter with reader labels.
+- [ ] Owner still to check on the phone: greyed-out Spotify songs in order, cover counts, mini player and toast, a real duplicate delete (posts gone from Telegram), language search, auto reading speed, the sync counter and reader labels. Then look at the Windows job of the v1.4.0 run: `runtime
+elease` must say Java 25 and the setup exe must start.

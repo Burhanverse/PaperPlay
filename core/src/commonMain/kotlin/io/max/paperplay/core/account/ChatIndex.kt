@@ -6,6 +6,8 @@ import io.max.paperplay.core.integrations.looseTitleKey
 import io.max.paperplay.core.integrations.matchKind
 import io.max.paperplay.core.library.Song
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -120,15 +122,40 @@ class ChatIndex(
         _progress.value = IndexProgress(chatId, title, 0, true)
         val gen = stopGen
         try {
-            account.songsIn(chatId, after).collect { batch ->
-                if (stopGen != gen) throw StopRun()
-                if (batch.isEmpty()) return@collect
-                store.upsertPosts(batch)
-                found += batch.size
-                newest = maxOf(newest, batch.maxOf { it.messageId })
-                // Newest is saved at once but the chat only counts as complete when the whole read ends.
-                store.setState(chatId, newest, clock(), complete = after > 0 && complete)
-                _progress.value = IndexProgress(chatId, title, found, true)
+            kotlinx.coroutines.coroutineScope {
+                // Songs arrive in batches. Between batches the shown count is estimated from the speed so far (never past the next
+                // batch's likely size) and snaps to the real count when a batch lands, so it counts up instead of jumping.
+                val mark = kotlin.time.TimeSource.Monotonic
+                var at = mark.markNow()
+                var rate = 0.0
+                var lastBatch = 0
+                var shown = 0
+                val ticker = launch {
+                    while (true) {
+                        delay(250)
+                        if (found == 0) continue
+                        val est = (found + (rate * at.elapsedNow().inWholeMilliseconds / 1000.0).toInt()).coerceIn(found, found + lastBatch)
+                        if (est != shown) { shown = est; _progress.value = IndexProgress(chatId, title, est, true) }
+                    }
+                }
+                try {
+                    account.songsIn(chatId, after).collect { batch ->
+                        if (stopGen != gen) throw StopRun()
+                        if (batch.isEmpty()) return@collect
+                        store.upsertPosts(batch)
+                        val dt = at.elapsedNow().inWholeMilliseconds / 1000.0
+                        if (dt > 0.2) rate = if (rate == 0.0) batch.size / dt else rate * 0.6 + (batch.size / dt) * 0.4
+                        at = mark.markNow(); lastBatch = batch.size
+                        found += batch.size
+                        newest = maxOf(newest, batch.maxOf { it.messageId })
+                        // Newest is saved at once but the chat only counts as complete when the whole read ends.
+                        store.setState(chatId, newest, clock(), complete = after > 0 && complete)
+                        shown = found
+                        _progress.value = IndexProgress(chatId, title, found, true)
+                    }
+                } finally {
+                    ticker.cancel()
+                }
             }
             store.setState(chatId, newest, clock(), complete)
         } catch (_: StopRun) {

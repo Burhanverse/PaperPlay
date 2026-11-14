@@ -12,6 +12,7 @@ import io.max.paperplay.ui.decodeImageFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -42,6 +43,40 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
             if (e.key == key) continue
             cached -= e.value.width.toLong() * e.value.height * 4
             iter.remove()
+        }
+    }
+
+    private val ahead = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /** Decodes covers before a screen asks for them, so they are in memory (and appear at once) when it does. */
+    fun preload(uris: Collection<String>, maxSide: Int) {
+        ahead.launch {
+            for (uri in uris) {
+                val key = "$uri@$maxSide"
+                if (synchronized(cache) { cache.containsKey(key) }) continue
+                val flightJob = synchronized(inFlight) {
+                    if (inFlight.containsKey(key)) return@synchronized null
+                    val created = InFlightJob(decoder.async { decodeImageFile(uri, maxSide) }, refCount = 1)
+                    inFlight[key] = created
+                    created
+                } ?: continue
+                launch {
+                    try {
+                        val decoded = flightJob.deferred.await()
+                        if (decoded != null) {
+                            keep(key, decoded)
+                            CoverSeeds.setFromBitmap(uri, decoded)
+                        }
+                    } finally {
+                        synchronized(inFlight) {
+                            flightJob.refCount--
+                            if (flightJob.refCount <= 0) {
+                                inFlight.remove(key)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -92,5 +127,5 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
 
 /** One decoded-cover cache for every window (main, mini player, tray menu) so a cover is held in memory once. */
 object SharedCovers {
-    val loader: FileCoverLoader by lazy { FileCoverLoader(32L * 1024 * 1024) }
+    val loader: FileCoverLoader by lazy { FileCoverLoader(64L * 1024 * 1024) }
 }

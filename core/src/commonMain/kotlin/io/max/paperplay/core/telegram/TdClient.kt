@@ -170,6 +170,7 @@ class TdClient(private val runtime: TdRuntime, private val config: TdConfig) {
             runtime.native.send(clientId, JsonObject(request + ("@extra" to JsonPrimitive(extra))).toString())
             val r = withTimeoutOrNull(timeout) { reply.await() } ?: throw TdError(408, "Request timed out")
             if (r.type == "error") {
+                io.max.paperplay.core.app.appLog("td", "error ${r["code"]!!.jsonPrimitive.int} ${r["message"]!!.jsonPrimitive.content} for ${request["@type"]?.jsonPrimitive?.content}" + if (request["@type"]?.jsonPrimitive?.content == "sendMessage") " request=${request.toString().take(700)}" else "")
                 throw TdError(r["code"]!!.jsonPrimitive.int, r["message"]!!.jsonPrimitive.content)
             }
             return r
@@ -199,6 +200,11 @@ class TdClient(private val runtime: TdRuntime, private val config: TdConfig) {
         runtime.close(clientId)
         clientId = -1
     }
+
+    @Volatile private var newApiKnown: Boolean? = null
+
+    /** Whether the loaded TDLib uses the new request shapes (see [usesNewTdApi]); asked once per client. */
+    suspend fun newApi(): Boolean = newApiKnown ?: usesNewTdApi(runCatching { version() }.getOrNull()).also { newApiKnown = it }
 
     suspend fun version(): String =
         call(request("getOption") { put("name", "version") })["value"]?.jsonPrimitive?.contentOrNull ?: "?"
