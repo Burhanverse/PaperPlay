@@ -21,6 +21,8 @@ data class SongUi(
     val favorite: Boolean = false,
     val pinned: Boolean = false,
     val offline: Boolean = false,
+    /** Languages the writing of the title, artist and album points to (empty for Latin letters); what a search for a language matches. */
+    val languages: List<String> = emptyList(),
 )
 
 enum class RepeatUi { Off, All, One }

@@ -1067,8 +1067,9 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         return null
     }
 
-    fun rescan() {
-        scope.launch { repo.chatList().forEach { services.scanner.rescanChat(it) } }
+    /** Rescans every chat with the main bot; [onDone] runs when it has finished, so a caller can offer to read with the other bots too. */
+    fun rescan(onDone: () -> Unit = {}) {
+        scope.launch { repo.chatList().forEach { services.scanner.rescanChat(it) }; onDone() }
     }
 }
 
@@ -1097,6 +1098,7 @@ internal fun Song.toUi(): SongUi {
     return SongUi(
         id = unique_id, title = title, artist = artist, album = album, genre = genre, coverUri = cover_path,
         durationSec = duration_sec.toInt(), sizeBytes = size, year = year?.toInt(), plays = plays.toInt(),
+        languages = io.max.paperplay.core.metadata.languagesOfText(title, artist, album),
         addedAt = date, qualityLabel = label, qualityRank = if (lossless) 100_000 + (bit_depth ?: 16).toInt() * 1000 else kbps.toInt(),
         lossless = lossless, favorite = favorite, pinned = pinned, offline = size > 0 && cached_bytes >= size,
     )

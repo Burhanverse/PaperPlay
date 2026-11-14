@@ -102,8 +102,15 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         if (words.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyList())
         val whole = words.joinToString(" ")
         return allShared.map { l ->
-            l.mapNotNull { s -> s.searchScore(words, whole).takeIf { it > 0 }?.let { s to it } }
-                .sortedByDescending { it.second }.map { it.first }
+            // A song's language: from the writing of its title, artist and album, else from the language the topic it is filed in is named for.
+            val topicLanguages = misc.topics().executeAsList().mapNotNull { t ->
+                io.max.paperplay.core.metadata.topicLanguage(t.name)?.let { (t.chat_id to t.topic_id) to it }
+            }.toMap()
+            l.mapNotNull { s ->
+                val languages = io.max.paperplay.core.metadata.languagesOfText(s.title, s.artist, s.album) +
+                    listOfNotNull(s.topic_id?.let { topicLanguages[s.chat_id to it] })
+                s.searchScore(words, whole, languages).takeIf { it > 0 }?.let { s to it }
+            }.sortedByDescending { it.second }.map { it.first }
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
     }
 
@@ -247,16 +254,19 @@ private val NON_WORD = Regex("[^\\p{L}\\p{N}\\p{M}]+")
 internal fun searchTokens(text: String): List<String> = text.lowercase().split(NON_WORD).filter { it.isNotEmpty() }
 
 /** 0 when some word of the query starts no word of the song; otherwise higher is a better match. */
-internal fun Song.searchScore(words: List<String>, whole: String): Int {
+internal fun Song.searchScore(words: List<String>, whole: String, languages: List<String> = emptyList()): Int {
     val t = searchTokens(title); val a = searchTokens(artist); val al = searchTokens(album)
     val g = searchTokens(genre.orEmpty()); val y = year?.toString()
+    // "japanese songs" or "lang:hindi": the filler words are dropped as long as another word is left to search for.
+    val core = words.filter { it !in io.max.paperplay.core.metadata.languageFiller }.ifEmpty { words }
     var total = 0
-    for (w in words) {
+    for (w in core) {
         total += when {
             t.any { it.startsWith(w) } -> 40
             a.any { it.startsWith(w) } -> 30
             al.any { it.startsWith(w) } -> 20
             g.any { it.startsWith(w) } || y == w -> 10
+            io.max.paperplay.core.metadata.languageMatches(w, languages) -> 15
             else -> return 0
         }
     }
