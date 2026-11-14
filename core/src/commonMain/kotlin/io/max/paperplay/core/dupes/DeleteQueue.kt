@@ -348,9 +348,20 @@ class DeleteQueue(
                     put("revoke", true)
                 },
             )
-            return emptyList()
+            if (!bot.perPost) return emptyList()
         } catch (e: TdError) {
             if (e.code == 429) throw e
+        }
+        if (bot.perPost) {
+            // TDLib says ok for posts this bot never saw (another bot's posts) without deleting them, so its answer proves nothing.
+            // Telegram's own answer for each post does: deleted now, already gone, or refused with a reason.
+            val refused = LinkedHashMap<Long, String>()
+            for (id in ids) bot.deleteOne(chat, id)?.let { refused[id] = it }
+            if (refused.isNotEmpty()) log("Telegram refused ${refused.size} of ${ids.size}: ${refused.values.first()}")
+            if (refused.isEmpty()) return emptyList()
+            val rest = if (account.isLoggedIn) account.deleteBatch(chat, refused.keys.toList()) else refused.keys.toList()
+            if (account.isLoggedIn) log("Your account removed ${refused.size - rest.size} of ${refused.size}")
+            return rest
         }
         // TDLib refuses the whole call if one post can't go. Ask Telegram directly, which skips those it can't delete.
         for (part in ids.chunked(BATCH)) bot.deleteMessages(chat, part)
