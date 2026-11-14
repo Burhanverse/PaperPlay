@@ -141,6 +141,13 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun songsNeedingUpgrade(): List<Song> = songs.songsNeedingUpgrade().executeAsList()
     /** Ids of songs with no cover, then of songs holding only a thumbnail; light rows for the cover queue. */
     fun coverCandidateIds(): List<String> = songs.idsNeedingCovers().executeAsList() + songs.idsNeedingUpgrade().executeAsList()
+    /** Ids of songs with no cover at all, newest first. */
+    fun coverMissingIds(): List<String> = songs.idsNeedingCovers().executeAsList()
+    /** Ids of songs whose cover is only a low-quality thumbnail that has a full-size source. */
+    fun coverUpgradeIds(): List<String> = songs.idsNeedingUpgrade().executeAsList()
+    /** Songs that have a cover path but whose file is gone (cleared storage, a lost backup): a full pass fetches those again. */
+    fun coverFileMissingIds(exists: (String) -> Boolean): List<String> =
+        songs.allSongs().executeAsList().filter { val c = it.cover_path; !c.isNullOrEmpty() && !exists(c) }.map { it.unique_id }
     fun updateCover(
         uniqueId: String,
         coverPath: String? = null,
