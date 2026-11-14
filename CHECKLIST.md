@@ -615,8 +615,11 @@ Open:
 - [~] The sync banner counts up smoothly: the shown number is estimated between pages from the measured speed (never more than the pages asked for ahead) and snaps to the real count on each page, instead of jumping by 100.
 - [~] A full scan or Repair names who is reading: "Bot 1" (main bot), "Bot 2", "Bot 3" for the extra bots, and "Your account: reading <chat>, N songs" for the account. The normal background scan stays unlabeled.
 - [~] After a Full rescan the app offers to read with the other bots (and the account) too. Nothing is deleted.
+- [~] The indexing count ("Indexing <chat>: N songs") counts up smoothly the same way: estimated between batches, snapped to the real count when a batch lands.
+- [~] The scan label shows the bot's own name (display name, else @username) instead of Bot 1, Bot 2; the account shows as "Your account".
 ### Deleting duplicates
 - [~] The delete counts one post at a time ("Deleting: n of 152 done"): each post is marked Done as soon as Telegram confirms it. The page drops a deleted post at once, and a song with no extra copy left goes with it. Pressing Delete scrolls the page to the top.
 ### Repository
 - [x] Commits this round: language search, duplicate delete through the Bot API, auto reading speed, faster song info, Song info page with the Tasks tap, Library settings in drop-downs with the other-bot read, docs, then the live duplicate delete and the sync counter with reader labels.
-- [ ] Owner still to check on the phone: greyed-out Spotify songs in order, cover counts, mini player and toast, a real duplicate delete (posts gone from Telegram), language search, auto reading speed, the sync counter and reader labels. Then look at the Windows job of the v1.4.0 run: `runtimeelease` must say Java 25 and the setup exe must start.
+- [ ] Owner still to check on the phone: greyed-out Spotify songs in order, cover counts, mini player and toast, a real duplicate delete (posts gone from Telegram), language search, auto reading speed, the sync counter and reader labels. Then look at the Windows job of the v1.4.0 run: `runtime
+elease` must say Java 25 and the setup exe must start.
