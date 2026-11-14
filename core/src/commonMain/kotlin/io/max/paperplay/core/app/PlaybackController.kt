@@ -301,9 +301,11 @@ class PlaybackController(
         val m = meta.value
         if (m.repeat == Repeat.ALL && engine.currentIndex.value == m.queue.lastIndex) apply(m.queue, 0, 0)
         else engine.next()
+        // Skipping from a paused song starts the next one.
+        engine.play()
     }
 
-    fun previous() = command { engine.previous() }
+    fun previous() = command { engine.previous(); engine.play() }
 
     /** Reorders the rest of the queue around the song now playing, without restarting it. */
     fun setShuffle(on: Boolean) = command {
