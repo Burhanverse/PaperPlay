@@ -20,6 +20,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -133,6 +135,17 @@ class Scanner(
     /** Who is reading, shown in front of the progress during a full scan ("Bot 1", "Bot 2", "Your account"). Null for the normal background scan. */
     @Volatile var reader: String? = null
     private fun tag() = reader?.let { "$it: " } ?: ""
+
+    private var mainName: String? = null
+
+    /** The main bot's name as Telegram gives it (its display name, else @username), for the scan label. Asked once. */
+    suspend fun mainBotName(): String {
+        mainName?.let { return it }
+        val me = runCatching { td?.call(request("getMe")) }.getOrNull()
+        val name = me?.get("first_name")?.jsonPrimitive?.contentOrNull?.trim()?.ifEmpty { null }
+            ?: me?.get("usernames")?.jsonObject?.get("active_usernames")?.jsonArray?.firstOrNull()?.jsonPrimitive?.contentOrNull?.let { "@$it" }
+        return (name ?: "Main bot").also { if (name != null) mainName = it }
+    }
 
     /** Shows [text] as the scan progress until the next update; null clears it. For readers that are not this scanner, such as the account. */
     fun announce(text: String?) { _progress.value = text?.let { ScanProgress(it, null) } }

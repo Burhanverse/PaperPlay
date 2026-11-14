@@ -72,7 +72,7 @@ private suspend fun runRepair(backend: CoreBackend, withBots: Boolean, withAccou
         try {
             for (chat in chats) {
                 log("Reading ${chat.title}")
-                services.scanner.reader = "Bot 1"
+                services.scanner.reader = services.scanner.mainBotName()
                 val ok = try { services.scanner.rescanChat(chat) } finally { services.scanner.reader = null }
                 log(if (ok) services.scanner.report.value ?: "${chat.title}: done" else "${chat.title}: could not read it completely (is the bot connected and an admin?)")
                 // Each extra bot reads the chat on its own: a bot sees the posts it made, which the others cannot see.
@@ -169,7 +169,7 @@ private suspend fun readChatWithBots(backend: CoreBackend, chat: io.max.paperpla
     for ((i, bc) in services.botPool.readyBots().withIndex()) {
         val (bot, client) = bc
         log("Reading ${chat.title} with ${bot.name ?: bot.username ?: "bot ${bot.id}"}")
-        services.scanner.reader = "Bot ${i + 2}"
+        services.scanner.reader = bot.name ?: bot.username ?: "Bot ${i + 2}"
         val seen = try { services.scanner.scanChat(chat, full = true, via = client, owner = bot.id) } finally { services.scanner.reader = null }
         log(if (seen != null) services.scanner.report.value ?: "${chat.title}: done" else "${bot.username ?: "Bot ${bot.id}"} could not read it (is it an admin of the chat?)")
     }

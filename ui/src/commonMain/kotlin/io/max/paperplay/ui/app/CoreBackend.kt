@@ -1071,7 +1071,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun rescan(onDone: () -> Unit = {}) {
         scope.launch {
             repo.chatList().forEach {
-                services.scanner.reader = "Bot 1"
+                services.scanner.reader = services.scanner.mainBotName()
                 try { services.scanner.rescanChat(it) } finally { services.scanner.reader = null }
             }
             onDone()
