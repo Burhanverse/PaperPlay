@@ -5,6 +5,7 @@ import io.max.paperplay.ui.theme.schemeFromSeed
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -136,6 +137,10 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     // Songs waiting for a playlist that is about to be created.
     var pendingAdd by remember { mutableStateOf<Set<String>?>(null) }
     val snack = remember { SnackbarHostState() }
+    // The mini player can be swiped away while nothing plays; starting playback shows it again.
+    var miniGone by remember { mutableStateOf(false) }
+    var miniDrag by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    LaunchedEffect(pb.playing) { if (pb.playing) { miniGone = false; miniDrag = 0f } }
     val scope = rememberCoroutineScope()
     val loader = SharedCovers.loader
     // Glass needs blur layers; with every part on Material they are skipped.
@@ -174,13 +179,13 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             // The sync loop dials an offline paired device every 20 seconds; each device is announced once per run.
             val announced = mutableSetOf<String>()
             sync.connecting.collect { now ->
-                now.firstOrNull { announced.add(it) }?.let { name -> snack.currentSnackbarData?.dismiss(); launch { snack.showSnackbar("Connecting to $name", duration = androidx.compose.material3.SnackbarDuration.Short) } }
+                now.firstOrNull { announced.add(it) }?.let { name -> launch { waitForQuietStart(); snack.currentSnackbarData?.dismiss(); snack.showSnackbar("Connecting to $name", duration = androidx.compose.material3.SnackbarDuration.Short) } }
             }
         }
         var known = sync.connected.value.map { it.id }.toSet()
         sync.connected.collect { devices ->
             val now = devices.map { it.id }.toSet()
-            devices.firstOrNull { it.id !in known }?.let { d -> snack.currentSnackbarData?.dismiss(); launch { snack.showSnackbar("Connected to ${d.name}", duration = androidx.compose.material3.SnackbarDuration.Short) } }
+            devices.firstOrNull { it.id !in known }?.let { d -> launch { waitForQuietStart(); snack.currentSnackbarData?.dismiss(); snack.showSnackbar("Connected to ${d.name}", duration = androidx.compose.material3.SnackbarDuration.Short) } }
             known = now
         }
     }
@@ -248,7 +253,13 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
 
     val lanSync = rememberLanSync(backend)
-    CompositionLocalProvider(LocalLanSync provides lanSync, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides backend::telegramLists, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    val coversQueued by backend.services.covers.queued.collectAsState()
+    // Placeholder covers only while the app starts up. After that a cover fetched while scrolling must not turn the others into placeholders.
+    var coversStarting by remember { mutableStateOf(true) }
+    var sawCoverQueue by remember { mutableStateOf(false) }
+    LaunchedEffect(coversQueued) { if (coversQueued > 0) sawCoverQueue = true else if (sawCoverQueue) coversStarting = false }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(10_000); coversStarting = false }
+    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides backend::telegramLists, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
@@ -312,8 +323,33 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 Column(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),
                 ) {
-                    if (pb.current != null) {
-                        MiniPlayer(pb, { showPlayer = true }, backend::togglePlay, backend::next, backend::previous, { pos.value.progress(pb.durationMs) }, Modifier.graphicsLayer { alpha = 1f - sheet.progress.value }.then(if (prefs.floatingNav) Modifier else Modifier.padding(horizontal = 8.dp)),
+                    // Toasts sit above the mini player and the bar, where they cover the least; swipe one sideways to dismiss it.
+                    AppSnackbarHost(snack, Modifier.fillMaxWidth().padding(bottom = 8.dp), tint)
+                    if (pb.current != null && !miniGone) {
+                        val threshold = with(androidx.compose.ui.platform.LocalDensity.current) { 80.dp.toPx() }
+                        MiniPlayer(pb, { showPlayer = true }, backend::togglePlay, backend::next, backend::previous, { pos.value.progress(pb.durationMs) },
+                            Modifier.graphicsLayer {
+                                alpha = (1f - sheet.progress.value) * (1f - kotlin.math.abs(miniDrag) / 700f).coerceIn(0f, 1f)
+                                translationX = miniDrag
+                            }.then(if (prefs.floatingNav) Modifier else Modifier.padding(horizontal = 8.dp))
+                                // Only a paused mini player can be swiped away; playing again brings it back. It ends fully gone or fully back, never half way.
+                                .draggable(
+                                    androidx.compose.foundation.gestures.rememberDraggableState { d -> miniDrag += d },
+                                    androidx.compose.foundation.gestures.Orientation.Horizontal, enabled = !pb.playing,
+                                    onDragStopped = { velocity ->
+                                        val from = miniDrag
+                                        val away = kotlin.math.abs(from) > threshold || kotlin.math.abs(velocity) > 800f
+                                        if (away) {
+                                            val dir = if (from != 0f) kotlin.math.sign(from) else kotlin.math.sign(velocity)
+                                            androidx.compose.animation.core.animate(from, dir * 1000f, animationSpec = androidx.compose.animation.core.tween(160)) { v, _ -> miniDrag = v }
+                                            miniGone = true
+                                            miniDrag = 0f
+                                        } else {
+                                            androidx.compose.animation.core.animate(from, 0f, animationSpec = androidx.compose.animation.core.spring()) { v, _ -> miniDrag = v }
+                                            miniDrag = 0f
+                                        }
+                                    },
+                                ),
                             onDevices = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } })
                         Box(Modifier.height(8.dp))
                     }
@@ -332,7 +368,6 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         onOpenSettings = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } },
                     )
                 }
-                SnackbarHost(snack, Modifier.align(Alignment.TopCenter).padding(top = top))
             } else {
                 // Desktop: sidebar, content card, now playing panel, player bar.
                 LaunchedEffect(settings) { if (settings && settingsStack.isEmpty()) settingsStack.add("style") }
@@ -411,7 +446,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                 )
                                 k.page == "tasks" -> TasksScreen(backend.tasks, onBack = ::goBack)
                                 k.page == "upload" -> Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) { TopBar("Upload"); UploadsPage(backend); androidx.compose.foundation.layout.Spacer(Modifier.height(120.dp)) }
-                                k.page == "songs" -> Column { TopBar("Songs"); SongList(songs, currentId, actions, Modifier.fillMaxSize(), pad, empty = "No songs yet. Add a chat in Settings.") }
+                                k.page == "songs" -> Column { TopBar("Songs"); SongList(songs, currentId, actions, Modifier.fillMaxSize(), pad, empty = "No songs yet. Add a chat in Settings.", listKey = "library:songs") }
                                 k.page == "playlists" -> Column {
                                     TopBar("Playlists")
                                     PlaylistsTab(lib.playlists, favorites, recents, pad, { d2 -> navigate { detail = d2 } }, { newPlaylist = true },
@@ -419,7 +454,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                 }
                                 k.page == "albums" -> Column { TopBar("Albums"); GroupGrid(lib.albums, pad, "No albums yet.") { g -> navigate { detail = Detail.Album(g.name, g.owner) } } }
                                 k.page == "artists" -> Column { TopBar("Artists"); GroupList(lib.artists, pad, "No artists yet.", circle = true) { g -> navigate { detail = Detail.Artist(g.name) } } }
-                                k.page == "favorites" -> Column { TopBar("Favorites"); SongList(favorites, currentId, actions, Modifier.fillMaxSize(), pad, empty = "No favorites yet.") }
+                                k.page == "favorites" -> Column { TopBar("Favorites"); SongList(favorites, currentId, actions, Modifier.fillMaxSize(), pad, empty = "No favorites yet.", listKey = "library:favorites") }
                                 else -> Column { TopBar("Recently played"); SongList(recents, currentId, actions, Modifier.fillMaxSize(), pad, sortable = false, empty = "Nothing played yet.") }
                             }
                             }
@@ -450,7 +485,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     }
                 } else shell()
                 PlayerSheetHost(showPlayer, sheet) { FullPlayer(pb, pbError, backend, actions, { showPlayer = false }) }
-                SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp))
+                AppSnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp), tint)
                 ShortcutsOverlay(keys, Modifier.fillMaxSize())
             }
             Row(
@@ -549,3 +584,10 @@ private fun NameDialogPreview() {
     NameDialog(title = "New playlist", onDone = {}, onDismiss = {})
 }
 
+private val launchMark = kotlin.time.TimeSource.Monotonic.markNow()
+
+/** Connection toasts wait until the app has been open for 10 seconds, so starting it is not noisy. */
+private suspend fun waitForQuietStart() {
+    val left = 10_000L - launchMark.elapsedNow().inWholeMilliseconds
+    if (left > 0) kotlinx.coroutines.delay(left)
+}

@@ -12,6 +12,7 @@ import io.max.paperplay.ui.decodeImageFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -39,6 +40,26 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
     private val inFlight = HashMap<String, Deferred<ImageBitmap?>>()
     private val decoder = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(6))
 
+    private val ahead = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /** Decodes covers before a screen asks for them, so they are in memory (and appear at once) when it does. */
+    fun preload(uris: Collection<String>, maxSide: Int) {
+        // The cache and the in-flight map are only touched on the main thread; the decoding itself runs on the decoder threads.
+        ahead.launch {
+            for (uri in uris) {
+                val key = "$uri@$maxSide"
+                if (cache.containsKey(key) || inFlight.containsKey(key)) continue
+                val job = decoder.async { decodeImageFile(uri, maxSide) }
+                inFlight[key] = job
+                launch {
+                    val decoded = job.await()
+                    inFlight.remove(key)
+                    if (decoded != null) keep(key, decoded)
+                }
+            }
+        }
+    }
+
     @Composable
     override fun painter(uri: String, maxSide: Int): Painter? {
         val key = "$uri@$maxSide"
@@ -58,5 +79,5 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
 
 /** One decoded-cover cache for every window (main, mini player, tray menu) so a cover is held in memory once. */
 object SharedCovers {
-    val loader: FileCoverLoader by lazy { FileCoverLoader(32L * 1024 * 1024) }
+    val loader: FileCoverLoader by lazy { FileCoverLoader(64L * 1024 * 1024) }
 }
