@@ -14,6 +14,14 @@
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
     </queries>
+    <!-- Lets the standby icons load the icon of any app that has a launcher entry. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".PaperPlayApp"
         android:label="PaperPlay"
@@ -61,6 +69,15 @@
             android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <service
+            android:name="io.max.paperplay.ui.StandbyNotificationListener"
+            android:exported="true"
+            android:label="PaperPlay standby icons"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
         <service
             android:name=".KeepAliveService"
             android:exported="false"

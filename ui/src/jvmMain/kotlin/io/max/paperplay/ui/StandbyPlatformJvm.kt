@@ -18,3 +18,18 @@ actual fun rememberOutputDevice(): OutputDevice = OutputDevice("This computer", 
 
 @Composable
 actual fun rememberOutputSwitcher(): (() -> Unit)? = null
+
+@Composable
+actual fun rememberCharging(): Boolean = false
+
+@Composable
+actual fun rememberStandbyAlerts(): List<StandbyAlert> = emptyList()
+
+@Composable
+actual fun AlertIcon(packageName: String, modifier: androidx.compose.ui.Modifier, tint: androidx.compose.ui.graphics.Color) {}
+
+@Composable
+actual fun rememberNotificationAccess(): NotificationAccess? = null
+
+@Composable
+actual fun StandbyHideBars() {}
