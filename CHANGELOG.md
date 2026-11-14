@@ -2,6 +2,17 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.6.0] - 2026-11-14
+
+### Added
+- Scan banner shows the bot's name ([`de64d8a`](https://github.com/maxcodl/PaperPlay-compose/commit/de64d8a243fe4c4dbce0d530915ee7cf5f83be35))
+- Indexing count goes up smoothly ([`95d1434`](https://github.com/maxcodl/PaperPlay-compose/commit/95d143414fdafa2781c8109a9c47c6ed3513a5c1))
+
+### Documentation
+- Checklist for indexing count and bot names ([`3877980`](https://github.com/maxcodl/PaperPlay-compose/commit/38779808794ff936470ad5204c4a7e195945e209))
+
+**Full changes:** [v1.5.0...v1.6.0](https://github.com/maxcodl/PaperPlay-compose/compare/v1.5.0...v1.6.0)
+
 ## [1.5.0] - 2026-11-14
 
 ### Added
