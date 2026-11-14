@@ -202,8 +202,11 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
     }
     runCatching {
         backend.chatIndex.indexChat(io.max.paperplay.core.account.ChatInfo(main, services.library.chat(main)?.title ?: "Main chat", true))
-        val n = backend.chatIndex.addMissingFromMainChat()
-        log(if (n > 0) "Added $n songs only your account can read" else "No songs were left that only your account can read")
+        val r = backend.chatIndex.addPostsNotInLibrary()
+        log(
+            if (r.seen == 0) "Your account read no posts from the main chat"
+            else "Your account saw ${r.seen} posts in the main chat; " + if (r.added > 0) "added ${r.added} the library lacked" else "the library already has all of them",
+        )
     }.onFailure { log("The account could not read the chat: ${it.message}") }
     watch.cancel()
     services.scanner.announce(null)

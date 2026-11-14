@@ -116,8 +116,12 @@ class ChatIndex(
         onRunFinished?.invoke()
     }
 
+    /** Message ids the last full read of each chat saw in this session. */
+    @kotlin.concurrent.Volatile private var fullRead: Map<Long, Set<Long>> = emptyMap()
+
     private suspend fun read(chatId: Long, title: String, after: Long, complete: Boolean) {
         var found = 0
+        val ids = HashSet<Long>()
         var newest = 0L
         _progress.value = IndexProgress(chatId, title, 0, true)
         val gen = stopGen
@@ -143,6 +147,7 @@ class ChatIndex(
                         if (stopGen != gen) throw StopRun()
                         if (batch.isEmpty()) return@collect
                         store.upsertPosts(batch)
+                        batch.forEach { ids += it.messageId }
                         val dt = at.elapsedNow().inWholeMilliseconds / 1000.0
                         if (dt > 0.2) rate = if (rate == 0.0) batch.size / dt else rate * 0.6 + (batch.size / dt) * 0.4
                         at = mark.markNow(); lastBatch = batch.size
@@ -158,6 +163,7 @@ class ChatIndex(
                 }
             }
             store.setState(chatId, newest, clock(), complete)
+            if (after == 0L) fullRead = fullRead + (chatId to ids)
         } catch (_: StopRun) {
             // Stopped by the owner; what was read is kept and the chat stays marked as not complete.
         } finally {
@@ -233,6 +239,15 @@ class ChatIndex(
         val main = main() ?: return emptyList()
         val copied = store.copiedIds()
         return store.posts(chat).filter { it.uniqueId !in copied && !main.has(it) }
+    }
+
+    override suspend fun addPostsNotInLibrary(): MainChatAdd {
+        val chat = mainChat() ?: return MainChatAdd(0, 0)
+        val seen = fullRead[chat] ?: return MainChatAdd(0, 0)
+        val have = library.songsInChat(chat).map { it.message_id }.toSet()
+        val missing = store.posts(chat).filter { it.messageId in seen && it.messageId !in have }
+        missing.forEach { addToLibrary(it) }
+        return MainChatAdd(seen.size, missing.size)
     }
 
     override suspend fun addMissingFromMainChat(): Int {
