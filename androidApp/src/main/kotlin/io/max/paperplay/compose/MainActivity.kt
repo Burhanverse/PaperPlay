@@ -23,6 +23,7 @@ import io.max.paperplay.player.initPlayer
 import io.max.paperplay.ui.App
 import io.max.paperplay.ui.AppEnv
 import io.max.paperplay.ui.RestoreHooks
+import io.max.paperplay.ui.app.FolderScan
 import io.max.paperplay.ui.app.IncomingShares
 import java.io.File
 import kotlinx.coroutines.FlowPreview
@@ -59,15 +60,21 @@ class MainActivity : ComponentActivity() {
         else @Suppress("DEPRECATION") intent.getParcelableExtra("android.intent.extra.STREAM")
 
     /** Copies one picked or shared document into [dir] under its display name; null when it cannot be read. */
-    private fun copyToCache(uri: android.net.Uri, dir: File): String? = runCatching {
-        val name = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "song"
+    private fun copyToCache(uri: android.net.Uri, dir: File): String? {
         val sub = File(dir, System.nanoTime().toString()).apply { mkdirs() }
-        val out = File(sub, name.replace('/', '_').replace('\\', '_'))
-        contentResolver.openInputStream(uri)!!.use { input -> out.outputStream().use { o -> input.copyTo(o) } }
-        out.path
-    }.getOrNull()
+        return runCatching {
+            var name: String? = null
+            var size = 0L
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst()) { name = c.getString(0); if (!c.isNull(1)) size = c.getLong(1) }
+            }
+            // Keep room for the app's own database and Telegram's files: a full disk makes TDLib abort the whole app.
+            if (cacheDir.usableSpace < size + 300L * 1024 * 1024) error("not enough free space: ${cacheDir.usableSpace / 1024 / 1024} MB free, file $size bytes")
+            val out = File(sub, (name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "song").replace('/', '_').replace('\\', '_'))
+            contentResolver.openInputStream(uri)!!.use { input -> out.outputStream().use { o -> input.copyTo(o) } }
+            out.path
+        }.getOrElse { io.max.paperplay.core.app.appLog("copy", "failed $uri: ${it.message}"); sub.deleteRecursively(); null }
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -76,7 +83,10 @@ class MainActivity : ComponentActivity() {
         auth.deliver(intent.data)
     }
 
-    /** Runs the keep-alive notification while the pref allows it (off unless chosen), following the scanner. */
+    /**
+     * Shows what the app is doing in the background (library scan, song info, covers, uploads) as a notification with a progress bar.
+     * With "keep running" on it is the foreground service's notification; otherwise it is an ordinary one that goes away when the work ends.
+     */
     @OptIn(FlowPreview::class)
     private fun watchActivity(s: AppServices) {
         fun allowed() = s.library.pref("keep_running") == "true"
@@ -86,15 +96,19 @@ class MainActivity : ComponentActivity() {
             var idleSince = 0L
             combine(
                 combine(s.scanner.progress, s.ready, s.error, s.activity) { scan, ready, error, activity -> arrayOf(scan, ready, error, activity) },
-                s.enricher.progress, s.uploader.jobs,
-            ) { v, enrich, uploads -> Triple(v, enrich != null, uploads.any { it.status == io.max.paperplay.core.app.UploadStatus.Queued || it.status == io.max.paperplay.core.app.UploadStatus.Uploading }) }
-                .debounce(3000)
-                .collect { (v, enriching, uploading) ->
+                combine(s.enricher.progress, s.uploader.jobs, s.covers.progress) { enrich, uploads, covers -> Triple(enrich, uploads, covers) },
+            ) { v, w -> v to w }
+                .debounce(1500)
+                .collect { (v, w) ->
                     val scan = v[0] as io.max.paperplay.core.app.ScanProgress?
                     val ready = v[1] as Boolean
                     val error = v[2] as String?
                     val activity = v[3] as String?
-                    val busy = scan != null || activity != null || enriching || uploading || !ready
+                    val enrich = w.first
+                    val uploads = w.second
+                    val covers = w.third
+                    val open = uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Queued || it.status == io.max.paperplay.core.app.UploadStatus.Uploading }
+                    val busy = scan != null || activity != null || enrich != null || open > 0 || covers != null || !ready
                     val now = System.currentTimeMillis()
                     if (busy) {
                         idleSince = 0L
@@ -104,19 +118,46 @@ class MainActivity : ComponentActivity() {
                         if (idleSince == 0L) idleSince = now
                         if (now - idleSince >= 5 * 60_000L) KeepAliveService.stop(applicationContext)
                     }
+                    // One line for each job that is running; the first with a known size gives the progress bar.
+                    val lines = buildList {
+                        scan?.let { add(it.text) }
+                        enrich?.let { add("Song info: ${it.done} of ${it.total}" + if (it.current.isNotBlank()) " - ${it.current}" else "") }
+                        if (open > 0) add("Uploading: ${uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done }} of ${uploads.size}")
+                        covers?.let {
+                            if (it.total > 0) add("Missing covers: ${it.total - it.done} left of ${it.total}")
+                            if (it.lowTotal > 0) add("Low-quality covers: ${it.lowTotal - it.lowDone} left of ${it.lowTotal}")
+                        }
+                        activity?.let { add(it) }
+                    }
                     when {
                         error != null -> KeepAliveService.update(applicationContext, "Paper Play is running", error, null, null, false)
-                        scan != null -> {
-                            val f = scan.fraction
-                            KeepAliveService.update(applicationContext, scan.text, "", f?.let { (it * 1000).toInt() }, f?.let { 1000 }, f == null)
+                        lines.isNotEmpty() -> {
+                            val title = when {
+                                lines.size > 1 -> "Paper Play is working"
+                                scan != null -> scan.text
+                                enrich != null -> "Looking up song info"
+                                open > 0 -> "Uploading songs"
+                                covers != null -> "Loading covers"
+                                else -> activity ?: "Paper Play is working"
+                            }
+                            val scanFraction = scan?.fraction
+                            val (progress, max) = when {
+                                scanFraction != null -> (scanFraction * 1000).toInt() to 1000
+                                enrich != null && enrich.total > 0 -> enrich.done to enrich.total
+                                open > 0 && uploads.isNotEmpty() -> uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done } to uploads.size
+                                covers != null && covers.total + covers.lowTotal > 0 -> (covers.done + covers.lowDone) to (covers.total + covers.lowTotal)
+                                else -> null to null
+                            }
+                            KeepAliveService.update(applicationContext, title, lines.joinToString("\n"), progress, max, progress == null)
                         }
-                        activity != null -> KeepAliveService.update(applicationContext, activity, "", null, null, true)
                         !ready -> KeepAliveService.update(applicationContext, "Paper Play is running", "Connecting to Telegram", null, null, true)
                         else -> KeepAliveService.update(applicationContext, "Paper Play is running", "Everything is up to date", null, null, false)
                     }
                 }
         }
     }
+
+    private val audioPermission get() = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
 
     private fun granted(permission: String) = checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
@@ -153,6 +194,10 @@ class MainActivity : ComponentActivity() {
         val notifications = getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled() &&
             (Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS))
         list += io.max.paperplay.ui.PermissionState("notifications", "Notifications", "Shows the playing song with controls, and scan progress", notifications)
+        list += io.max.paperplay.ui.PermissionState(
+            "audio", "Music files", "Lets the app read a music folder you choose where it is, so uploading it needs no copy and no extra space",
+            granted(audioPermission), action = "Allow",
+        )
         val btOn = bluetoothOn()
         val btPermission = Build.VERSION.SDK_INT < 31 || granted(Manifest.permission.BLUETOOTH_CONNECT)
         list += io.max.paperplay.ui.PermissionState(
@@ -244,6 +289,7 @@ class MainActivity : ComponentActivity() {
             // The media notification needs this on Android 13 and later; playing works without it.
             val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
             val bluetooth = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+            val audioGrant = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
             // New installs are asked on the onboarding permissions page, after reading why.
             LaunchedEffect(Unit) {
                 if (Build.VERSION.SDK_INT >= 33 && (onboardedFile.exists() || library.exists())) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -272,11 +318,28 @@ class MainActivity : ComponentActivity() {
                 val cb = audioPending[0]
                 if (uris.isNotEmpty() && cb != null) {
                     Thread {
+                        // Songs on the phone's or an SD card's storage are uploaded where they are; only the rest (cloud, Downloads, ...) is copied.
+                        val direct = if (granted(audioPermission)) uris.associateWith { pickedFile(it) } else emptyMap()
+                        val inPlace = direct.values.filterNotNull().map { it.path }
+                        if (inPlace.isNotEmpty()) cb(inPlace, false)
                         val dir = File(cacheDir, "uploads").apply { mkdirs() }
-                        cb(uris.mapNotNull { copyToCache(it, dir) }, true)
+                        val copied = uris.filter { direct[it] == null }.mapNotNull { copyToCache(it, dir) }
+                        if (copied.isNotEmpty()) cb(copied, true)
                     }.start()
                 }
             }
+            val folderPending = remember { arrayOfNulls<(FolderScan) -> Unit>(1) }
+            val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+                val cb = folderPending[0]
+                if (tree != null && cb != null) Thread {
+                    // On the phone's own storage with audio access the songs are read where they are, as the Flutter app did: no copy.
+                    val inPlace = if (granted(audioPermission)) treeFolder(tree)?.takeIf { it.listFiles() != null } else null
+                    val dir = File(cacheDir, "uploads").apply { mkdirs() }
+                    cb(if (inPlace != null) scanFolderPath(inPlace) else scanFolderTree(contentResolver, tree) { copyToCache(it, dir) })
+                }.start()
+            }
+            // Asked once, when a folder is first chosen. Declined: the folder is still read, but its songs are copied first.
+            val audioAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { folderPicker.launch(null) }
             val env = remember {
                 AppEnv(
                     restore = RestoreHooks(
@@ -305,6 +368,10 @@ class MainActivity : ComponentActivity() {
                     pickPhoto = { onPicked -> photoPending[0] = onPicked; photoPicker.launch(arrayOf("image/*")) },
                     lastCrash = { crashFile.takeIf { it.exists() }?.readText() },
                     clearCrash = { crashFile.delete() },
+                    pickAudioFolder = { onPicked ->
+                        folderPending[0] = onPicked
+                        if (granted(audioPermission)) folderPicker.launch(null) else audioAccess.launch(audioPermission)
+                    },
                     pickAudio = { onPicked -> audioPending[0] = onPicked; audioPicker.launch(arrayOf("audio/*", "application/ogg", "application/octet-stream")) },
                     pickImage = { onPicked -> imagePending[0] = onPicked; imagePicker.launch(arrayOf("image/*")) },
                     authRedirect = auth,
@@ -324,6 +391,7 @@ class MainActivity : ComponentActivity() {
                                         askOnce(Manifest.permission.POST_NOTIFICATIONS, { notifications.launch(it) }, openNotificationSettings)
                                     } else openNotificationSettings()
                                 }
+                                "audio" -> askOnce(audioPermission, { audioGrant.launch(it) }, { openSettings(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, true) })
                                 "bluetooth" ->
                                     if (Build.VERSION.SDK_INT >= 31 && !granted(Manifest.permission.BLUETOOTH_CONNECT)) {
                                         askOnce(Manifest.permission.BLUETOOTH_CONNECT, { bluetooth.launch(it) }, { openSettings(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, true) })

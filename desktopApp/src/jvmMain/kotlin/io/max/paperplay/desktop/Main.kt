@@ -61,6 +61,16 @@ private fun audioFilesIn(roots: List<File>): List<String> = roots.flatMap { r ->
     if (r.isDirectory) r.walkTopDown().filter { it.isFile }.toList() else listOf(r)
 }.filter { it.extension.lowercase() in io.max.paperplay.core.app.audioExtensions }.map { it.path }
 
+/** A picked folder: its own songs, and each subfolder's songs (nested folders included) apart, for the user to confirm. */
+private fun scanFolder(dir: File): io.max.paperplay.ui.app.FolderScan {
+    fun songs(files: Sequence<File>, base: File) = files.filter { it.isFile && it.extension.lowercase() in io.max.paperplay.core.app.audioExtensions }
+        .map { io.max.paperplay.ui.app.FolderSong(it.path, it.relativeTo(base).path, it.length()) }.toList()
+    val top = songs(dir.listFiles().orEmpty().asSequence(), dir)
+    val subs = dir.listFiles().orEmpty().filter { it.isDirectory }.sortedBy { it.name.lowercase() }
+        .associate { it.name to songs(it.walkTopDown(), it) }.filterValues { it.isNotEmpty() }
+    return io.max.paperplay.ui.app.FolderScan(top, subs) { chosen, ready -> ready(chosen.map { it.id }, false) }
+}
+
 /** Lets files and folders be dropped on the window; they go to the uploads page. */
 private fun installFileDrop(window: java.awt.Window) {
     val target = java.awt.dnd.DropTarget(window, java.awt.dnd.DnDConstants.ACTION_COPY, object : java.awt.dnd.DropTargetAdapter() {
@@ -172,7 +182,7 @@ fun main() {
                 if (files.isNotEmpty()) onPicked(files.map { it.path }, false)
             },
             pickAudioFolder = { onPicked ->
-                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(audioFilesIn(listOf(it))) } }.start()
+                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(scanFolder(it)) } }.start()
             },
             pickFolderPath = { onPicked ->
                 Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(it.path) } }.start()
