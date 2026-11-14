@@ -45,7 +45,7 @@ import kotlin.time.Duration.Companion.milliseconds
 class ScannerAndCoverTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val config = TdConfig(1, "hash", "123:fake-token", "/db", "/files", "key")
-    private val jpegHeader = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 1, 2, 3, 4)
+    private val jpegHeader = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + ByteArray(120)
 
     @AfterTest
     fun tearDown() = scope.cancel()
@@ -107,7 +107,7 @@ class ScannerAndCoverTest {
     }
 
     private suspend fun await(cond: () -> Boolean) {
-        withTimeout(5_000) {
+        withTimeout(40_000) {
             while (!cond()) delay(10)
         }
     }

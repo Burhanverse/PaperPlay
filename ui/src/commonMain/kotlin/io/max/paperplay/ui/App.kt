@@ -103,10 +103,14 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
     val closeScope = rememberCoroutineScope()
     // The database, services and backend are built off the UI thread; a blank themed screen shows meanwhile.
     val built by produceState<CoreBackend?>(null) {
-        value = withContext(Dispatchers.Default) {
+        val b = withContext(Dispatchers.Default) {
             CoreBackend(env.createServices())
         }
+        value = b
         env.mark("services ready")
+        awaitDispose {
+            b.close()
+        }
     }
     val backend = built
     if (backend == null || closing) {

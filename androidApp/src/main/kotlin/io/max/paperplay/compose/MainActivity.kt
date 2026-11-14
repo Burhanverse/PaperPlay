@@ -238,8 +238,11 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
-            androidx.compose.runtime.SideEffect {
+            androidx.compose.runtime.DisposableEffect(saver) {
                 io.max.paperplay.ui.app.BackupFiles.pickDestination = { name, onPicked -> savePending[0] = onPicked; saver.launch(name) }
+                onDispose {
+                    io.max.paperplay.ui.app.BackupFiles.pickDestination = null
+                }
             }
             // The media notification needs this on Android 13 and later; playing works without it.
             val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}

@@ -38,7 +38,7 @@ enum class BgAnim(val label: String) { Stars("Stars"), Snow("Snow"), Aurora("Aur
  * Every mode ends on the theme's background colour or a scrim of it, so text keeps its contrast in light and dark.
  */
 @Composable
-fun AppBackground(prefs: UiPrefs, coverUri: String?, base: Color, modifier: Modifier = Modifier) {
+fun AppBackground(prefs: UiPrefs, coverUri: String?, base: Color, modifier: Modifier = Modifier, playing: Boolean = true) {
     val dark = base.luminance() < 0.5f
     Box(modifier.fillMaxSize().background(base)) {
         when (prefs.background) {
@@ -47,7 +47,7 @@ fun AppBackground(prefs: UiPrefs, coverUri: String?, base: Color, modifier: Modi
             BgMode.CoverBlur -> CoverBlurLayer(coverUri, base)
             BgMode.Gradient -> GradientLayer(prefs, coverUri, base, dark)
             BgMode.Wallpaper -> WallpaperLayer(prefs, base)
-            BgMode.Animated -> AnimatedBackdrop(prefs.bgAnim, Color(prefs.bgAnimC1), Color(prefs.bgAnimC2), prefs.bgAnimSpeed, prefs.bgAnimDensity)
+            BgMode.Animated -> AnimatedBackdrop(prefs.bgAnim, Color(prefs.bgAnimC1), Color(prefs.bgAnimC2), prefs.bgAnimSpeed, prefs.bgAnimDensity, playing = playing)
         }
     }
 }

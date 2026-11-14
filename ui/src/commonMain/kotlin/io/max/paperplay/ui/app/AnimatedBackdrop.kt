@@ -30,14 +30,22 @@ private const val FRAME_NANOS = 33_000_000L
  * so nothing recomposes per frame. The loop stops while the app is in the background.
  */
 @Composable
-fun AnimatedBackdrop(anim: BgAnim, particle: Color, bg: Color, speed: Float, density: Float, modifier: Modifier = Modifier) {
+fun AnimatedBackdrop(
+    anim: BgAnim,
+    particle: Color,
+    bg: Color,
+    speed: Float,
+    density: Float,
+    modifier: Modifier = Modifier,
+    playing: Boolean = true,
+) {
     val foreground = rememberAppForeground()
     val time = remember { mutableFloatStateOf(0f) }
     // x, y, size, phase of every particle, in 0..1; made once.
     val seeds = remember { Random(7).let { r -> FloatArray(MAX_PARTS * 4) { r.nextFloat() } } }
     val path = remember { Path() }
-    LaunchedEffect(foreground, speed) {
-        if (!foreground) return@LaunchedEffect
+    LaunchedEffect(foreground, speed, playing) {
+        if (!foreground || !playing) return@LaunchedEffect
         var last = 0L
         while (isActive) {
             androidx.compose.runtime.withFrameNanos { now ->

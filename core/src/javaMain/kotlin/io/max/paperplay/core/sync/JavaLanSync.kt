@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -96,7 +98,7 @@ private fun randomDigits(n: Int): String {
 
 internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private val lib = env.library
-    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val io = CoroutineScope(SupervisorJob(env.scope.coroutineContext.job) + Dispatchers.IO)
     private val lock = Any()
     private val identityPriv: ByteArray
     private val identityPub: ByteArray
@@ -225,6 +227,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             server = null
             for (p in peers.values.toList()) p.close()
             _listening.value = false
+            io.coroutineContext.cancelChildren()
         }
     }
 

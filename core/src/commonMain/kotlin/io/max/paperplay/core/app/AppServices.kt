@@ -45,7 +45,7 @@ class AppServices(
 ) {
     val driver = platform.openDriver("${platform.dataDir}/library.sqlite")
     val db = LibraryDatabase(driver)
-    val library = LibraryRepository(LibraryRepo(db, clock), clock)
+    val library = LibraryRepository(LibraryRepo(db, clock), clock, scope)
     val scanner = Scanner(library, scope)
 
     /** Looks for newer releases on GitHub; the person's update choices are kept as settings of this device. */
@@ -331,6 +331,7 @@ class AppServices(
                     TdConfig(
                         apiId, apiHash, token, "${platform.dataDir}/td", "${platform.dataDir}/td_files", key,
                         deviceModel = platform.deviceModel, appVersion = platform.appVersion,
+                        useMessageDatabase = false,
                     ),
                 )
                 client = c
@@ -432,6 +433,7 @@ class AppServices(
      */
     fun close() {
         scope.cancel()
+        library.close()
         runCatching { driver.close() }
     }
 

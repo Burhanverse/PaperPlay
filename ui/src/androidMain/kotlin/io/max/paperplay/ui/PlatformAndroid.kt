@@ -41,7 +41,12 @@ actual fun rememberAppForeground(): Boolean {
     val owner = generateSequence(LocalContext.current) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<LifecycleOwner>().firstOrNull()
     var foreground by remember { mutableStateOf(owner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) ?: true) }
     DisposableEffect(owner) {
-        val observer = LifecycleEventObserver { _, _ -> foreground = owner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) ?: true }
+        val observer = LifecycleEventObserver { _, _ ->
+            val atLeastStarted = owner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) ?: true
+            foreground = atLeastStarted
+            AppForegroundState.isForeground = atLeastStarted
+            AppForegroundState.isVisible = atLeastStarted
+        }
         owner?.lifecycle?.addObserver(observer)
         onDispose { owner?.lifecycle?.removeObserver(observer) }
     }
