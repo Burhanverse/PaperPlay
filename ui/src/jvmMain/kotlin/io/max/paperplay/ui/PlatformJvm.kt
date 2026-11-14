@@ -1,9 +1,13 @@
 package io.max.paperplay.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import org.jetbrains.skia.Data
+import org.jetbrains.skia.makeFromFileName
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
@@ -12,7 +16,10 @@ import java.net.URI
 actual fun PlatformBackHandler(enabled: Boolean, onProgress: (Float) -> Unit, onBack: () -> Unit) = Unit
 
 @Composable
-actual fun rememberAppForeground(): Boolean = true
+actual fun rememberAppForeground(): Boolean {
+    val foreground by AppForegroundState.isForegroundFlow.collectAsState()
+    return foreground
+}
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 actual fun androidx.compose.ui.Modifier.mouseBackButton(onBack: () -> Unit): androidx.compose.ui.Modifier =
@@ -52,9 +59,12 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
     val remote = path.startsWith("http://") || path.startsWith("https://")
     val thumb = if (remote) null else thumbFile(path, maxSide)
     if (thumb != null && thumb.length() > 0) {
-        runCatching { org.jetbrains.skia.Image.makeFromEncoded(thumb.readBytes()).toComposeImageBitmap() }.getOrNull()?.let { return@runCatching it }
+        runCatching {
+            val thumbData = org.jetbrains.skia.Data.makeFromFileName(thumb.absolutePath)
+            org.jetbrains.skia.Image.makeFromEncoded(thumbData.bytes).toComposeImageBitmap()
+        }.getOrNull()?.let { return@runCatching it }
     }
-    val bytes = if (remote) {
+    val data = if (remote) {
         val conn = (URI.create(path).toURL().openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 10_000
@@ -63,14 +73,25 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
         }
         try {
             if (conn.responseCode !in 200..299) return@runCatching null
-            conn.inputStream.use { it.readBytes() }
+            val bytes = conn.inputStream.use { it.readBytes() }
+            org.jetbrains.skia.Data.makeFromBytes(bytes)
         } finally {
             conn.disconnect()
         }
     } else {
-        File(path.removePrefix("file://")).readBytes()
+        val local = File(path.removePrefix("file://"))
+        if (!local.isFile) return@runCatching null
+        org.jetbrains.skia.Data.makeFromFileName(local.absolutePath)
     }
-    val small = shrink(org.jetbrains.skia.Image.makeFromEncoded(bytes), maxSide)
+    val rawImg = org.jetbrains.skia.Image.makeFromEncoded(data.bytes)
+    var small = rawImg
+    try {
+        small = shrink(rawImg, maxSide)
+    } finally {
+        if (rawImg !== small) {
+            rawImg.close()
+        }
+    }
     if (thumb != null) runCatching {
         val png = thumb.extension == "png"
         small.encodeToData(if (png) org.jetbrains.skia.EncodedImageFormat.PNG else org.jetbrains.skia.EncodedImageFormat.JPEG, 90)?.bytes?.let {

@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.compose
+package io.max.paperplay.compose
 
 import android.Manifest
 import android.content.Intent
@@ -275,10 +275,8 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
-            androidx.compose.runtime.SideEffect {
+            androidx.compose.runtime.DisposableEffect(saver) {
                 io.max.paperplay.ui.app.BackupFiles.pickDestination = { name, onPicked -> savePending[0] = onPicked; saver.launch(name) }
-            }
-            androidx.compose.runtime.SideEffect {
                 io.max.paperplay.ui.app.BackupFiles.shareFile = { name, text ->
                     runCatching {
                         val dir = File(filesDir, "shared").apply { mkdirs() }
@@ -295,6 +293,11 @@ class MainActivity : ComponentActivity() {
                     runCatching {
                         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share log"))
                     }
+                }
+                onDispose {
+                    io.max.paperplay.ui.app.BackupFiles.pickDestination = null
+                    io.max.paperplay.ui.app.BackupFiles.shareFile = null
+                    io.max.paperplay.ui.app.BackupFiles.shareText = null
                 }
             }
             // The media notification needs this on Android 13 and later; playing works without it.

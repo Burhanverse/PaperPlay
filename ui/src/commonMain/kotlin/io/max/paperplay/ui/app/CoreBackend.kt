@@ -39,8 +39,12 @@ import io.max.paperplay.ui.state.PlaybackUiState
 import io.max.paperplay.ui.state.PositionUi
 import io.max.paperplay.ui.state.RepeatUi
 import io.max.paperplay.ui.state.SongUi
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
@@ -101,8 +105,13 @@ interface PlayerControls {
 }
 
 class CoreBackend(val services: AppServices) : PlayerControls {
-    private val scope = services.scope
+    private val backendJob = SupervisorJob(services.scope.coroutineContext.job)
+    private val scope = CoroutineScope(backendJob + Dispatchers.Default)
     private val repo = services.library
+
+    fun close() {
+        backendJob.cancel()
+    }
 
     @Volatile private var byId: Map<String, Song> = emptyMap()
     @Volatile private var byGroupKey: Map<String, Song> = emptyMap()
@@ -142,17 +151,17 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     ) { lib, playlists -> lib.copy(playlists = playlists) }
         .catch { emit(LibraryUi(songs = Load.Error(it.message ?: "The library could not be read."))) }
         .flowOn(Dispatchers.Default)
-        .stateIn(scope, SharingStarted.Eagerly, LibraryUi())
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), LibraryUi())
 
     val favorites: StateFlow<List<SongUi>> = repo.favorites()
         .onEach { if (it.isNotEmpty()) services.covers.prioritize(it.take(20)) }
         .map { it.map(Song::toUi) }
-        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, emptyList())
+        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val recents: StateFlow<List<SongUi>> = repo.recents(30)
         .onEach { if (it.isNotEmpty()) services.covers.prioritize(it.take(20)) }
         .map { it.map(Song::toUi) }
-        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, emptyList())
+        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private class HomeInput(
         val songs: List<Song>, val recent: List<Song>, val favorites: List<Song>, val reserved: Int,
@@ -659,7 +668,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         )
     }
         .catch { emit(HomeUi()) }
-        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, HomeUi())
+        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), HomeUi())
 
     /** Records "does not fit" for [song] in the mix [moodId]; the next mix leaves it out. */
     fun rejectFromMix(song: SongUi, moodId: String) = voteMix(song, moodId, -1)
@@ -741,9 +750,12 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     init {
         scope.launch(Dispatchers.Default) {
             var first = true
-            while (true) {
+            val activeFlow = combine(io.max.paperplay.ui.AppForegroundState.isVisibleFlow, playbackMeta.map { it.playing }) { visible, playing ->
+                visible && playing
+            }
+            while (isActive) {
                 val level = io.max.paperplay.player.SystemVolume.get()
-                if (level == null) { if (first) return@launch else { delay(1000); continue } }
+                if (level == null) { if (first) return@launch else { delay(2500); continue } }
                 if (first) {
                     first = false
                     systemVolume = true
@@ -751,7 +763,11 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                     if (playerStarted.value) player.setVolume(1f)
                 }
                 if (kotlin.math.abs(level - volume.value) > 0.004f) volume.value = level
-                delay(1000)
+                if (!io.max.paperplay.ui.AppForegroundState.isVisible || !playbackMeta.value.playing) {
+                    activeFlow.first { it }
+                } else {
+                    delay(2500)
+                }
             }
         }
     }

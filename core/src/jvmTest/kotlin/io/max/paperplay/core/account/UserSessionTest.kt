@@ -68,7 +68,7 @@ class UserSessionTest {
     @AfterTest fun tearDown() = scope.cancel()
 
     private fun session(fake: FakeTdNative, loggedIn: Boolean = false): UserSession {
-        if (loggedIn) prefs[USER_SESSION_PREF] = "1"
+        prefs[USER_SESSION_PREF] = if (loggedIn) "1" else "0"
         return UserSession(
             scope, { TdRuntime(fake, scope, Dispatchers.IO) }, "/data", secrets, settings, { prefs[it] }, { k, v -> prefs[k] = v },
             pause = { pauses += it },

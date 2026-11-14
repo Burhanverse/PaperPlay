@@ -26,7 +26,15 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
     // Touched on the main thread only, since compose runs producers there. Bounded by pixel memory, not count: one 1280 px cover is 6 MB.
     private val cache = LinkedHashMap<String, ImageBitmap>(64, 0.75f, true)
     private var cached = 0L
-    private fun keep(key: String, bmp: ImageBitmap) {
+    private class InFlightJob(
+        val deferred: Deferred<ImageBitmap?>,
+        var refCount: Int = 1
+    )
+
+    private val inFlight = HashMap<String, InFlightJob>()
+    private val decoder = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(6))
+
+    private fun keep(key: String, bmp: ImageBitmap) = synchronized(cache) {
         cache.put(key, bmp)?.let { cached -= it.width.toLong() * it.height * 4 }
         cached += bmp.width.toLong() * bmp.height * 4
         val iter = cache.entries.iterator()
@@ -37,24 +45,36 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
             iter.remove()
         }
     }
-    private val inFlight = HashMap<String, Deferred<ImageBitmap?>>()
-    private val decoder = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(6))
 
     private val ahead = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     /** Decodes covers before a screen asks for them, so they are in memory (and appear at once) when it does. */
     fun preload(uris: Collection<String>, maxSide: Int) {
-        // The cache and the in-flight map are only touched on the main thread; the decoding itself runs on the decoder threads.
         ahead.launch {
             for (uri in uris) {
                 val key = "$uri@$maxSide"
-                if (cache.containsKey(key) || inFlight.containsKey(key)) continue
-                val job = decoder.async { decodeImageFile(uri, maxSide) }
-                inFlight[key] = job
+                if (synchronized(cache) { cache.containsKey(key) }) continue
+                val flightJob = synchronized(inFlight) {
+                    if (inFlight.containsKey(key)) return@synchronized null
+                    val created = InFlightJob(decoder.async { decodeImageFile(uri, maxSide) }, refCount = 1)
+                    inFlight[key] = created
+                    created
+                } ?: continue
                 launch {
-                    val decoded = job.await()
-                    inFlight.remove(key)
-                    if (decoded != null) keep(key, decoded)
+                    try {
+                        val decoded = flightJob.deferred.await()
+                        if (decoded != null) {
+                            keep(key, decoded)
+                            CoverSeeds.setFromBitmap(uri, decoded)
+                        }
+                    } finally {
+                        synchronized(inFlight) {
+                            flightJob.refCount--
+                            if (flightJob.refCount <= 0) {
+                                inFlight.remove(key)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -63,14 +83,42 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
     @Composable
     override fun painter(uri: String, maxSide: Int): Painter? {
         val key = "$uri@$maxSide"
-        val bitmap by produceState(cache[key], key) {
-            value = cache[key]
-            if (value != null) return@produceState
-            val job = inFlight.getOrPut(key) { decoder.async { decodeImageFile(uri, maxSide) } }
-            val decoded = job.await()
-            inFlight.remove(key)
-            if (decoded != null) keep(key, decoded)
-            value = decoded
+        val initial = synchronized(cache) { cache[key] }
+        val bitmap by produceState(initial, key) {
+            val cached = synchronized(cache) { cache[key] }
+            if (cached != null) {
+                value = cached
+                return@produceState
+            }
+            val job = synchronized(inFlight) {
+                val existing = inFlight[key]
+                if (existing != null) {
+                    existing.refCount++
+                    existing
+                } else {
+                    val created = InFlightJob(decoder.async { decodeImageFile(uri, maxSide) }, refCount = 1)
+                    inFlight[key] = created
+                    created
+                }
+            }
+            try {
+                val decoded = job.deferred.await()
+                if (decoded != null) {
+                    keep(key, decoded)
+                    CoverSeeds.setFromBitmap(uri, decoded)
+                }
+                value = decoded
+            } finally {
+                synchronized(inFlight) {
+                    job.refCount--
+                    if (job.refCount <= 0) {
+                        inFlight.remove(key)
+                        if (!job.deferred.isCompleted) {
+                            job.deferred.cancel()
+                        }
+                    }
+                }
+            }
         }
         // Medium filtering mipmaps the downscale; the default shimmers and shows jagged edges on small covers.
         return remember(bitmap) { bitmap?.let { BitmapPainter(it, filterQuality = androidx.compose.ui.graphics.FilterQuality.Medium) } }

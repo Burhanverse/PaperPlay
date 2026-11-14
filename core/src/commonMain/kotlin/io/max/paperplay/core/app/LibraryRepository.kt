@@ -9,8 +9,10 @@ import io.max.paperplay.core.library.newUuid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.shareIn
@@ -26,6 +28,10 @@ import kotlinx.coroutines.flow.update
  * which re-runs the queries behind the `watch` flows. Write only through here, never through [repo].
  */
 class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
+    constructor(repo: LibraryRepo, clock: () -> Long, parentScope: CoroutineScope?) : this(repo, clock) {
+        parentScope?.coroutineContext?.job?.invokeOnCompletion { close() }
+    }
+
     private val songs get() = repo.db.songsQueries
     private val lists get() = repo.db.playlistsQueries
     private val misc get() = repo.db.miscQueries
@@ -37,6 +43,11 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
 
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val soft = Channel<Unit>(Channel.CONFLATED)
+
+    fun close() {
+        bgScope.cancel()
+        soft.close()
+    }
 
     /** True while the song-info run is going; the cover workers stand down for it. */
     val enrichRunning = MutableStateFlow(false)
