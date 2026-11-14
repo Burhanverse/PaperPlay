@@ -102,7 +102,23 @@ private fun installFileDrop(window: java.awt.Window) {
 private var instanceLock: Any? = null
 private val showMain = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
+/** One line of JVM memory numbers: heap, non-heap, direct and mapped buffers, loaded classes, threads. */
+private fun jvmMemoryLine(): String {
+    val mb = 1024.0 * 1024.0
+    fun f(x: Long) = "%.1f".format(x / mb)
+    val mem = java.lang.management.ManagementFactory.getMemoryMXBean()
+    val heap = mem.heapMemoryUsage
+    val non = mem.nonHeapMemoryUsage
+    val pools = java.lang.management.ManagementFactory.getPlatformMXBeans(java.lang.management.BufferPoolMXBean::class.java)
+    fun pool(name: String) = pools.firstOrNull { it.name == name }?.memoryUsed ?: 0L
+    return "Heap: ${f(heap.used)}/${f(heap.committed)} MB (max ${f(heap.max)}) | NonHeap: ${f(non.used)}/${f(non.committed)} MB | " +
+        "DirectBuf: ${f(pool("direct"))} MB, mapped ${f(pool("mapped"))} MB | Classes: ${java.lang.management.ManagementFactory.getClassLoadingMXBean().loadedClassCount} | " +
+        "Threads: ${java.lang.management.ManagementFactory.getThreadMXBean().threadCount}"
+}
+
 fun main() {
+    io.max.paperplay.core.app.MemoryProbe.sample = ::jvmMemoryLine
+    io.max.paperplay.core.app.MemoryProbe.echo = { println(it) }
     val logDir = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PaperPlay")
     runCatching { File(logDir, "startup.log").takeIf { it.length() > 64_000 }?.delete() }
     mark(logDir, "main start")
