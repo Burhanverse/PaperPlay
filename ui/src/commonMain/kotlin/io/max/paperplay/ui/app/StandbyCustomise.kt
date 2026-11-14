@@ -38,6 +38,8 @@ enum class StandbyWidget(val key: String, val label: String, val default: Boolea
     Next("next", "Next song", false),
     Lyrics("lyrics", "Lyrics line", false),
     Weather("weather", "Weather line", false),
+    LyricsSide("lyrics_side", "Lyrics beside the song, in place of the animation", false),
+    Alerts("alerts", "Charging, call and notification icons", false),
 }
 
 /** Standby settings, kept under standby_* keys. Created by [UiPrefs] and shared with the screen and sheet. */
@@ -78,6 +80,7 @@ private val customChoices = listOf(0xFF5CC8FF, 0xFFFF8A5C, 0xFF7BE495, 0xFFE58CF
 @Composable
 fun StandbyCustomiseSheet(p: StandbyPrefs, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        io.max.paperplay.ui.StandbyHideBars()
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Standby mode", style = MaterialTheme.typography.titleLarge)
             Text("Animation", style = MaterialTheme.typography.titleSmall)
@@ -99,6 +102,10 @@ fun StandbyCustomiseSheet(p: StandbyPrefs, onDismiss: () -> Unit) {
             }
             Text("Widgets", style = MaterialTheme.typography.titleSmall)
             StandbyWidget.entries.forEach { w -> ToggleLine(w.label, p.shows(w)) { p.putWidget(w, it) } }
+            if (p.shows(StandbyWidget.Alerts)) io.max.paperplay.ui.rememberNotificationAccess()?.let { a ->
+                if (!a.granted) androidx.compose.material3.OutlinedButton(a.open) { Text("Allow notification access for the icons") }
+                else Text("Only the app icons are shown, never the text of a notification.", style = MaterialTheme.typography.bodySmall)
+            }
             ToggleLine("24 hour clock", p.hour24, p::putHour24)
             ToggleLine("Shift the screen slightly to avoid burn-in", p.pixelShift, p::putPixelShift)
             Text("Clock size", style = MaterialTheme.typography.titleSmall)

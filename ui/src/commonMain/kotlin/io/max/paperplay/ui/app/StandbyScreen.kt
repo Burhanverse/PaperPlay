@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -38,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -47,7 +51,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.max.paperplay.core.recs.WeatherKind
+import io.max.paperplay.ui.AlertIcon
 import io.max.paperplay.ui.StandbyWindowEffect
+import io.max.paperplay.ui.rememberCharging
+import io.max.paperplay.ui.rememberStandbyAlerts
 import io.max.paperplay.ui.clockNow
 import io.max.paperplay.ui.components.AppIcon
 import io.max.paperplay.ui.components.CoverImage
@@ -79,13 +86,16 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
     // Once a second also when only the drift needs it, so the shift below is smooth.
     LaunchedEffect(showClock, p.pixelShift) { while (true) { clock = clockNow(); delay(if (showClock || p.pixelShift) 1000L else 20_000L) } }
     var sheet by remember { mutableStateOf(false) }
+    // The first tap only shows the settings button; a second tap within a few seconds leaves standby.
+    var armed by remember { mutableStateOf(false) }
+    LaunchedEffect(armed) { if (armed) { delay(4000); armed = false } }
     val tone = standbyTone(p, state)
     val song = state.current
     val web = backend as? CoreBackend
 
     BoxWithConstraints(
         Modifier.fillMaxSize().background(Color.Black)
-            .pointerInput(Unit) { detectTapGestures(onTap = { onClose() }) }
+            .pointerInput(Unit) { detectTapGestures(onTap = { if (armed) onClose() else armed = true }) }
             .pointerInput(Unit) {
                 var total = 0f
                 detectVerticalDragGestures(onDragStart = { total = 0f }, onDragEnd = { if (total > 160f) onClose() }) { _, dy -> total += dy }
@@ -128,19 +138,30 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                 if (p.shows(StandbyWidget.Next)) state.queue.getOrNull(state.queueIndex + 1)?.let {
                     Text("Next: ${it.title} - ${it.artist}", color = tone.copy(alpha = 0.5f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                 }
-                if (p.shows(StandbyWidget.Lyrics) && song != null) StandbyLyric(song.id, backend, tone)
+                if (p.shows(StandbyWidget.Lyrics) && song != null) {
+                    val lines = rememberLrc(song.id, backend)
+                    if (lines.isNotEmpty()) StandbyLyricScroll(lines, backend, tone, 3, false, Modifier.fillMaxWidth())
+                }
                 if (p.shows(StandbyWidget.Weather) && web != null) {
                     val place by web.weatherPlace.collectAsState()
                     val kind by web.weather.collectAsState()
                     place?.let { Text(it.name + (kind?.let { k -> ", " + weatherWord(k) } ?: ""), color = tone.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall) }
                 }
                 if (p.shows(StandbyWidget.Battery)) rememberBatteryPercent()?.let {
-                    Text("Battery $it%", color = tone.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall)
+                    val charging = rememberCharging()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (charging) AppIcon(Icons.Rounded.Bolt, "Charging", Modifier.size(14.dp), tint = tone.copy(alpha = 0.7f))
+                        Text("Battery $it%", color = tone.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
+                if (p.shows(StandbyWidget.Alerts)) StandbyAlertRow(tone)
             }
         }
         val visual: @Composable (Modifier) -> Unit = { m ->
-            StandbyVisual(p.style, tone, state.playing, state.volume, song?.id.orEmpty(), m)
+            val sideLines = if (p.shows(StandbyWidget.LyricsSide) && song != null) rememberLrc(song.id, backend) else emptyList()
+            if (sideLines.isNotEmpty()) Box(m, contentAlignment = Alignment.Center) {
+                StandbyLyricScroll(sideLines, backend, tone, if (wide) 5 else 3, true, Modifier.fillMaxWidth())
+            } else StandbyVisual(p.style, tone, state.playing, state.volume, song?.id.orEmpty(), m)
         }
         Box(Modifier.fillMaxSize().offset(shiftX, shiftY)) {
             if (wide) Row(Modifier.fillMaxSize().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -154,7 +175,7 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
         // Shown briefly on entry, then fades to invisible; it still works where it was.
         var hint by remember { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(3000); hint = false }
-        val hintAlpha by androidx.compose.animation.core.animateFloatAsState(if (hint) 0.35f else 0f, androidx.compose.animation.core.tween(1500))
+        val hintAlpha by androidx.compose.animation.core.animateFloatAsState(if (armed) 0.7f else if (hint) 0.35f else 0f, androidx.compose.animation.core.tween(1500))
         IconButton({ sheet = true }, Modifier.align(Alignment.TopEnd).padding(8.dp)) {
             AppIcon(Icons.Rounded.Settings, "Customise standby", tint = tone.copy(alpha = hintAlpha))
         }
@@ -164,12 +185,16 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
 
 @Composable
 private fun standbyTone(p: StandbyPrefs, state: PlaybackUiState): Color {
-    val seed = CoverSeeds.seed(state.current?.coverUri)
+    val uri = state.current?.coverUri
     val primary = MaterialTheme.colorScheme.primary
+    // "Accent" is the colour chosen in settings; if the app accent follows the cover or the wallpaper there is no fixed colour, so it is the theme colour.
+    val accentSeed = io.max.paperplay.ui.app.LocalUiPrefs.current?.seed
+    val raw = CoverSeeds.palette(uri).firstOrNull()?.takeIf { it != 0 } ?: CoverSeeds.seed(uri)
     val base = when (p.color) {
         "custom" -> Color(p.customColor)
-        "accent" -> primary
-        else -> if (seed != null) remember(seed) { schemeFromSeed(seed, dark = true).primary } else primary
+        "accent" -> if (accentSeed != null) remember(accentSeed) { schemeFromSeed(accentSeed, dark = true).primary } else primary
+        // The cover's own main colour, lifted if it is too dark to read on black.
+        else -> if (raw != null) Color(raw).let { c -> if (c.luminance() < 0.4f) lerp(c, Color.White, 0.45f) else c } else primary
     }
     // Pulled slightly toward white so it reads at low brightness.
     return lerp(base, Color.White, 0.2f).copy(alpha = 0.9f)
@@ -183,6 +208,26 @@ private fun weatherWord(k: WeatherKind) = when (k) {
     WeatherKind.SNOW -> "snow"
 }
 
+/** A bolt while charging and one icon per app with a notification; a call pulses. Nothing is drawn when there is nothing to show. */
+@Composable
+private fun StandbyAlertRow(tone: Color) {
+    val charging = rememberCharging()
+    val alerts = rememberStandbyAlerts()
+    if (!charging && alerts.isEmpty()) return
+    val pulse by androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
+        0.35f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
+    )
+    Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (charging) AppIcon(Icons.Rounded.Bolt, "Charging", Modifier.size(22.dp), tint = tone)
+        alerts.take(8).forEach { a ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                AlertIcon(a.packageName, Modifier.size(if (a.call) 30.dp else 22.dp), tone.copy(alpha = if (a.call) pulse else 0.8f))
+                if (a.count > 1) Text("${a.count}", color = tone.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
 /** A thin bar; the position is read in its own scope so a tick never recomposes the screen. */
 @Composable
 private fun StandbyProgress(state: PlaybackUiState, backend: PlayerControls, tone: Color) {
@@ -194,15 +239,35 @@ private fun StandbyProgress(state: PlaybackUiState, backend: PlayerControls, ton
 }
 
 @Composable
-private fun StandbyLyric(id: String, backend: PlayerControls, tone: Color) {
+private fun rememberLrc(id: String, backend: PlayerControls): List<io.max.paperplay.core.metadata.LrcLine> {
     var text by remember(id) { mutableStateOf<String?>(null) }
     LaunchedEffect(id) { text = runCatching { backend.lyricsFor(id) }.getOrNull() }
-    val lines = remember(text) { text?.let { io.max.paperplay.core.metadata.parseLrc(it) }.orEmpty() }
-    if (lines.isEmpty()) return
+    return remember(text) { text?.let { io.max.paperplay.core.metadata.parseLrc(it) }.orEmpty() }
+}
+
+/** [rows] lines with the current one in the middle: the list scrolls smoothly to each new line and the lines fade out with distance. */
+@Composable
+private fun StandbyLyricScroll(lines: List<io.max.paperplay.core.metadata.LrcLine>, backend: PlayerControls, tone: Color, rows: Int, big: Boolean, modifier: Modifier = Modifier) {
     val pos by backend.position.collectAsState()
     val current by remember(lines) { derivedStateOf { lines.indexOfLast { it.timeMs <= pos.positionMs } } }
-    val line = lines.getOrNull(current)?.text.orEmpty()
-    Text(line.ifBlank { " " }, color = tone.copy(alpha = 0.75f), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+    val itemH = if (big) 44.dp else 30.dp
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(current) { list.animateScrollToItem(current.coerceAtLeast(0)) }
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier.height(itemH * rows), state = list, userScrollEnabled = false,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = itemH * (rows / 2)),
+    ) {
+        itemsIndexed(lines) { i, l ->
+            val d = kotlin.math.abs(i - current)
+            val a by androidx.compose.animation.core.animateFloatAsState(when (d) { 0 -> 0.95f; 1 -> 0.45f; 2 -> 0.22f; else -> 0.1f }, androidx.compose.animation.core.tween(450))
+            Box(Modifier.fillMaxWidth().height(itemH), contentAlignment = Alignment.Center) {
+                Text(
+                    l.text.ifBlank { " " }, color = tone.copy(alpha = a), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+    }
 }
 
 @Preview(name = "Standby", widthDp = 390, heightDp = 844)
