@@ -175,12 +175,12 @@ fun LibraryScreen(
             0 -> when (val s = lib.songs) {
                 is Load.Loading -> Text("Loading…", Modifier.padding(24.dp))
                 is Load.Error -> Text(s.message, Modifier.padding(24.dp), color = MaterialTheme.colorScheme.error)
-                is Load.Ready -> SongList(s.value, currentId, actions, Modifier.fillMaxSize(), bottomPadding, empty = "No songs yet. Add a chat in Settings.")
+                is Load.Ready -> SongList(s.value, currentId, actions, Modifier.fillMaxSize(), bottomPadding, empty = "No songs yet. Add a chat in Settings.", listKey = "library:songs")
             }
             1 -> GroupGrid(lib.albums, bottomPadding, "No albums yet.") { onOpen(Detail.Album(it.name, it.owner)) }
             2 -> GroupList(lib.artists, bottomPadding, "No artists yet.", circle = true) { onOpen(Detail.Artist(it.name)) }
             3 -> PlaylistsTab(lib.playlists, favorites, recents, bottomPadding, onOpen, onNewPlaylist, onImportSpotify)
-            else -> SongList(favorites, currentId, actions, Modifier.fillMaxSize(), bottomPadding, empty = "No favorites yet.")
+            else -> SongList(favorites, currentId, actions, Modifier.fillMaxSize(), bottomPadding, empty = "No favorites yet.", listKey = "library:favorites")
         }
     }
 }
@@ -259,6 +259,26 @@ fun DetailScreen(
         if (detail !is Detail.Playlist) return@produceState
         backend.services.library.changes.collect { value = detail.id.toLongOrNull()?.let { store.missing(it) }.orEmpty() }
     }
+    // Tracks the playlist has from Spotify but the library does not: greyed out, with their art, in the list where the chosen order puts them.
+    val ghosts = remember(missing, songs, sort) {
+        fun ghost(t: io.max.paperplay.core.library.MissingTrack, after: Int) =
+            GhostSong(t.track_key, t.title, t.artist, t.duration_sec.toInt(), io.max.paperplay.core.integrations.spotifyLinkOf(t.track_key), after = after) {
+                backend.missingArt.artFor(t.track_key)
+            }
+        val inSpotifyOrder = missing.sortedBy { it.position }
+        // Each ghost goes where the chosen order puts it among the songs the library has, so the list reads like the Spotify playlist.
+        when (sort) {
+            // A missing track's position is its place in the Spotify list: the songs before it number position minus the missing tracks before it.
+            PlaylistSort.Order -> inSpotifyOrder.mapIndexed { n, t -> ghost(t, (t.position.toInt() - n).coerceAtLeast(0)) }
+            PlaylistSort.Title -> inSpotifyOrder.sortedBy { it.title.lowercase() }.map { t -> ghost(t, songs.count { it.title.lowercase() < t.title.lowercase() }) }
+            PlaylistSort.Artist -> inSpotifyOrder.sortedBy { it.artist.lowercase() }.map { t -> ghost(t, songs.count { it.artist.lowercase() < t.artist.lowercase() }) }
+            // Spotify's added date; a track without one goes last.
+            PlaylistSort.Newest -> inSpotifyOrder.sortedByDescending { it.source_added_at ?: Long.MIN_VALUE }
+                .map { t -> ghost(t, t.source_added_at?.let { d -> songs.count { it.addedAt > d } } ?: songs.size) }
+            PlaylistSort.Oldest -> inSpotifyOrder.sortedBy { it.source_added_at ?: Long.MAX_VALUE }
+                .map { t -> ghost(t, t.source_added_at?.let { d -> songs.count { it.addedAt < d } } ?: songs.size) }
+        }
+    }
     val mixSnack = remember { androidx.compose.material3.SnackbarHostState() }
     Box(modifier) {
     Column(Modifier.fillMaxSize()) {
@@ -285,6 +305,7 @@ fun DetailScreen(
                                     moreMenu = false
                                     if (!refreshing) {
                                         refreshing = true
+                                        actions.notice("Refreshing the playlist from Spotify...")
                                         scope.launch { actions.notice(backend.refreshPlaylist(detail.id)); refreshing = false }
                                     }
                                 },
@@ -299,6 +320,9 @@ fun DetailScreen(
         }
         SongList(
             songs, currentId, actions, Modifier.fillMaxSize(), bottomPadding, sortable = detail !is Detail.Playlist,
+            listKey = when (detail) { is Detail.Album -> "album:${detail.name}|${detail.artist}"; is Detail.Artist -> "artist:${detail.name}"; is Detail.Songs -> "songs:${detail.title}"; else -> null },
+            ghosts = ghosts,
+            ghostsInline = true,
             header = {
                 DetailHero(detail, name, songs)
                 if (missing.isNotEmpty()) MissingRow(missing.size) { missingSheet = true }
@@ -320,7 +344,7 @@ fun DetailScreen(
             },
         )
     }
-    androidx.compose.material3.SnackbarHost(mixSnack, Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding))
+    AppSnackbarHost(mixSnack, Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding))
     }
     if (reorderOpen && detail is Detail.Playlist) ReorderButton(backend, detail.id, rawSongs, external = true) { reorderOpen = false }
     if (missingSheet && missing.isNotEmpty()) MissingSheet(backend, store, missing, name, { missingSheet = false }) { bump++ }
