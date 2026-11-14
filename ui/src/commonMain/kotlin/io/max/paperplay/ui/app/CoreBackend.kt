@@ -1099,13 +1099,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         return null
     }
 
-    /** Rescans every chat with the main bot; [onDone] runs when it has finished, so a caller can offer to read with the other bots too. */
+    /** Rescans every chat with the main bot, then with the extra bots and your account, as the Repair page's switches say. */
     fun rescan(onDone: () -> Unit = {}) {
         scope.launch {
             repo.chatList().forEach {
                 services.scanner.reader = services.scanner.mainBotName()
                 try { services.scanner.rescanChat(it) } finally { services.scanner.reader = null }
             }
+            readWithOthers(this@CoreBackend, pref("repair_bots") != "false", account.loggedIn.value && pref("repair_account") != "false")
             onDone()
         }
     }

@@ -459,16 +459,7 @@ internal fun SettingsPage(
         "savebackup" -> BackupPasswordDialog({ pw ->
             backend.services.scope.launch { notice.value = backend.saveBackup(pw, "paperplay-backup-${io.max.paperplay.core.app.dayOf(io.max.paperplay.ui.nowMoment().epochMs)}.zip") }
         }) { confirm = null }
-        "rescan" -> ConfirmDialog("Run a full rescan?", "Re-reads every message in your music chats at the speed set under Reading channels (Library settings or Telegram). A slower speed takes longer but avoids Telegram's rate limit.", "Rescan", { backend.rescan { if (backend.services.botPool.readyBots().isNotEmpty() || backend.account.loggedIn.value) confirm = "rescanmore" } }) { confirm = null }
-        "rescanmore" -> {
-            val withAccount = backend.account.loggedIn.value
-            ConfirmDialog(
-                "Read with the other bots too?",
-                "The rescan read the chats with the main bot. Songs another bot posted" + (if (withAccount) ", or that only your account can see," else "") +
-                    " may still be missing. Read the chats now with the other bots" + (if (withAccount) " and your account" else "") + "? Nothing is deleted.",
-                "Read", { backend.services.scope.launch { readWithOthers(backend, true, withAccount); notice.value = "Finished reading with the other bots." } },
-            ) { confirm = null }
-        }
+        "rescan" -> ConfirmDialog("Run a full rescan?", "Re-reads every message in your music chats with the main bot, then with the extra bots and your account (switches on the Repair page), at the speed set under Reading channels. A slower speed takes longer but avoids Telegram's rate limit.", "Rescan", { backend.rescan { notice.value = "Rescan finished." } }) { confirm = null }
         "restore" -> ConfirmDialog("Restore a backup?", "This replaces your library, playlists and favorites with the backup.", "Restore", onRestore) { confirm = null }
         "clearcache" -> ConfirmDialog("Clear the cache?", "Streamed songs stored on this device are deleted. Stop playback first. They download again when played.", "Clear", { backend.clearCache { notice.value = it } }) { confirm = null }
         "accountout" -> ConfirmDialog("Log out of your account?", "Your index stays on this device. Chats and channels need a new login. The bot is not affected.", "Log out", backend::logOutAccount) { confirm = null }

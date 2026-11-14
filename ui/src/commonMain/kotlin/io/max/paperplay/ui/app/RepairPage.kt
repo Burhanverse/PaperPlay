@@ -34,7 +34,7 @@ internal data class RepairUi(val running: Boolean = false, val lines: List<Strin
 internal fun RepairPage(backend: CoreBackend, stack: MutableList<String>) {
     var ui by remember { mutableStateOf(RepairUi()) }
     var withBots by remember { mutableStateOf(backend.pref("repair_bots") != "false") }
-    var withAccount by remember { mutableStateOf(backend.pref("repair_account") == "true") }
+    var withAccount by remember { mutableStateOf(backend.pref("repair_account") != "false") }
     val loggedIn by backend.account.loggedIn.collectAsState()
     val extraBots by backend.services.botPool.bots.collectAsState()
     RepairContent(
