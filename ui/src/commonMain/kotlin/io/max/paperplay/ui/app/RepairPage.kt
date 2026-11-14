@@ -75,22 +75,10 @@ private suspend fun runRepair(backend: CoreBackend, withBots: Boolean, withAccou
                 val ok = services.scanner.rescanChat(chat)
                 log(if (ok) services.scanner.report.value ?: "${chat.title}: done" else "${chat.title}: could not read it completely (is the bot connected and an admin?)")
                 // Each extra bot reads the chat on its own: a bot sees the posts it made, which the others cannot see.
-                if (withBots) for ((bot, client) in services.botPool.readyBots()) {
-                    log("Reading ${chat.title} with ${bot.name ?: bot.username ?: "bot ${bot.id}"}")
-                    val seen = services.scanner.scanChat(chat, full = true, via = client, owner = bot.id)
-                    log(if (seen != null) services.scanner.report.value ?: "${chat.title}: done" else "${bot.username ?: "Bot ${bot.id}"} could not read it (is it an admin of the chat?)")
-                }
+                if (withBots) readChatWithBots(backend, chat, ::log)
             }
-            // Your own account sees everything in the main chat; what no bot could read is added to play through it.
-            val main = backend.mainChatId()
-            if (withAccount && main != null) {
-                log("Reading the main chat with your account")
-                runCatching {
-                    backend.chatIndex.indexChat(io.max.paperplay.core.account.ChatInfo(main, services.library.chat(main)?.title ?: "Main chat", true))
-                    val n = backend.chatIndex.addMissingFromMainChat()
-                    log(if (n > 0) "Added $n songs only your account can read" else "No songs were left that only your account can read")
-                }.onFailure { log("The account could not read the chat: ${it.message}") }
-            }
+            // Your own account sees every post in the main chat, whoever sent it.
+            if (withAccount) readMainChatWithAccount(backend, ::log)
         } finally {
             services.scanner.retryEmptyIds = false
         }
@@ -173,3 +161,39 @@ private fun RepairDonePreview() = io.max.paperplay.ui.PreviewFrame {
 @Preview(name = "Repair running", widthDp = 390, heightDp = 500, showBackground = true)
 @Composable
 private fun RepairRunningPreview() = io.max.paperplay.ui.PreviewFrame { RepairContent(RepairUi(running = true, lines = listOf("Reading My Music")), {}, {}, {}) }
+
+/** Reads one chat with every extra bot: a bot sees the posts it made, which the others cannot see. Adds only what the library lacks. */
+private suspend fun readChatWithBots(backend: CoreBackend, chat: io.max.paperplay.core.library.LibraryChat, log: (String) -> Unit) {
+    val services = backend.services
+    for ((bot, client) in services.botPool.readyBots()) {
+        log("Reading ${chat.title} with ${bot.name ?: bot.username ?: "bot ${bot.id}"}")
+        val seen = services.scanner.scanChat(chat, full = true, via = client, owner = bot.id)
+        log(if (seen != null) services.scanner.report.value ?: "${chat.title}: done" else "${bot.username ?: "Bot ${bot.id}"} could not read it (is it an admin of the chat?)")
+    }
+}
+
+/** Your own account sees every post in the main chat, whoever sent it; what no bot could read is added to play through it. */
+private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) -> Unit) {
+    val services = backend.services
+    val main = backend.mainChatId() ?: return
+    log("Reading the main chat with your account")
+    runCatching {
+        backend.chatIndex.indexChat(io.max.paperplay.core.account.ChatInfo(main, services.library.chat(main)?.title ?: "Main chat", true))
+        val n = backend.chatIndex.addMissingFromMainChat()
+        log(if (n > 0) "Added $n songs only your account can read" else "No songs were left that only your account can read")
+    }.onFailure { log("The account could not read the chat: ${it.message}") }
+}
+
+/** After a rescan with the main bot: reads every chat with the other bots and, if asked, your account, then starts the lookups. Deletes nothing. */
+internal suspend fun readWithOthers(backend: CoreBackend, withBots: Boolean, withAccount: Boolean, log: (String) -> Unit = {}) {
+    val services = backend.services
+    services.scanner.retryEmptyIds = true
+    try {
+        if (withBots) for (chat in services.library.chatList()) readChatWithBots(backend, chat, log)
+        if (withAccount) readMainChatWithAccount(backend, log)
+    } finally {
+        services.scanner.retryEmptyIds = false
+    }
+    services.enricher.kick()
+    services.covers.kick()
+}

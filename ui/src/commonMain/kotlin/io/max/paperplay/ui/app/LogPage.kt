@@ -126,7 +126,7 @@ internal fun LogBody(
                 Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else SelectionContainer(Modifier.weight(1f)) {
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LocalPageBottomPadding.current)) {
                 items(shown) { l ->
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         Text(
