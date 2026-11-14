@@ -247,15 +247,7 @@ class MainActivity : ComponentActivity() {
         auth.deliver(intent?.data)
         // A crash leaves its error text in a file, shown in Settings > Telegram > Bot activity on the next start.
         val crashFile = File(filesDir, "crash.txt")
-        // Once per process: every new activity used to wrap the previous handler again.
-        if (!crashHandlerInstalled) {
-            crashHandlerInstalled = true
-            val previous = Thread.getDefaultUncaughtExceptionHandler()
-            Thread.setDefaultUncaughtExceptionHandler { t, e ->
-                runCatching { crashFile.writeText(Thread.currentThread().name + ": " + e.stackTraceToString().take(6000)) }
-                previous?.uncaughtException(t, e)
-            }
-        }
+        // The error handler is installed by PaperPlayApp, before any screen.
         intent?.getStringExtra(OPEN_EXTRA)?.let { open.value = it }
         val library = File(filesDir, "library.sqlite")
         val onboardedFile = File(filesDir, "onboarded")
@@ -285,6 +277,25 @@ class MainActivity : ComponentActivity() {
             }
             androidx.compose.runtime.SideEffect {
                 io.max.paperplay.ui.app.BackupFiles.pickDestination = { name, onPicked -> savePending[0] = onPicked; saver.launch(name) }
+            }
+            androidx.compose.runtime.SideEffect {
+                io.max.paperplay.ui.app.BackupFiles.shareFile = { name, text ->
+                    runCatching {
+                        val dir = File(filesDir, "shared").apply { mkdirs() }
+                        val f = File(dir, name).apply { writeText(text) }
+                        val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.share", f)
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                            .putExtra(Intent.EXTRA_SUBJECT, name).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        startActivity(Intent.createChooser(send, "Share log").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    }
+                }
+                io.max.paperplay.ui.app.BackupFiles.deviceInfo =
+                    "PaperPlay ${packageManager.getPackageInfo(packageName, 0).versionName}, ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.SUPPORTED_ABIS.joinToString()}"
+                io.max.paperplay.ui.app.BackupFiles.shareText = { text ->
+                    runCatching {
+                        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share log"))
+                    }
+                }
             }
             // The media notification needs this on Android 13 and later; playing works without it.
             val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -420,7 +431,6 @@ class MainActivity : ComponentActivity() {
         @Volatile
         var shared: AppServices? = null
 
-        private var crashHandlerInstalled = false
 
         /** True while an activity of the app is visible. */
         @Volatile

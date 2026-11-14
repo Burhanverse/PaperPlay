@@ -29,6 +29,15 @@ fun interface BackupDestination {
 object BackupFiles {
     /** Asks where to save a file named [suggestedName]; calls back with the destination, or null if canceled. */
     var pickDestination: ((suggestedName: String, onPicked: (BackupDestination?) -> Unit) -> Unit)? = null
+
+    /** Opens the system share sheet with a text file, given its name and contents. Null where unsupported. */
+    var shareFile: ((fileName: String, text: String) -> Unit)? = null
+
+    /** Opens the system share sheet with plain text. Null where unsupported. */
+    /** App version and device, put at the top of a shared log. Set by the entry point. */
+    var deviceInfo: String = ""
+
+    var shareText: ((text: String) -> Unit)? = null
 }
 
 /** Asks for the optional password that seals the keys and account session in a backup. */

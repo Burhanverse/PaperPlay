@@ -529,8 +529,24 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** Running background jobs and their history; features call tasks.start/update/finish. */
     val tasks = io.max.paperplay.core.app.TaskQueue(scope, load = { repo.pref("task_history") }, save = { repo.setPref("task_history", it) }).also { q -> scope.launch(Dispatchers.Default) { q.watchServices(services) } }
 
+    /** Every playback event and every activity line, on disk and kept across restarts, so a whole listening session can be shared. */
+    val playLog = io.max.paperplay.core.app.PlayLogFile(services.platform.dataDir, scope) { at ->
+        io.max.paperplay.ui.localTimeLabel(at) + "." + (at % 1000).toString().padStart(3, '0')
+    }.also { f ->
+        io.max.paperplay.player.PlayLog.nowMs = { nowMoment().epochMs }
+        io.max.paperplay.player.PlayLog.sink = { at, tag, m -> f.add(at, tag, m) }
+    }
+
+    init {
+        io.max.paperplay.core.app.MemoryProbe.start(scope) { "Jobs: ${tasks.running.value.size}" }
+    }
+
+    /** The text to share: a short header, then the full playback and activity log from the first line on. */
+    fun fullLogText(header: String): String = header + "\n\n" + playLog.readAll()
+
     fun addLog(source: String, message: String, error: Boolean = false) {
         val clean = message.replace(Regex("\\b\\d{5,}:[A-Za-z0-9_-]{20,}\\b"), "<bot token>")
+        io.max.paperplay.player.PlayLog.log("app/$source", clean + if (error) "  [error]" else "")
         log.value = (log.value + LogLine(nowMoment().epochMs, source, clean, error)).takeLast(3000)
     }
 
