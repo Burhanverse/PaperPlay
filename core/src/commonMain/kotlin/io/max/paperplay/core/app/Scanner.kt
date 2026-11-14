@@ -282,12 +282,12 @@ class Scanner(
     private fun lanes(): Int {
         val most = parallelBatches.coerceIn(1, 6)
         if (calm) return 1
-        val rpm = repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L) ?: return most
+        val rpm = readingRpm() ?: return most
         return (rpm / 30).toInt().coerceIn(1, most)
     }
 
     private fun effectiveMinPause(): Duration {
-        val rpm = repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L)
+        val rpm = readingRpm()
         // The pause is per round of requests, so it grows with the lanes and the total stays at the chosen speed.
         val base = if (rpm != null) (60_000L * lanes() / rpm).milliseconds else minPause
         // After a flood wait the rest of this scan goes one batch at a time with a longer pause.
@@ -459,14 +459,49 @@ class Scanner(
         }
     }
 
+    // Auto speed: starts at the chosen speed (or the last one that worked), creeps up while Telegram keeps answering, and drops
+    // after a flood wait. The speed of the flood is remembered as a ceiling, so the climb stays below it.
+    private var autoRpm = 0L
+    private var autoCeiling = 0L
+    private var autoOk = 0
+
+    private fun autoOn() = repo.pref("reading_auto") == "true"
+
+    /** Requests a minute for reading, or null for the built-in default: the chosen speed, or the self-adjusting one when that is on. */
+    private fun readingRpm(): Long? {
+        if (!autoOn()) return repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L)
+        if (autoRpm == 0L) autoRpm = (repo.pref("reading_auto_rpm") ?: repo.pref("rate_reading"))?.toLongOrNull()?.coerceIn(10L, 1200L) ?: 30L
+        return autoRpm
+    }
+
+    private fun speedUp() {
+        if (!autoOn() || calm || autoRpm == 0L) return
+        if (++autoOk < 8) return
+        autoOk = 0
+        val cap = if (autoCeiling > 0) autoCeiling * 85 / 100 else 1200L
+        val next = minOf(1200L, cap, autoRpm + maxOf(4L, autoRpm / 8))
+        if (next > autoRpm) { autoRpm = next; repo.setPref("reading_auto_rpm", "$autoRpm") }
+        if (autoCeiling > 0) autoCeiling = minOf(1200L, autoCeiling + autoCeiling / 20) // the limit is forgotten slowly
+    }
+
+    private fun slowDown() {
+        if (!autoOn()) return
+        val was = readingRpm() ?: return
+        autoCeiling = was
+        autoRpm = maxOf(10L, was * 6 / 10)
+        autoOk = 0
+        repo.setPref("reading_auto_rpm", "$autoRpm")
+    }
+
     /** Waits out Telegram rate limits and tries again. */
     private suspend fun retrying(call: suspend () -> JsonObject): JsonObject {
         while (true) {
             try {
-                return call()
+                return call().also { speedUp() }
             } catch (e: TdError) {
                 val wait = e.retryAfter ?: throw e
                 calm = true
+                slowDown()
                 pause = minOf(maxPause, pause * 1.5)
                 _progress.value = ScanProgress("Telegram rate limit, waiting ${wait}s", null)
                 delay(wait.seconds)
