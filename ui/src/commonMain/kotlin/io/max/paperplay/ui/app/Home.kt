@@ -193,13 +193,16 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
     var offset by remember { mutableStateOf(0f) }
     var last by remember { mutableStateOf("") }
     if (text != null) last = text
-    if (text == null) dismissed = null
+    // Scan progress changes every second, so a swipe dismisses the whole run, not just the line that was showing.
+    val key = if (text != null && text == scan?.text) "scan" else text
+    if (text == null) { dismissed = null; offset = 0f }
+    androidx.compose.runtime.LaunchedEffect(key) { if (key != dismissed) offset = 0f }
     // A message that stays (not scan progress, which keeps changing) goes away after 20 seconds.
     androidx.compose.runtime.LaunchedEffect(if (scan != null && conn.error == null) null else text) {
         if (text != null && scan == null) { kotlinx.coroutines.delay(20_000); dismissed = text }
     }
     androidx.compose.animation.AnimatedVisibility(
-        visible = text != null && text != dismissed,
+        visible = text != null && key != dismissed,
         modifier = modifier,
         enter = androidx.compose.animation.slideInVertically { -it } + androidx.compose.animation.fadeIn(),
         exit = androidx.compose.animation.slideOutVertically { -it } + androidx.compose.animation.fadeOut(),
@@ -212,9 +215,10 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
                 .offset { androidx.compose.ui.unit.IntOffset(offset.toInt(), 0) }
                 .graphicsLayer { alpha = (1f - kotlin.math.abs(offset) / 600f).coerceIn(0f, 1f) }
                 .shadow(6.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).background(bg)
-                .pointerInput(text) {
+                .pointerInput(key) {
                     detectHorizontalDragGestures(
-                        onDragEnd = { if (kotlin.math.abs(offset) > 80f) dismissed = text; offset = 0f },
+                        // On dismiss the offset stays so the toast keeps sliding out; it resets when the toast comes back.
+                        onDragEnd = { if (kotlin.math.abs(offset) > 80f) dismissed = key else offset = 0f },
                         onDragCancel = { offset = 0f },
                     ) { _, dx -> offset += dx }
                 }
