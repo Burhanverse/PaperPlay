@@ -21,6 +21,9 @@ actual object Fs {
     actual fun mkdirs(path: String) { File(path).mkdirs() }
     actual fun exists(path: String) = File(path).exists()
     actual fun write(path: String, bytes: ByteArray) { File(path).apply { parentFile?.mkdirs() }.writeBytes(bytes) }
+    actual fun append(path: String, text: String) { File(path).apply { parentFile?.mkdirs() }.appendText(text) }
+    actual fun readText(path: String): String = File(path).takeIf { it.exists() }?.readText() ?: ""
+    actual fun size(path: String): Long = File(path).takeIf { it.exists() }?.length() ?: 0L
     actual fun deleteRecursively(path: String) { File(path).deleteRecursively() }
     actual fun rename(from: String, to: String) {
         require(File(from).renameTo(File(to))) { "Could not move a file into place." }
