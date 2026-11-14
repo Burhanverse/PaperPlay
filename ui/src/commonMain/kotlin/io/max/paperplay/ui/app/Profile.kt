@@ -6,6 +6,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.Upload
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.layout.Arrangement
@@ -112,11 +113,9 @@ fun ProfileScreen(
                 NavRow(if (conn.chats.size == 1) "1 channel" else "${conn.chats.size} channels", icon = Icons.Rounded.Forum, subtitle = mainChatTitle?.let { "Main chat: $it" } ?: "No chat added yet") {
                     onSettings("channels")
                 }
-                NavRow("Chats and channels", icon = Icons.Rounded.Forum, subtitle = "Index songs in your own chats") { onSettings("index") }
+                NavRow("Scan library", icon = Icons.Rounded.Sync, subtitle = "Read the chats with the bots and account you pick") { onSettings("repair") }
                 NavRow("Tasks", icon = Icons.Rounded.TaskAlt, subtitle = scan?.value?.text ?: "Nothing running", onClick = onTasks)
-                NavRow("Upload songs", icon = Icons.Rounded.Upload, subtitle = "Pick songs, see the queue, retry failures") { onSettings("uploadhub") }
                 NavRow("Listening", icon = Icons.Rounded.BarChart, subtitle = "Time listened, top songs and artists") { onSettings("stats") }
-                NavRow("Sort General", icon = Icons.Rounded.DriveFileMove, subtitle = "Suggests topics for songs in General") { onSettings("sort") }
                 NavRow("Duplicates", icon = Icons.Rounded.ContentCopy, subtitle = "Find repeated songs and remove the extras") { onSettings("dupes") }
                 NavRow("Song info left", icon = Icons.Rounded.Rule, subtitle = "See which songs still lack info or a cover") { onSettings("missing") }
             }
