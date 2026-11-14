@@ -2,6 +2,44 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.4.0] - 2026-11-14
+
+### Added
+- Library settings in drop-downs, read with other bots after a rescan ([`80ca842`](https://github.com/maxcodl/PaperPlay-compose/commit/80ca842f2d7e78b59a7aa5d80126a33d7ccf4148))
+- Song info left page redesign, tasks open the live list ([`d49ccc7`](https://github.com/maxcodl/PaperPlay-compose/commit/d49ccc7866b848fd1362a8350273c1dd14b99160))
+- Faster song info, Deezer first ([`e8ce2df`](https://github.com/maxcodl/PaperPlay-compose/commit/e8ce2df67af12f3959815d036852880943d98276))
+- Reading speed adjusts itself ([`977f251`](https://github.com/maxcodl/PaperPlay-compose/commit/977f251e00e52f5084649b9c389ac93a9da115e5))
+- Search songs by language ([`2bbe168`](https://github.com/maxcodl/PaperPlay-compose/commit/2bbe168e93d30b830aab7da785a3e932cba65b1e))
+- Duplicates page with a floating delete, auto-ticked extras, topic names and a lazy list ([`fbb4fdb`](https://github.com/maxcodl/PaperPlay-compose/commit/fbb4fdb9e735fafeecf9f7fe7b91b0c7e668c304))
+- Spotify playlists list missing songs greyed out, with copy links, and lists remember their sort ([`d14810f`](https://github.com/maxcodl/PaperPlay-compose/commit/d14810f0566d8ff9135bbe2870d1e2caac41897a))
+- Home skeletons, steadier covers, swipeable tiles, coloured toasts and a mini player that swipes away ([`f1988d3`](https://github.com/maxcodl/PaperPlay-compose/commit/f1988d3c8c1fe196845d1f1d31119a3d0afb2f70))
+- Upload a music folder in place, ask before subfolders, skip songs under 2 MB ([`c4443aa`](https://github.com/maxcodl/PaperPlay-compose/commit/c4443aae0c864b8f0a942cd7d469dd94263d5006))
+- Progress for missing and low-quality covers in the tasks list and the notification ([`d8b4613`](https://github.com/maxcodl/PaperPlay-compose/commit/d8b46138c7820eed428410d23de421190b01fc7d))
+- Read a song's length from its file header ([`edce335`](https://github.com/maxcodl/PaperPlay-compose/commit/edce335d5e21b5b1cca795a69db79c113afe9fe3))
+- Show an update dialog on every launch when a newer release exists ([`0656b1c`](https://github.com/maxcodl/PaperPlay-compose/commit/0656b1c34ceb68a9702f3df83113279bf002be80))
+- The in-app logo follows the app theme ([`84afc56`](https://github.com/maxcodl/PaperPlay-compose/commit/84afc56dfc1b917f9657d4a13fd618db5f76d7f9))
+
+### Fixed
+- Duplicate delete goes through the Bot API per post ([`a830641`](https://github.com/maxcodl/PaperPlay-compose/commit/a8306414c099e689217ba33db47e8bb45c799a06))
+- Windows release bundles a Java 25 runtime so the installer starts ([`5273468`](https://github.com/maxcodl/PaperPlay-compose/commit/5273468b3fdbf33f2069a1cc6a1cf004162f200c))
+- Onboarding shows the chosen photo and no false Not ready yet on the bot page ([`0ed267e`](https://github.com/maxcodl/PaperPlay-compose/commit/0ed267ea7b77791e7b3b9ad68184ebad5965b075))
+- Uploads use the request shape of the loaded TDLib, run in parallel and send the song length ([`48bf3ad`](https://github.com/maxcodl/PaperPlay-compose/commit/48bf3ad0500c78b66a4da61e8f90ce7489798d8d))
+- The Windows release includes TDLib so it can reach Telegram ([`734f350`](https://github.com/maxcodl/PaperPlay-compose/commit/734f3500d0f8dafe5108fe94aeb88d3c11e63dab))
+- CI ProGuard reads the JDK 17 classes because the Gradle JDK 25 has no jmods ([`7abe514`](https://github.com/maxcodl/PaperPlay-compose/commit/7abe5148acd33e9f25ad6dbdd090e62a74baec38))
+- Setup tells the user to remove an older per-machine install ([`27e0c98`](https://github.com/maxcodl/PaperPlay-compose/commit/27e0c9861fea9d9695bd7fcfd359295429b48362))
+- GitHub Windows release uses the same minified build and Inno installer as the release script ([`501cd20`](https://github.com/maxcodl/PaperPlay-compose/commit/501cd20349d674146ff23ea8f624763df8aa8650))
+- Package Compose resources on Android so the settings logo no longer crashes ([`cfba237`](https://github.com/maxcodl/PaperPlay-compose/commit/cfba237764ef0308f8aa134c0a3eb4ba18acda74))
+
+### Documentation
+- Checklist and readme ([`222d1e9`](https://github.com/maxcodl/PaperPlay-compose/commit/222d1e9b7faaa16e726b4b47599fb6e88de77227))
+- Checklist for this round of work ([`163609f`](https://github.com/maxcodl/PaperPlay-compose/commit/163609f461c44a41389e265e1b20270f64ffd95a))
+- TDLib is in the repository, CI fixes in the checklist ([`3b2d01e`](https://github.com/maxcodl/PaperPlay-compose/commit/3b2d01eb2b55962758383dad291067ff26278100))
+- The update check runs at every launch and shows a dialog ([`ed49815`](https://github.com/maxcodl/PaperPlay-compose/commit/ed49815a2b6b0d395da7a234bdb9640bba8ac9d4))
+- Checklist for the settings crash, themed logo and one Windows installer ([`cd3c93e`](https://github.com/maxcodl/PaperPlay-compose/commit/cd3c93e08d2a32d0a02502da9e8460b030307e1c))
+- Update the README and the checklist for releases, the updater, About, logout and the merge-back rule ([`cc1ff44`](https://github.com/maxcodl/PaperPlay-compose/commit/cc1ff44979c3a0acc12797453346eab4110ebd94))
+
+**Full changes:** [v1.3.1...v1.4.0](https://github.com/maxcodl/PaperPlay-compose/compare/v1.3.1...v1.4.0)
+
 ## [1.3.1] - 2026-11-14
 
 ### Fixed
