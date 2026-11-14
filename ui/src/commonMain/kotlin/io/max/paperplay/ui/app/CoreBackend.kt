@@ -1069,7 +1069,13 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     /** Rescans every chat with the main bot; [onDone] runs when it has finished, so a caller can offer to read with the other bots too. */
     fun rescan(onDone: () -> Unit = {}) {
-        scope.launch { repo.chatList().forEach { services.scanner.rescanChat(it) }; onDone() }
+        scope.launch {
+            repo.chatList().forEach {
+                services.scanner.reader = "Bot 1"
+                try { services.scanner.rescanChat(it) } finally { services.scanner.reader = null }
+            }
+            onDone()
+        }
     }
 }
 

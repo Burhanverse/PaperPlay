@@ -130,6 +130,13 @@ class Scanner(
     private var listener: Job? = null
     private var pause = minPause
     private val caughtUp = MutableStateFlow<Set<Long>>(emptySet())
+    /** Who is reading, shown in front of the progress during a full scan ("Bot 1", "Bot 2", "Your account"). Null for the normal background scan. */
+    @Volatile var reader: String? = null
+    private fun tag() = reader?.let { "$it: " } ?: ""
+
+    /** Shows [text] as the scan progress until the next update; null clears it. For readers that are not this scanner, such as the account. */
+    fun announce(text: String?) { _progress.value = text?.let { ScanProgress(it, null) } }
+
     private val _progress = MutableStateFlow<ScanProgress?>(null)
     private val _error = MutableStateFlow<String?>(null)
 
@@ -317,6 +324,7 @@ class Scanner(
         if (pause < initialFloor) pause = initialFloor
         var chatTitle = chat.title
         _error.value = null
+        var ticker: kotlinx.coroutines.Job? = null
         try {
             val meta = introduceChat(client, chat.id)
             if (meta.title != null && meta.title != chatTitle) {
@@ -329,6 +337,23 @@ class Scanner(
             var lastWrite = clockMark.markNow() - 10.seconds
             var lastChatCheck = clockMark.markNow()
             var lastShown = lastWrite
+            // The numbers shown count up smoothly: pages arrive in bursts of 100 ids, so between pages the count is
+            // estimated from the speed measured so far and never runs more than the pages asked for ahead.
+            var shownDone = 0L
+            var shownAt = clockMark.markNow()
+            var shownRate = 0.0
+            var shownCounts = ""
+            var shownLive = false
+            ticker = scope.launch {
+                while (true) {
+                    delay(250)
+                    if (!shownLive || knownEnd <= 0) continue
+                    if (_progress.value?.text?.contains("Syncing") != true) continue
+                    val est = (shownDone + (shownRate * shownAt.elapsedNow().inWholeMilliseconds / 1000.0).toLong())
+                        .coerceIn(shownDone, minOf(shownDone + WALK_BATCH * lanes(), knownEnd / MESSAGE_ID_STEP))
+                    _progress.value = ScanProgress("${tag()}Syncing $chatTitle: $est of ${knownEnd / MESSAGE_ID_STEP} messages, $shownCounts", est.toDouble() * MESSAGE_ID_STEP / knownEnd)
+                }
+            }
             while (true) {
                 if (stopGen != gen) {
                     if (!full && persist) repo.setScan(chat.id, newest, chat.walk_done)
@@ -394,12 +419,23 @@ class Scanner(
                 }
                 next += WALK_BATCH * MESSAGE_ID_STEP
                 val share = if ((full || !chat.walk_done) && knownEnd > 0 && next <= knownEnd) next.toDouble() / knownEnd else null
+                shownCounts = "${seen.size} songs read, $added new"
+                shownLive = share != null
+                run {
+                    val done = minOf(next, knownEnd) / MESSAGE_ID_STEP
+                    val dt = shownAt.elapsedNow().inWholeMilliseconds / 1000.0
+                    if (dt >= 1.0 && done >= shownDone) {
+                        val inst = (done - shownDone) / dt
+                        shownRate = if (shownRate == 0.0) inst else shownRate * 0.6 + inst * 0.4
+                        shownDone = done; shownAt = clockMark.markNow()
+                    } else if (shownDone == 0L) { shownDone = done; shownAt = clockMark.markNow() }
+                }
                 if (lastShown.elapsedNow() >= 1.seconds || _progress.value == null) {
                     lastShown = clockMark.markNow()
                     val counts = "${seen.size} songs read, $added new"
                     _progress.value = ScanProgress(
-                        if (share == null) "Checking $chatTitle: $counts"
-                        else "Syncing $chatTitle: ${minOf(next, knownEnd) / MESSAGE_ID_STEP} of ${knownEnd / MESSAGE_ID_STEP} messages, $counts",
+                        if (share == null) "${tag()}Checking $chatTitle: $counts"
+                        else "${tag()}Syncing $chatTitle: ${minOf(next, knownEnd) / MESSAGE_ID_STEP} of ${knownEnd / MESSAGE_ID_STEP} messages, $counts",
                         share,
                     )
                 }
@@ -415,6 +451,7 @@ class Scanner(
             _error.value = "$chatTitle: scan failed, ${e.message}"
             return null
         } finally {
+            ticker?.cancel()
             _progress.value = null
         }
     }

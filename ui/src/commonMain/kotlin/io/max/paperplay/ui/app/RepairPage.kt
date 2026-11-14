@@ -72,7 +72,8 @@ private suspend fun runRepair(backend: CoreBackend, withBots: Boolean, withAccou
         try {
             for (chat in chats) {
                 log("Reading ${chat.title}")
-                val ok = services.scanner.rescanChat(chat)
+                services.scanner.reader = "Bot 1"
+                val ok = try { services.scanner.rescanChat(chat) } finally { services.scanner.reader = null }
                 log(if (ok) services.scanner.report.value ?: "${chat.title}: done" else "${chat.title}: could not read it completely (is the bot connected and an admin?)")
                 // Each extra bot reads the chat on its own: a bot sees the posts it made, which the others cannot see.
                 if (withBots) readChatWithBots(backend, chat, ::log)
@@ -165,9 +166,11 @@ private fun RepairRunningPreview() = io.max.paperplay.ui.PreviewFrame { RepairCo
 /** Reads one chat with every extra bot: a bot sees the posts it made, which the others cannot see. Adds only what the library lacks. */
 private suspend fun readChatWithBots(backend: CoreBackend, chat: io.max.paperplay.core.library.LibraryChat, log: (String) -> Unit) {
     val services = backend.services
-    for ((bot, client) in services.botPool.readyBots()) {
+    for ((i, bc) in services.botPool.readyBots().withIndex()) {
+        val (bot, client) = bc
         log("Reading ${chat.title} with ${bot.name ?: bot.username ?: "bot ${bot.id}"}")
-        val seen = services.scanner.scanChat(chat, full = true, via = client, owner = bot.id)
+        services.scanner.reader = "Bot ${i + 2}"
+        val seen = try { services.scanner.scanChat(chat, full = true, via = client, owner = bot.id) } finally { services.scanner.reader = null }
         log(if (seen != null) services.scanner.report.value ?: "${chat.title}: done" else "${bot.username ?: "Bot ${bot.id}"} could not read it (is it an admin of the chat?)")
     }
 }
@@ -177,11 +180,16 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
     val services = backend.services
     val main = backend.mainChatId() ?: return
     log("Reading the main chat with your account")
+    val watch = services.scope.launch {
+        backend.chatIndex.progress.collect { p -> services.scanner.announce(p?.let { "Your account: reading ${it.chatTitle}, ${it.found} songs" }) }
+    }
     runCatching {
         backend.chatIndex.indexChat(io.max.paperplay.core.account.ChatInfo(main, services.library.chat(main)?.title ?: "Main chat", true))
         val n = backend.chatIndex.addMissingFromMainChat()
         log(if (n > 0) "Added $n songs only your account can read" else "No songs were left that only your account can read")
     }.onFailure { log("The account could not read the chat: ${it.message}") }
+    watch.cancel()
+    services.scanner.announce(null)
 }
 
 /** After a rescan with the main bot: reads every chat with the other bots and, if asked, your account, then starts the lookups. Deletes nothing. */
