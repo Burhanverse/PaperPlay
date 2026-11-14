@@ -76,7 +76,7 @@ internal fun RepairPage(backend: CoreBackend, stack: MutableList<String>) {
 }
 
 private suspend fun runScan(backend: CoreBackend, off: Set<String>, loggedIn: Boolean, update: ((RepairUi) -> RepairUi) -> Unit) {
-    fun log(line: String) = update { it.copy(lines = it.lines + line) }
+    fun log(line: String) { backend.addLog("Scan", line); update { it.copy(lines = it.lines + line) } }
     val services = backend.services
     try {
         val before = services.library.allSongs().first().size
