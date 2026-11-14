@@ -219,12 +219,19 @@ val defaultLyricsSources: List<LyricsSource> = listOf(LrclibSource, NeteaseSourc
 // ---- cache ----
 
 private object LyricsCache {
+    private const val MAX_ENTRIES = 200
     private val lock = Mutex()
-    private val map = LinkedHashMap<String, String>() // "" means looked up, nothing found
+    // Access-order = true ensures true LRU (least-recently-used) eviction
+    private val map = LinkedHashMap<String, String>(64, 0.75f, true) // "" means looked up, nothing found
+
     suspend fun get(k: String): String? = lock.withLock { map[k] }
+
     suspend fun put(k: String, v: String?) = lock.withLock {
         map[k] = v.orEmpty()
-        if (map.size > 2000) map.remove(map.keys.first())
+        while (map.size > MAX_ENTRIES) {
+            val oldest = map.keys.firstOrNull() ?: break
+            map.remove(oldest)
+        }
     }
 }
 

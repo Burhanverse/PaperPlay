@@ -113,7 +113,7 @@ class NetplayLoopbackTest {
             waitFor("host lists the guest") { host.session.value?.guests?.size == 1 }
             host.kick(host.session.value!!.guests.single().id)
             waitFor("guest is out") { guest.session.value == null }
-            assertTrue(guest.notice.value?.contains("removed") == true, guest.notice.value)
+            waitFor("guest received notice") { guest.notice.value?.contains("removed") == true }
             waitFor("host list empty") { host.session.value?.guests?.isEmpty() == true }
             assertEquals(NetFailure.Refused, guest.join("127.0.0.1", s.port, pin).failure)
 
@@ -194,15 +194,19 @@ class NetplayLoopbackTest {
     @Test fun endingTheSessionDisconnectsGuests() = runBlocking<Unit> {
         val host = create(hostPlayer(), "Host")
         val guest = create(FakePlayer(null, emptyList(), 0, false), "Guest")
-        val s = assertNotNull(host.startHost())
-        assertTrue(guest.join("127.0.0.1", s.port, assertNotNull(s.pin)).ok)
-        waitFor("joined") { host.session.value?.guests?.size == 1 }
-        host.endSession()
-        waitFor("guest is out") { guest.session.value == null }
-        assertTrue(guest.notice.value?.contains("ended") == true, guest.notice.value)
-        assertEquals(null, host.session.value)
-        // a new session can start right away
-        assertNotNull(host.startHost())
-        host.endSession()
+        try {
+            val s = assertNotNull(host.startHost())
+            assertTrue(guest.join("127.0.0.1", s.port, assertNotNull(s.pin)).ok)
+            waitFor("joined") { host.session.value?.guests?.size == 1 }
+            host.endSession()
+            waitFor("guest is out") { guest.session.value == null }
+            waitFor("guest received notice") { guest.notice.value?.contains("ended") == true }
+            assertEquals(null, host.session.value)
+            // a new session can start right away
+            assertNotNull(host.startHost())
+        } finally {
+            guest.leave()
+            host.endSession()
+        }
     }
 }

@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
@@ -108,7 +109,7 @@ private class Guest(val id: String, val name: String, val address: String, val s
 }
 
 internal class JavaNetplay(private val env: NetplayEnv) : Netplay {
-    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val io = CoroutineScope(SupervisorJob(env.scope.coroutineContext.job) + Dispatchers.IO)
     private val lock = Any()
     private val myId = newUuid()
     private val player get() = env.player

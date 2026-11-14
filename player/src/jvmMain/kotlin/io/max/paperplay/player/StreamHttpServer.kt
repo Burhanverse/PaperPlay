@@ -15,8 +15,9 @@ class StreamHttpServer : AutoCloseable {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StreamSource>?) = size > MAX_SOURCES
         },
     )
+    private val pool = Executors.newFixedThreadPool(4) { r -> Thread(r, "stream-http").apply { isDaemon = true } }
     private val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
-        executor = Executors.newCachedThreadPool { r -> Thread(r, "stream-http").apply { isDaemon = true } }
+        executor = pool
         createContext("/") { handle(it) }
         start()
     }
@@ -64,7 +65,10 @@ class StreamHttpServer : AutoCloseable {
         }
     }
 
-    override fun close() = server.stop(0)
+    override fun close() {
+        server.stop(0)
+        pool.shutdown()
+    }
 
     companion object {
         private const val CHUNK = 64 * 1024

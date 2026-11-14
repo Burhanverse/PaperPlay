@@ -90,6 +90,12 @@ interface PlayerEngine {
 
     /** Replaces the queue and starts playing at [startIndex]. */
     fun setQueue(items: List<QueueItem>, startIndex: Int = 0)
+    /** Restores a previously saved queue in paused state without starting playback. */
+    fun restoreQueue(items: List<QueueItem>, startIndex: Int = 0, positionMs: Long = 0L) {
+        setQueue(items, startIndex)
+        if (positionMs > 0) seek(positionMs)
+        pause()
+    }
     fun play()
     fun pause()
     fun next()

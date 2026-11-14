@@ -122,11 +122,11 @@ class StreamingTest {
         var downloadedPrefix = 0L
         val fake = FakeTdNative { _, req ->
             when (req["@type"]!!.jsonPrimitive.content) {
-                "getMessage" -> listOf(messageReply(req, 20, tmp.absolutePath, completed = false, size = 1_000_000L))
+                "getMessage" -> listOf(messageReply(req, 20, tmp.absolutePath, completed = false, size = 40_000_000L))
                 "getFileDownloadedPrefixSize" -> listOf(sizeReply(req, downloadedPrefix))
                 "downloadFile" -> {
                     val limit = req["limit"]!!.jsonPrimitive.long
-                    downloadedPrefix = if (limit == 0L) 1_000_000L else limit
+                    downloadedPrefix = if (limit == 0L) 40_000_000L else limit
                     listOf(fileReply(req, 20, tmp.absolutePath, completed = false, active = true, downloaded = downloadedPrefix))
                 }
                 "cancelDownloadFile" -> listOf(okReply(req))
@@ -134,8 +134,8 @@ class StreamingTest {
             }
         }
         val client = TdClient(TdRuntime(fake, scope, Dispatchers.IO), config).also { it.start() }
-        // 1,000,000 bytes / 100s = 10,000 B/s; 10s sliding window = 100,000 bytes.
-        val src = TdStreamSource({ client }, song(2, size = 1_000_000L, durationSec = 100L), windowSeconds = 10L)
+        // 40,000,000 bytes / 4000s = 10,000 B/s; 10s sliding window = 100,000 bytes.
+        val src = TdStreamSource({ client }, song(2, size = 40_000_000L, durationSec = 4000L), windowSeconds = 10L)
         val chunk = src.read(0L, 65_536)
         assertEquals(65_536, chunk.size)
         assertContentEquals(data.copyOfRange(0, 65_536), chunk)

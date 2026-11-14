@@ -279,8 +279,13 @@ class PlaybackController(
         val idx = (repo.pref(SESSION_INDEX)?.toIntOrNull() ?: 0).coerceIn(songs.indices)
         val pos = repo.pref(SESSION_POS)?.toLongOrNull() ?: 0L
         original = songs
-        apply(songs, idx, pos)
-        engine.pause()
+        gate.withLock {
+            resolver.retain(songs)
+            meta.value = Meta(songs, false, Repeat.OFF, null)
+            engine.restoreQueue(songs.map(resolver::resolve), idx, pos)
+        }
+        val song = songs[idx]
+        scope.launch { runCatching { resolver.warm(song) } }
     }
 
     private fun saveSession() {

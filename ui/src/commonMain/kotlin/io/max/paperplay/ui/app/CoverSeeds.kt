@@ -19,24 +19,59 @@ import kotlin.math.abs
  * Reading [seed] inside a composition subscribes it, so the colour applies as soon as it is ready.
  */
 object CoverSeeds {
+    private const val MAX_ENTRIES = 500
     private val ready = mutableStateMapOf<String, Int>()
+    private val palettes = mutableStateMapOf<String, List<Int>>()
+    private val lruOrder = LinkedHashMap<String, Unit>(64, 0.75f, true)
     private val pending = HashSet<String>()
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    private fun recordAccess(uri: String) {
+        synchronized(lruOrder) {
+            lruOrder[uri] = Unit
+            while (lruOrder.size > MAX_ENTRIES) {
+                val oldest = lruOrder.keys.firstOrNull() ?: break
+                lruOrder.remove(oldest)
+                ready.remove(oldest)
+                palettes.remove(oldest)
+                pending.remove(oldest)
+            }
+        }
+    }
+
+    /** Populates the seed and palette from an already-decoded cover bitmap without a second file decode. */
+    fun setFromBitmap(uri: String, bitmap: ImageBitmap) {
+        if (ready.containsKey(uri)) {
+            recordAccess(uri)
+            return
+        }
+        val p = paletteOf(bitmap, 3)
+        palettes[uri] = p
+        ready[uri] = p.firstOrNull() ?: 0
+        recordAccess(uri)
+    }
 
     /** The seed for [uri] as ARGB if known; null while unknown, missing or colourless. */
     fun seed(uri: String?): Int? {
         if (uri == null) return null
         val known = ready[uri]
-        if (known != null) return known.takeIf { it != 0 }
+        if (known != null) {
+            recordAccess(uri)
+            return known.takeIf { it != 0 }
+        }
         if (pending.add(uri)) scope.launch {
+            if (ready.containsKey(uri)) {
+                recordAccess(uri)
+                return@launch
+            }
             val p = decodeImageFile(uri, 96)?.let { paletteOf(it, 3) }.orEmpty()
             palettes[uri] = p
             ready[uri] = p.firstOrNull() ?: 0
+            recordAccess(uri)
         }
         return null
     }
 
-    private val palettes = mutableStateMapOf<String, List<Int>>()
 
     /** Up to three distinct main colours of the cover, most present first; empty while unknown. */
     fun palette(uri: String?): List<Int> {

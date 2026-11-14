@@ -117,6 +117,12 @@ private fun jvmMemoryLine(): String {
 }
 
 fun main() {
+    if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
+        System.getProperty("skiko.renderApi") == null &&
+        System.getenv("SKIKO_RENDER_API") == null
+    ) {
+        System.setProperty("skiko.renderApi", "OPENGL")
+    }
     io.max.paperplay.core.app.MemoryProbe.sample = ::jvmMemoryLine
     io.max.paperplay.core.app.MemoryProbe.echo = { println(it) }
     val logDir = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PaperPlay")
@@ -157,7 +163,7 @@ fun main() {
         }
     }
     WindowsMedia.start { key ->
-        val s = liveServices?.takeIf { it.playbackStarted } ?: return@start
+        val s = liveServices ?: return@start
         val p = s.playback
         when (key) {
             "playpause" -> if (p.nowPlayingStatic.value.isPlaying) p.pause() else p.play()
@@ -228,7 +234,7 @@ fun main() {
         }
         // The tray menu is the app's own themed window (TrayMenuContent) rather than the native Windows menu.
         var trayMenuAt by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<java.awt.Point?>(null) }
-        val control = { f: (io.max.paperplay.core.app.PlaybackController) -> Unit -> liveServices?.takeIf { it.playbackStarted }?.let { f(it.playback) } }
+        val control = { f: (io.max.paperplay.core.app.PlaybackController) -> Unit -> liveServices?.let { f(it.playback) } }
         if (trayOk) {
             androidx.compose.runtime.DisposableEffect(Unit) {
                 val image = javax.imageio.ImageIO.read(Thread.currentThread().contextClassLoader.getResource("icon.png"))
@@ -291,7 +297,13 @@ fun main() {
             }
         }
         Window(
-            onCloseRequest = { if (trayOk) mainVisible = false else quit() },
+            onCloseRequest = {
+                if (trayOk) {
+                    mainVisible = false
+                    io.max.paperplay.ui.AppForegroundState.isVisible = false
+                    io.max.paperplay.ui.AppForegroundState.isForeground = false
+                } else quit()
+            },
             visible = mainVisible, title = "Paper Play", state = mainState, icon = androidx.compose.ui.res.painterResource("icon.png"),
             onPreviewKeyEvent = {
                 if (fullscreen && it.key == androidx.compose.ui.input.key.Key.Escape && it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) {
@@ -300,6 +312,39 @@ fun main() {
             },
         ) {
             titleBarWindow = window
+            androidx.compose.runtime.DisposableEffect(window, mainVisible, mainState.isMinimized) {
+                fun update() {
+                    val iconified = (window.extendedState and java.awt.Frame.ICONIFIED) != 0
+                    val visible = mainVisible && !mainState.isMinimized && !iconified && window.isShowing
+                    val focused = visible && window.isFocused
+                    io.max.paperplay.ui.AppForegroundState.isVisible = visible
+                    io.max.paperplay.ui.AppForegroundState.isForeground = focused
+                }
+                update()
+                val focusListener = object : java.awt.event.WindowFocusListener {
+                    override fun windowGainedFocus(e: java.awt.event.WindowEvent?) = update()
+                    override fun windowLostFocus(e: java.awt.event.WindowEvent?) = update()
+                }
+                val windowListener = object : java.awt.event.WindowAdapter() {
+                    override fun windowIconified(e: java.awt.event.WindowEvent?) = update()
+                    override fun windowDeiconified(e: java.awt.event.WindowEvent?) = update()
+                    override fun windowActivated(e: java.awt.event.WindowEvent?) = update()
+                    override fun windowDeactivated(e: java.awt.event.WindowEvent?) = update()
+                    override fun windowStateChanged(e: java.awt.event.WindowEvent?) = update()
+                }
+                window.addWindowFocusListener(focusListener)
+                window.addWindowListener(windowListener)
+                window.addWindowStateListener(windowListener)
+                onDispose {
+                    window.removeWindowFocusListener(focusListener)
+                    window.removeWindowListener(windowListener)
+                    window.removeWindowStateListener(windowListener)
+                    io.max.paperplay.ui.AppForegroundState.isForeground = false
+                    if (!mainVisible) {
+                        io.max.paperplay.ui.AppForegroundState.isVisible = false
+                    }
+                }
+            }
             androidx.compose.runtime.LaunchedEffect(fullscreen) { BorderlessFullscreen.set(window, fullscreen) }
             // Windows only lets a window forward itself when it is not minimised and briefly topmost, so do all three.
             androidx.compose.runtime.LaunchedEffect(mainVisible, raise) {

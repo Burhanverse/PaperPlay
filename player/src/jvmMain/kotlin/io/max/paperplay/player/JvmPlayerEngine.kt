@@ -176,4 +176,4 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     }
 }
 
-actual fun createPlayerEngine(): PlayerEngine = JvmPlayerEngine()
+actual fun createPlayerEngine(): PlayerEngine = LazyPlayerEngine { JvmPlayerEngine() }

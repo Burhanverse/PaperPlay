@@ -2,6 +2,16 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.7.0] - 2026-11-14
+
+### Added
+- Record crashes, how the last run ended, and the system log ([`c2cf455`](https://github.com/maxcodl/PaperPlay-compose/commit/c2cf455c5855404b6ce20add2b6e6f78d0aaff95))
+- Share the full log as a file or text from the Log page ([`01bf96a`](https://github.com/maxcodl/PaperPlay-compose/commit/01bf96abcc58baa1882e36a85cd5c27e3d8e0d45))
+- Memory line every ten seconds in the log ([`fdea970`](https://github.com/maxcodl/PaperPlay-compose/commit/fdea970f493a33a9f5e41442c3042ea0a95a4ae0))
+- Playback log kept on disk with every player, stream and file event ([`5e97c42`](https://github.com/maxcodl/PaperPlay-compose/commit/5e97c42508f42dc926854f9b00aab73f4b79cbf6))
+
+**Full changes:** [v1.6.0...v1.7.0](https://github.com/maxcodl/PaperPlay-compose/compare/v1.6.0...v1.7.0)
+
 ## [1.6.0] - 2026-11-14
 
 ### Added
