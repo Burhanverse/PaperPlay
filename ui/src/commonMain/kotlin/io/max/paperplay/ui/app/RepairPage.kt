@@ -22,64 +22,84 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.ui.tooling.preview.Preview
 
-/** What the repair page shows. [lines] is the running log; [summary] appears when the run ends. */
+/** What the scan page shows. [lines] is the running log; [summary] appears when the run ends. */
 internal data class RepairUi(val running: Boolean = false, val lines: List<String> = emptyList(), val summary: List<String> = emptyList(), val gone: Int = 0)
 
+private const val SRC_MAIN = "main"
+private const val SRC_ACCOUNT = "account"
+private fun srcBot(id: Long) = "bot$id"
+
+/** Sources the owner switched off, saved as one comma separated pref. Everything is on until switched off. */
+private fun sourcesOff(backend: CoreBackend): Set<String> = backend.pref("scan_off")?.split(',')?.filter { it.isNotEmpty() }?.toSet().orEmpty()
+
 /**
- * One button that tidies the library without deleting or moving anything: reads every chat again (adds missing
- * songs, drops ones whose post is gone), then starts the info and cover lookups. Moving and deleting stay on their
- * own pages because they need a yes from the owner.
+ * One page that reads the library chats again with every source switched on: the main bot, each extra bot and your account.
+ * It adds missing songs and lists songs whose post is gone (removing them needs a yes). Moving and deleting stay on their
+ * own pages.
  */
 @Composable
 internal fun RepairPage(backend: CoreBackend, stack: MutableList<String>) {
     var ui by remember { mutableStateOf(RepairUi()) }
-    var withBots by remember { mutableStateOf(backend.pref("repair_bots") != "false") }
-    var withAccount by remember { mutableStateOf(backend.pref("repair_account") != "false") }
+    var off by remember { mutableStateOf(sourcesOff(backend)) }
+    fun toggle(key: String, on: Boolean) {
+        off = if (on) off - key else off + key
+        backend.setPref("scan_off", off.joinToString(","))
+    }
     val loggedIn by backend.account.loggedIn.collectAsState()
     val extraBots by backend.services.botPool.bots.collectAsState()
+    val main by backend.services.botPool.mainBot.collectAsState()
     RepairContent(
         ui,
         speed = {
+            Text("Read with", style = MaterialTheme.typography.titleMedium)
+            SwitchRow(
+                main.name ?: main.username ?: "Main bot", SRC_MAIN !in off, { toggle(SRC_MAIN, it) }, null,
+                "Main bot. Reads the chats and checks every saved song still exists",
+            )
+            for (b in extraBots) SwitchRow(
+                b.name ?: b.username ?: "Bot ${b.id}", srcBot(b.id) !in off, { toggle(srcBot(b.id), it) }, null,
+                "Extra bot, " + if (b.state == "working") "connected. Sees the songs it posted itself" else (b.error ?: "not connected yet"),
+            )
+            SwitchRow(
+                "Your account", SRC_ACCOUNT !in off && loggedIn, { toggle(SRC_ACCOUNT, it) }, null,
+                if (loggedIn) "Sees every post in the main chat, whoever sent it" else "Log in with your own account first (Telegram > Your account)",
+            )
             RateSlider("reading", backend, remember { mutableStateOf<String?>(null) })
-            SwitchRow(
-                "Also read with the extra bots", withBots, { withBots = it; backend.setPref("repair_bots", "$it") }, null,
-                if (extraBots.isEmpty()) "No extra bots added yet. Each bot sees the songs it posted itself, so reading with all of them finds more"
-                else "${extraBots.size} extra bots read the chat too and their songs are combined with the main bot's",
-            )
-            SwitchRow(
-                "Also read with your account", withAccount && loggedIn, { withAccount = it; backend.setPref("repair_account", "$it") }, null,
-                if (loggedIn) "Your account sees every post in the main chat, whoever sent it. Songs the bots cannot read play through it"
-                else "Log in with your own account first (Telegram > Your account)",
-            )
         },
         onRun = {
             ui = RepairUi(running = true)
-            backend.services.scope.launch { runRepair(backend, withBots, withAccount && loggedIn) { ui = it(ui) } }
+            backend.services.scope.launch { runScan(backend, off, loggedIn) { ui = it(ui) } }
         },
         onOpen = { stack.add(it) },
         onRemoveGone = { backend.services.scanner.removeGone(); ui = ui.copy(gone = 0) },
     )
 }
 
-private suspend fun runRepair(backend: CoreBackend, withBots: Boolean, withAccount: Boolean, update: ((RepairUi) -> RepairUi) -> Unit) {
+private suspend fun runScan(backend: CoreBackend, off: Set<String>, loggedIn: Boolean, update: ((RepairUi) -> RepairUi) -> Unit) {
     fun log(line: String) = update { it.copy(lines = it.lines + line) }
     val services = backend.services
     try {
         val before = services.library.allSongs().first().size
         val chats = services.library.chatList()
         if (chats.isEmpty()) log("No chats in the library yet. Add one under Channels.")
+        val bots = services.botPool.bots.value.filter { srcBot(it.id) !in off }
+        val useMain = SRC_MAIN !in off
+        val useAccount = SRC_ACCOUNT !in off && loggedIn
+        if (!useMain && bots.isEmpty() && !useAccount) log("Nothing is switched on to read with.")
         services.scanner.retryEmptyIds = true
         try {
             for (chat in chats) {
-                log("Reading ${chat.title}")
-                services.scanner.reader = services.scanner.mainBotName()
-                val ok = try { services.scanner.rescanChat(chat) } finally { services.scanner.reader = null }
-                log(if (ok) services.scanner.report.value ?: "${chat.title}: done" else "${chat.title}: could not read it completely (is the bot connected and an admin?)")
+                if (useMain) {
+                    log("Reading ${chat.title}")
+                    services.scanner.reader = services.scanner.mainBotName()
+                    val ok = try { services.scanner.rescanChat(chat) } finally { services.scanner.reader = null }
+                    log(if (ok) services.scanner.report.value ?: "${chat.title}: done" else "${chat.title}: could not read it completely (is the bot connected and an admin?)")
+                }
                 // Each extra bot reads the chat on its own: a bot sees the posts it made, which the others cannot see.
-                if (withBots) readChatWithBots(backend, chat, ::log)
+                for (b in bots) readChatWithBot(backend, chat, b, ::log)
             }
             // Your own account sees every post in the main chat, whoever sent it.
-            if (withAccount) readMainChatWithAccount(backend, ::log)
+            if (useAccount) readMainChatWithAccount(backend, ::log)
         } finally {
             services.scanner.retryEmptyIds = false
         }
@@ -118,11 +138,11 @@ internal fun RepairContent(ui: RepairUi, onRun: () -> Unit, onOpen: (String) -> 
     )
     Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
-            "Reads every chat again, adds songs that were missed, removes songs whose post is gone, and starts the info and cover lookups. Nothing is moved or deleted from Telegram.",
+            "Reads every chat again with the sources switched on below, adds songs that were missed, lists songs whose post is gone, and starts the info and cover lookups. Nothing is moved or deleted from Telegram.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         speed()
-        Button(onRun, Modifier.fillMaxWidth(), enabled = !ui.running) { Text(if (ui.running) "Repairing" else "Repair library") }
+        Button(onRun, Modifier.fillMaxWidth(), enabled = !ui.running) { Text(if (ui.running) "Scanning" else "Scan library") }
         if (ui.running) LinearProgressIndicator(Modifier.fillMaxWidth())
         ui.lines.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (ui.summary.isNotEmpty()) {
@@ -133,12 +153,9 @@ internal fun RepairContent(ui: RepairUi, onRun: () -> Unit, onOpen: (String) -> 
             Text("${ui.gone} songs could not be found on Telegram. They were kept.", color = MaterialTheme.colorScheme.error)
             OutlinedButton({ confirm = true }, Modifier.fillMaxWidth()) { Text("Remove them from the app") }
         }
-        Text("Needs your yes first", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-        OutlinedButton({ onOpen("dupes") }, Modifier.fillMaxWidth()) { Text("Find duplicates") }
-        OutlinedButton({ onOpen("sort") }, Modifier.fillMaxWidth()) { Text("Sort General") }
-        OutlinedButton({ onOpen("missing") }, Modifier.fillMaxWidth()) { Text("Song info left") }
+        OutlinedButton({ onOpen("recover") }, Modifier.fillMaxWidth()) { Text("Recover songs") }
         Text(
-            "A bot cannot read songs that another bot posted as itself. Use Recover songs in the Library settings: your account posts them again so the bot can read them.",
+            "A bot cannot read songs that another bot posted as itself. Recover songs: your account posts them again so the bot can read them.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -163,22 +180,22 @@ private fun RepairDonePreview() = io.max.paperplay.ui.PreviewFrame {
 @Composable
 private fun RepairRunningPreview() = io.max.paperplay.ui.PreviewFrame { RepairContent(RepairUi(running = true, lines = listOf("Reading My Music")), {}, {}, {}) }
 
-/** Reads one chat with every extra bot: a bot sees the posts it made, which the others cannot see. Adds only what the library lacks. */
-private suspend fun readChatWithBots(backend: CoreBackend, chat: io.max.paperplay.core.library.LibraryChat, log: (String) -> Unit) {
+/** Reads one chat with extra bot [b]: a bot sees the posts it made, which the others cannot see. Adds only what the library lacks. */
+private suspend fun readChatWithBot(backend: CoreBackend, chat: io.max.paperplay.core.library.LibraryChat, b: io.max.paperplay.core.telegram.PoolBot, log: (String) -> Unit) {
     val services = backend.services
-    for ((i, bc) in services.botPool.readyBots().withIndex()) {
-        val (bot, client) = bc
-        log("Reading ${chat.title} with ${bot.name ?: bot.username ?: "bot ${bot.id}"}")
-        services.scanner.reader = bot.name ?: bot.username ?: "Bot ${i + 2}"
-        val seen = try { services.scanner.scanChat(chat, full = true, via = client, owner = bot.id) } finally { services.scanner.reader = null }
-        log(if (seen != null) services.scanner.report.value ?: "${chat.title}: done" else "${bot.username ?: "Bot ${bot.id}"} could not read it (is it an admin of the chat?)")
-    }
+    val label = b.name ?: b.username ?: "Bot ${b.id}"
+    val client = services.botPool.clientOf(b.id)
+    if (client == null) { log("$label is not connected, skipped"); return }
+    log("Reading ${chat.title} with $label")
+    services.scanner.reader = label
+    val seen = try { services.scanner.scanChat(chat, full = true, via = client, owner = b.id) } finally { services.scanner.reader = null }
+    log(if (seen != null) services.scanner.report.value ?: "${chat.title}: done" else "$label could not read it (is it an admin of the chat?)")
 }
 
 /** Your own account sees every post in the main chat, whoever sent it; what no bot could read is added to play through it. */
 private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) -> Unit) {
     val services = backend.services
-    val main = backend.mainChatId() ?: return
+    val main = backend.mainChatId() ?: run { log("Your account: no main chat is set"); return }
     log("Reading the main chat with your account")
     val watch = services.scope.launch {
         backend.chatIndex.progress.collect { p -> services.scanner.announce(p?.let { "Your account: reading ${it.chatTitle}, ${it.found} songs" }) }
@@ -190,18 +207,4 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
     }.onFailure { log("The account could not read the chat: ${it.message}") }
     watch.cancel()
     services.scanner.announce(null)
-}
-
-/** After a rescan with the main bot: reads every chat with the other bots and, if asked, your account, then starts the lookups. Deletes nothing. */
-internal suspend fun readWithOthers(backend: CoreBackend, withBots: Boolean, withAccount: Boolean, log: (String) -> Unit = {}) {
-    val services = backend.services
-    services.scanner.retryEmptyIds = true
-    try {
-        if (withBots) for (chat in services.library.chatList()) readChatWithBots(backend, chat, log)
-        if (withAccount) readMainChatWithAccount(backend, log)
-    } finally {
-        services.scanner.retryEmptyIds = false
-    }
-    services.enricher.kick()
-    services.covers.kick()
 }

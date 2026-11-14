@@ -1098,18 +1098,6 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         services.addChat(chatId, title.trim().ifEmpty { chatId.toString() })
         return null
     }
-
-    /** Rescans every chat with the main bot, then with the extra bots and your account, as the Repair page's switches say. */
-    fun rescan(onDone: () -> Unit = {}) {
-        scope.launch {
-            repo.chatList().forEach {
-                services.scanner.reader = services.scanner.mainBotName()
-                try { services.scanner.rescanChat(it) } finally { services.scanner.reader = null }
-            }
-            readWithOthers(this@CoreBackend, pref("repair_bots") != "false", account.loggedIn.value && pref("repair_account") != "false")
-            onDone()
-        }
-    }
 }
 
 private fun <T> groups(songs: List<Song>, key: (Song) -> String, make: (String, List<Song>) -> T): List<T> =

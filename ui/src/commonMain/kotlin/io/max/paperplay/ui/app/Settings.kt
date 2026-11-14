@@ -145,7 +145,7 @@ internal val LocalPageBottomPadding = androidx.compose.runtime.compositionLocalO
 
 internal val subTitles = mapOf(
     "channels" to "Channels and chats", "bots" to "Bots", "account" to "Your account", "log" to "Activity log",
-    "repair" to "Repair library", "recover" to "Recover songs", "folders" to "Music folders", "exports" to "Saved export lists", "cache" to "Cache manager", "sort" to "Sort General", "dupes" to "Find duplicates", "missing" to "Song info left", "uploadhub" to "Upload songs", "mixlearn" to "Mixes and learning", "weather" to "Weather",
+    "repair" to "Scan library", "recover" to "Recover songs", "folders" to "Music folders", "exports" to "Saved export lists", "cache" to "Cache manager", "sort" to "Sort General", "dupes" to "Find duplicates", "missing" to "Song info left", "uploadhub" to "Upload songs", "mixlearn" to "Mixes and learning", "weather" to "Weather",
     "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile",
 )
 
@@ -318,8 +318,7 @@ internal fun SettingsPage(
             // What it is doing now, then the actions that matter, then the settings behind drop-downs.
             LibraryStatusRows(backend) { stack.add("missing") }
             SectionLabel("Main tools")
-            NavRow("Repair library", "Read every chat again and fill in what is missing", Icons.Rounded.Build) { stack.add("repair") }
-            SettingsRow("Full rescan", icon = Icons.Rounded.Sync, subtitle = "Also removes songs deleted while the app was closed", onClick = { confirm = "rescan" })
+            NavRow("Scan library", "Read every chat with the bots and account you pick, fill in what is missing", Icons.Rounded.Sync) { stack.add("repair") }
             NavRow("Find duplicates", "Repeated songs in your main chat, and deleting them", Icons.Rounded.ContentCopy) { stack.add("dupes") }
             NavRow("Sort General", "Suggests topics for songs in General. Nothing moves till you confirm", Icons.Rounded.DriveFileMove) { stack.add("sort") }
             SettingsGroup("Speeds", "How fast the app asks Telegram for things", Icons.Rounded.Speed) {
@@ -459,7 +458,6 @@ internal fun SettingsPage(
         "savebackup" -> BackupPasswordDialog({ pw ->
             backend.services.scope.launch { notice.value = backend.saveBackup(pw, "paperplay-backup-${io.max.paperplay.core.app.dayOf(io.max.paperplay.ui.nowMoment().epochMs)}.zip") }
         }) { confirm = null }
-        "rescan" -> ConfirmDialog("Run a full rescan?", "Re-reads every message in your music chats with the main bot, then with the extra bots and your account (switches on the Repair page), at the speed set under Reading channels. A slower speed takes longer but avoids Telegram's rate limit.", "Rescan", { backend.rescan { notice.value = "Rescan finished." } }) { confirm = null }
         "restore" -> ConfirmDialog("Restore a backup?", "This replaces your library, playlists and favorites with the backup.", "Restore", onRestore) { confirm = null }
         "clearcache" -> ConfirmDialog("Clear the cache?", "Streamed songs stored on this device are deleted. Stop playback first. They download again when played.", "Clear", { backend.clearCache { notice.value = it } }) { confirm = null }
         "accountout" -> ConfirmDialog("Log out of your account?", "Your index stays on this device. Chats and channels need a new login. The bot is not affected.", "Log out", backend::logOutAccount) { confirm = null }

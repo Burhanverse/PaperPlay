@@ -74,7 +74,7 @@ internal fun ChannelsPage(conn: ConnectionUi, backend: CoreBackend, stack: Mutab
         main = all.firstOrNull { it.id == mainChatId },
         others = all.filterNot { it.id == mainChatId },
         scanText = scan?.text, scanFraction = scan?.fraction?.toFloat(),
-        onReconnect = backend::connect, onAdd = { showAdd = true }, onScan = backend::rescan,
+        onReconnect = backend::connect, onAdd = { showAdd = true }, onScan = { stack.add("repair") },
         onSetMain = { backend.setMainChat(it); mainChatId = it },
         onOpenIndex = { stack.add("index") },
         showChats = loggedIn,
