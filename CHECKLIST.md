@@ -602,5 +602,21 @@ Open:
 - [~] Onboarding showed the chosen profile photo as a mosaic (no image loader before the main screen) and the bot page said "Not ready yet" after a successful save; both fixed, not tried on the PC
 - [ ] Before the next release: a start-up smoke test in CI (install the setup exe on the runner and start it), one Java target for all modules, a launcher that reports a start-up error, a software-drawing fallback. ARM Windows: x64 under emulation is untried; a native ARM build needs a JDK, skiko, libvlc and TDLib for ARM64
 ### Repository
-- [x] Ten commits were made locally (`edce335` to `163609f`) and nothing is pushed. Not committed after them: language search, the delete fix, the reading speed and Library page, the cover-count changes made later, and the docs. The other session's files (`PlaybackCore.kt`, `StandbyVisual.kt`, `StandbyVisualMore.kt`, `TapProcessor.kt`, `AudioTap.kt`) stay out of every commit
+- [x] Everything above is committed and pushed to `main` (`222d1e9`, then `3c5c03f` and `427f18b` on top of the release bot's `3771c21`); `beta` was brought level with `main` at `222d1e9`. The release workflow bumped `version.properties` to 1.4.0, wrote `CHANGELOG.md` and tagged `v1.4.0` by itself. Left uncommitted on purpose: the other session's audio-tap files.
 - [ ] Build note: the Android build in this folder fails while those other files do not compile. A clean copy (`D:\PaperPlayBuild`, a git worktree of `HEAD` with this session's files copied over) builds the phone APK; remove it with `git worktree remove` when done
+
+## Update 2026-11-14 (last round: tasks, sync counter, live duplicate delete, reader labels). Key as above: [x] seen working, [~] built and installed but not tried, [ ] open
+### Song info page and Tasks
+- [~] "Song info left" page redesigned: where the library stands (complete count and bar, lookups running, covers queued), "Show only" filter chips with counts, an Actions block that wraps (Look up again, Select all, Retry no match, Copy CSV, Save file), a thin divider between songs.
+- [~] The page no longer hides its last rows behind the bottom bar: lazy pages (Song info left, Log) pad their list by the bar height instead of clipping it.
+- [~] Tapping a running Looking up song info or Loading covers task opens that page on the Waiting or No cover filter, so the live list is one tap away.
+- [~] Fast song info (Settings, Song info, covers and lyrics): 4 workers, Deezer asked first and, when it is sure (title, artist, length), the slow MusicBrainz and AudioDB calls are skipped. Off switch asks every source, as before.
+### Reading and scanning
+- [~] The sync banner counts up smoothly: the shown number is estimated between pages from the measured speed (never more than the pages asked for ahead) and snaps to the real count on each page, instead of jumping by 100.
+- [~] A full scan or Repair names who is reading: "Bot 1" (main bot), "Bot 2", "Bot 3" for the extra bots, and "Your account: reading <chat>, N songs" for the account. The normal background scan stays unlabeled.
+- [~] After a Full rescan the app offers to read with the other bots (and the account) too. Nothing is deleted.
+### Deleting duplicates
+- [~] The delete counts one post at a time ("Deleting: n of 152 done"): each post is marked Done as soon as Telegram confirms it. The page drops a deleted post at once, and a song with no extra copy left goes with it. Pressing Delete scrolls the page to the top.
+### Repository
+- [x] Commits this round: language search, duplicate delete through the Bot API, auto reading speed, faster song info, Song info page with the Tasks tap, Library settings in drop-downs with the other-bot read, docs, then the live duplicate delete and the sync counter with reader labels.
+- [ ] Owner still to check on the phone: greyed-out Spotify songs in order, cover counts, mini player and toast, a real duplicate delete (posts gone from Telegram), language search, auto reading speed, the sync counter and reader labels. Then look at the Windows job of the v1.4.0 run: `runtimeelease` must say Java 25 and the setup exe must start.
