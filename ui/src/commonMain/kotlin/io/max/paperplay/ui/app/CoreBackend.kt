@@ -746,32 +746,6 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
-    // Started only here, after playerStarted and the player are initialised: a coroutine started earlier could reach them while they were still null (it crashed the app).
-    init {
-        scope.launch(Dispatchers.Default) {
-            var first = true
-            val activeFlow = combine(io.max.paperplay.ui.AppForegroundState.isVisibleFlow, playbackMeta.map { it.playing }) { visible, playing ->
-                visible && playing
-            }
-            while (isActive) {
-                val level = io.max.paperplay.player.SystemVolume.get()
-                if (level == null) { if (first) return@launch else { delay(2500); continue } }
-                if (first) {
-                    first = false
-                    systemVolume = true
-                    // The engine plays at full level; the system volume is the only one.
-                    if (playerStarted.value) player.setVolume(1f)
-                }
-                if (kotlin.math.abs(level - volume.value) > 0.004f) volume.value = level
-                if (!io.max.paperplay.ui.AppForegroundState.isVisible || !playbackMeta.value.playing) {
-                    activeFlow.first { it }
-                } else {
-                    delay(2500)
-                }
-            }
-        }
-    }
-
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     /** Puts the last queue back, paused, once the connection is up (or after 20 seconds) and nothing has been played. */
     val sessionRestore: Boolean get() = repo.pref("restore_session") != "false"
@@ -1097,6 +1071,32 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val chatId = id.trim().toLongOrNull() ?: return "The chat id is a number, like -1001234567890."
         services.addChat(chatId, title.trim().ifEmpty { chatId.toString() })
         return null
+    }
+
+    // Last in the class on purpose: the coroutine reads playbackMeta, playerStarted and the player, and one started before they are assigned reaches them as null (it crashed the app).
+    init {
+        scope.launch(Dispatchers.Default) {
+            var first = true
+            val activeFlow = combine(io.max.paperplay.ui.AppForegroundState.isVisibleFlow, playbackMeta.map { it.playing }) { visible, playing ->
+                visible && playing
+            }
+            while (isActive) {
+                val level = io.max.paperplay.player.SystemVolume.get()
+                if (level == null) { if (first) return@launch else { delay(2500); continue } }
+                if (first) {
+                    first = false
+                    systemVolume = true
+                    // The engine plays at full level; the system volume is the only one.
+                    if (playerStarted.value) player.setVolume(1f)
+                }
+                if (kotlin.math.abs(level - volume.value) > 0.004f) volume.value = level
+                if (!io.max.paperplay.ui.AppForegroundState.isVisible || !playbackMeta.value.playing) {
+                    activeFlow.first { it }
+                } else {
+                    delay(2500)
+                }
+            }
+        }
     }
 }
 
