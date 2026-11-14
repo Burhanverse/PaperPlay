@@ -125,6 +125,7 @@ private fun SettingsScreen(
         // The chat pages hold long lists, so they scroll lazily instead of inside the shared scroll column.
         val isLazy = page == "index" || page == "missing" || page == "log" || page?.startsWith("index:") == true
         if (page == "index") IndexPage(backend, stack, bottomPadding)
+        else if (page == "dupes") DuplicatesPage(backend, bottomPadding)
         else if (page != null && page.startsWith("index:")) ChatSongsPage(backend, page.removePrefix("index:").toLongOrNull() ?: 0L, stack, bottomPadding)
         else Column(
             Modifier.fillMaxSize()
@@ -180,7 +181,14 @@ private fun Modifier.clickableRow(onClick: () -> Unit): Modifier = this.then(Mod
 
 @Composable
 fun Avatar(photo: String?, name: String, size: Dp) {
-    if (photo != null) CoverImage(photo, "avatar", size = size, radius = size / 2)
+    // Onboarding shows the photo before the main screen (which provides the image loader) exists, so it brings its own.
+    if (photo != null) {
+        if (io.max.paperplay.ui.components.LocalCoverLoader.current == null) {
+            androidx.compose.runtime.CompositionLocalProvider(io.max.paperplay.ui.components.LocalCoverLoader provides SharedCovers.loader) {
+                CoverImage(photo, "avatar", size = size, radius = size / 2)
+            }
+        } else CoverImage(photo, "avatar", size = size, radius = size / 2)
+    }
     else Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
         Text(name.firstOrNull()?.uppercase() ?: "?", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
     }
@@ -330,12 +338,12 @@ internal fun SettingsPage(
         "uploads" -> {
             NavRow("Upload songs", "Pick songs, see the queue, retry failures", Icons.Rounded.Upload) { stack.add("uploadhub") }
             RateSlider("uploads", backend, notice)
-            var parallel by remember { mutableStateOf((pref("upload_parallel")?.toIntOrNull() ?: 6).coerceIn(1, 10)) }
-            SliderRow("Uploads at once: $parallel", parallel.toFloat(), 1f..10f, { parallel = it.toInt() }, steps = 8,
+            var parallel by remember { mutableStateOf((pref("upload_parallel")?.toIntOrNull() ?: 6).coerceIn(1, 20)) }
+            SliderRow("Uploads at once: $parallel", parallel.toFloat(), 1f..20f, { parallel = it.toInt() }, steps = 18,
                 hint = "Telegram lets a bot post about 20 messages a minute in one group, so keep this modest.",
                 onDone = { backend.setPref("upload_parallel", "$parallel") })
             var slower by remember { mutableStateOf(pref("upload_slower") == "true") }
-            SwitchRow("Upload more slowly", slower, { slower = it; backend.setPref("upload_slower", "$it") }, Icons.Rounded.HourglassBottom, "30-60 seconds between songs instead of 8-20. For really big uploads.")
+            SwitchRow("Upload more slowly", slower, { slower = it; backend.setPref("upload_slower", "$it") }, Icons.Rounded.HourglassBottom, "Each upload waits three times longer between songs. For really big uploads.")
             var skip by remember { mutableStateOf(pref("upload_skip_known") != "false") }
             SwitchRow("Skip songs already in my library", skip, { skip = it; backend.setPref("upload_skip_known", "$it") }, Icons.Rounded.Rule, "Matches the file name and size")
         }
@@ -360,7 +368,7 @@ internal fun SettingsPage(
                 SwitchRow("Keep running in the background", keep, { keep = it; backend.setPref("keep_running", "$it"); env?.setKeepRunning?.invoke(it) },
                     Icons.Rounded.Sync, "Syncing carries on after you leave. A notification shows what the app is doing")
             }
-            if (env?.permissions != null) NavRow("Permissions", "Notifications, Bluetooth and battery: what is allowed", Icons.Rounded.Security) { stack.add("permissions") }
+            if (env?.permissions != null) NavRow("Permissions", "Notifications, music files, Bluetooth and battery: what is allowed", Icons.Rounded.Security) { stack.add("permissions") }
             NavRow("Connection", "Devices on this network, pairing, addresses and encryption", Icons.Rounded.SettingsEthernet) { stack.add("conn") }
             NavRow("Network play", "Listen together with people on the same network", Icons.Rounded.Devices) { stack.add("netplay") }
         }

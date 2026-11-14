@@ -117,7 +117,7 @@ fun Onboarding(
                         Step.Look -> LookPage(prefs)
                         Step.Profile -> ProfilePage(prefs)
                         Step.Connect -> ConnectPage(onBot = { goTo(Step.Bot) }, onRestore = { onFinish(OnboardingChoice.Restore) })
-                        Step.Bot -> BotSetupPage(onSave = { id, hash, token -> backend?.saveCredentials(id, hash, token) ?: "Not ready yet" }, connected = botConnected, connectionError = conn.error, onConnected = { goTo(Step.Chat) })
+                        Step.Bot -> BotSetupPage(onSave = { id, hash, token -> if (backend == null) "Not ready yet" else backend.saveCredentials(id, hash, token) }, connected = botConnected, connectionError = conn.error, onConnected = { goTo(Step.Chat) })
                         Step.Chat -> ChatPage(conn.chats.map { it.title }, botConnected, onAdd = { addChat = true })
                         Step.Account -> AccountStepPage {
                             if (backend != null) AccountPage(backend, onOpenIndex = null, onLogOut = { scope.launch { backend.account.logOut() } })
