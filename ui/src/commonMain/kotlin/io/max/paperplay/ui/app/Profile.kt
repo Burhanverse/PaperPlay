@@ -121,16 +121,11 @@ fun ProfileScreen(
             }
         }
         item {
-            ProfileSection("devices", "Devices", Icons.Rounded.Devices, prefs) {
+            ProfileSection("devices", "Devices and storage", Icons.Rounded.Devices, prefs) {
                 NavRow("Connection", icon = Icons.Rounded.SettingsEthernet, subtitle = "Telegram status, devices on this network, pairing") {
                     onSettings("conn")
                 }
                 NavRow("Network play", icon = Icons.Rounded.Devices, subtitle = "Listen together with people on the same network") { onSettings("netplay") }
-                NavRow("Background and devices", icon = Icons.Rounded.Devices, subtitle = "Keep running, connection details") { onSettings("devices") }
-            }
-        }
-        item {
-            ProfileSection("storage", "Storage", Icons.Rounded.Storage, prefs) {
                 NavRow("Cache and backup", icon = Icons.Rounded.CleaningServices, subtitle = "Manage cached songs and library backups") {
                     onSettings("storage")
                 }
