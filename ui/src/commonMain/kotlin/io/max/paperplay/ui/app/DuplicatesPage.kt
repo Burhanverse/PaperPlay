@@ -114,7 +114,14 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
         if (survivorOf(g) { it.key in next } != null) ticked = next
     }
 
-    val found = groups
+    // Posts that are gone leave the page at once; a group with no extra copy left goes with them.
+    val goneNow = jobs.filter { it.isDuplicate && it.status == DeleteStatus.Done }.map { it.postChat to it.postMessage }.toSet()
+    val found = remember(groups, goneNow) {
+        groups?.let { l -> if (goneNow.isEmpty()) l else l.mapNotNull { g -> g.copy(others = g.others.filter { (it.chatId to it.messageId) !in goneNow }).takeIf { it.others.isNotEmpty() } } }
+    }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var toTop by remember { mutableStateOf(0) }
+    LaunchedEffect(toTop) { if (toTop > 0) listState.scrollToItem(0) }
     val labels = mapOf(
         DuplicateSection.Extras to "Extra copies",
         DuplicateSection.OtherTopics to "Also in other topics",
@@ -123,7 +130,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
     // Only the rows on screen are built: hundreds of groups, each with covers, made the page slow when it was one long column.
     val sections = remember(found) { found.orEmpty().groupBy { sectionOf(it) } }
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
-        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = bottomPadding + 96.dp)) {
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = bottomPadding + 96.dp)) {
             when {
                 found == null -> item { Text("Looking for repeats", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 found.isEmpty() -> item { Text("No repeated songs in your main chat.", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -249,6 +256,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                         postsOf(g).filter { it.key in ticked }.map { it to keep }
                     }
                     ticked = emptySet()
+                    toTop++
                     if (pairs.isEmpty()) return@TextButton
                     val tasks = backend.tasks
                     val id = tasks.start(TaskKind.Other, "Deleting duplicates", pairs.size, "Starting", onStop = { queue.cancel() })
