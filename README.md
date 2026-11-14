@@ -16,8 +16,12 @@ Built with Kotlin and Compose Multiplatform.
   re-reads every chat (with extra bots and your own account too) and never deletes anything by itself.
 - Your own account can be added (phone, code, password or QR) to index chats, copy songs into the main chat, and play
   songs the bot cannot see.
-- Find and delete duplicate songs, move songs between topics, upload songs from your phone or desktop.
-- Search by title, artist, album, genre and year. Albums with the same name are split by artist.
+- Find and delete duplicate songs (Telegram is asked about every post, so a delete counts only when the post is really gone),
+  move songs between topics, upload songs from your phone or desktop. Android reads a chosen music folder where it is, with no
+  copy, asks before it takes subfolders, and skips songs under 2 MB.
+- Reading speed can adjust itself to what Telegram allows (Settings > Library > Speeds).
+- Search by title, artist, album, genre, year and language (try `japanese`, `hindi`, `lang:tamil`). Albums with the same name
+  are split by artist.
 
 **Playing**
 - Android uses Media3; desktop bundles libvlc, so nothing else needs installing.
@@ -31,7 +35,10 @@ Built with Kotlin and Compose Multiplatform.
 - Song info from MusicBrainz, Deezer, iTunes and TheAudioDB, plus tags and covers read from the audio files.
 - Lyrics from LRCLIB, NetEase, Kugou, QQ Music and lyrics.ovh.
 - Daily mixes, genre and weather mixes, listening statistics, ListenBrainz.
-- Import Spotify playlists (public link, or log in with your own Spotify client id).
+- Import Spotify playlists (public link, or log in with your own Spotify client id). Songs you do not have are listed greyed
+  out in the playlist's order, tap one to open it in Spotify, and a menu copies its real page on Spotify, Apple Music, Deezer,
+  Tidal, Amazon Music and YouTube Music.
+- Covers, song info and uploads show their progress in the Tasks page and in a notification.
 
 **Several devices**
 - Local sync between your own devices on the same network: encrypted, paired with a code, merges your library both ways.
@@ -176,8 +183,14 @@ that need the database or Telegram have no preview yet.
 ## Known limitations
 
 - **Other bots' posts:** a bot cannot see songs another bot posted as itself in a group (channels are fine). Repair can read
-  with every extra bot and with your own account to find them.
-- **Not tried on a device yet:** system volume on Windows, the tray, borderless full screen, the themed Spotify login page,
+  with every extra bot and with your own account to find them. With **Remain anonymous** on for each bot, new uploads are
+  seen by every bot.
+- **Language search:** a song's language comes from the writing of its title, artist and album and from a topic named for a
+  language. A song in Latin letters outside such a topic cannot be told.
+- **Windows:** the installer needs Windows 10 or newer, 64-bit. Windows 11 on ARM may run it through emulation (not tried); there
+  is no native ARM build. It is not signed, so SmartScreen may warn.
+- **Not tried on a device yet:** the greyed-out Spotify songs, deleting duplicates with the new per-post check, the language
+  search, the self-adjusting reading speed, folder upload from an SD card, system volume on Windows, the tray, borderless full screen, the themed Spotify login page,
   the device popups, reading with extra bots, the new animations, installing an update through Shizuku, and Log out and
   delete all data.
 - **Memory:** the desktop app uses about 300 to 400 MB at rest, mostly the graphics driver and class data. Each extra bot is
