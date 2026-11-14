@@ -39,7 +39,7 @@ internal object PlaybackCore {
             .setBufferDurationsMs(15_000, 30_000, 1_500, 3_000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
-        return ExoPlayer.Builder(ctx)
+        return ExoPlayer.Builder(ctx, TapRenderersFactory(ctx))
             .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
             .setLoadControl(loadControl)
             .setAudioAttributes(
