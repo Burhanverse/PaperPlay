@@ -2,6 +2,17 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.5.0] - 2026-11-14
+
+### Added
+- Smooth sync counter, full scan shows which bot or account is reading ([`427f18b`](https://github.com/maxcodl/PaperPlay-compose/commit/427f18b24bbfc69fcb5cac50b6990aa4c73b3193))
+- Duplicates delete counts one by one, page updates live and scrolls to top ([`3c5c03f`](https://github.com/maxcodl/PaperPlay-compose/commit/3c5c03fb9a02f3495151fe2b231f346834321997))
+
+### Documentation
+- Checklist for the last round ([`26768dd`](https://github.com/maxcodl/PaperPlay-compose/commit/26768ddf43350b869109d465b3e78890fd5e3eee))
+
+**Full changes:** [v1.4.0...v1.5.0](https://github.com/maxcodl/PaperPlay-compose/compare/v1.4.0...v1.5.0)
+
 ## [1.4.0] - 2026-11-14
 
 ### Added
