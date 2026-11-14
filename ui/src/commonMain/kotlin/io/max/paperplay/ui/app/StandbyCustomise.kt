@@ -37,8 +37,8 @@ enum class StandbyWidget(val key: String, val label: String, val default: Boolea
     Battery("battery", "Battery level", true),
     Next("next", "Next song", false),
     Lyrics("lyrics", "Lyrics line", false),
+    LyricsScroll("lyrics_scroll", "Lyrics, three lines scrolling", false),
     Weather("weather", "Weather line", false),
-    LyricsSide("lyrics_side", "Lyrics beside the song, in place of the animation", false),
     Alerts("alerts", "Charging, call and notification icons", false),
 }
 

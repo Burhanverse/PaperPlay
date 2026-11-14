@@ -28,6 +28,8 @@ enum class StandbyStyle(val label: String) {
     Bars("Bars"), Wave("Wave"), Rings("Rings"), Orb("Orb"),
     Mirror("Mirror"), Peaks("Peaks"), Circle("Circle"), Particles("Particles"),
     AsciiBars("ASCII bars"), Matrix("Matrix"), AsciiPulse("ASCII pulse"),
+    /** Scrolling lyrics in the animation area; bars while the song has no synced lyrics. */
+    Lyrics("Lyrics"),
 }
 
 /**
@@ -60,7 +62,7 @@ fun StandbyVisual(style: StandbyStyle, color: Color, playing: Boolean, volume: F
     Canvas(modifier) {
         frame // read here so only drawing is redone
         when (style) {
-            StandbyStyle.Bars -> drawBars(sm, idle, color)
+            StandbyStyle.Bars, StandbyStyle.Lyrics -> drawBars(sm, idle, color)
             StandbyStyle.Wave -> drawWave(sm, idle, color)
             StandbyStyle.Rings -> drawRings(sm, idle, color)
             StandbyStyle.Orb -> drawOrb(sm, idle, color)

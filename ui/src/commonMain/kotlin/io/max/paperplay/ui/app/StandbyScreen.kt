@@ -138,7 +138,8 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                 if (p.shows(StandbyWidget.Next)) state.queue.getOrNull(state.queueIndex + 1)?.let {
                     Text("Next: ${it.title} - ${it.artist}", color = tone.copy(alpha = 0.5f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                 }
-                if (p.shows(StandbyWidget.Lyrics) && song != null) {
+                if (p.shows(StandbyWidget.Lyrics) && song != null) StandbyLyric(song.id, backend, tone)
+                if (p.shows(StandbyWidget.LyricsScroll) && song != null) {
                     val lines = rememberLrc(song.id, backend)
                     if (lines.isNotEmpty()) StandbyLyricScroll(lines, backend, tone, 3, false, Modifier.fillMaxWidth())
                 }
@@ -158,7 +159,7 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
             }
         }
         val visual: @Composable (Modifier) -> Unit = { m ->
-            val sideLines = if (p.shows(StandbyWidget.LyricsSide) && song != null) rememberLrc(song.id, backend) else emptyList()
+            val sideLines = if (p.style == StandbyStyle.Lyrics && song != null) rememberLrc(song.id, backend) else emptyList()
             if (sideLines.isNotEmpty()) Box(m, contentAlignment = Alignment.Center) {
                 StandbyLyricScroll(sideLines, backend, tone, if (wide) 5 else 3, true, Modifier.fillMaxWidth())
             } else StandbyVisual(p.style, tone, state.playing, state.volume, song?.id.orEmpty(), m)
@@ -236,6 +237,17 @@ private fun StandbyProgress(state: PlaybackUiState, backend: PlayerControls, ton
     Box(Modifier.fillMaxWidth(0.8f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(tone.copy(alpha = 0.15f))) {
         Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(tone.copy(alpha = 0.7f)))
     }
+}
+
+/** The small one line lyric: just the current line. */
+@Composable
+private fun StandbyLyric(id: String, backend: PlayerControls, tone: Color) {
+    val lines = rememberLrc(id, backend)
+    if (lines.isEmpty()) return
+    val pos by backend.position.collectAsState()
+    val current by remember(lines) { derivedStateOf { lines.indexOfLast { it.timeMs <= pos.positionMs } } }
+    val line = lines.getOrNull(current)?.text.orEmpty()
+    Text(line.ifBlank { " " }, color = tone.copy(alpha = 0.75f), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
 }
 
 @Composable
