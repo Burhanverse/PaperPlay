@@ -236,9 +236,9 @@ class ChatIndex(
 
     override suspend fun missingFromMainChat(): List<ChatPost> {
         val chat = mainChat() ?: return emptyList()
-        val main = main() ?: return emptyList()
-        val copied = store.copiedIds()
-        return store.posts(chat).filter { it.uniqueId !in copied && !main.has(it) }
+        // By message id only: the library keeps every post of the chat, repeats included, so duplicates can be found and deleted.
+        val have = library.songsInChat(chat).map { it.message_id }.toSet()
+        return store.posts(chat).filter { it.messageId !in have }
     }
 
     override suspend fun addPostsNotInLibrary(): MainChatAdd {
