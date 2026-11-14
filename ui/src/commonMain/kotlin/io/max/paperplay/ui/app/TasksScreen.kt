@@ -1,5 +1,6 @@
 package io.max.paperplay.ui.app
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,7 +39,7 @@ import io.max.paperplay.ui.nowMoment
 
 /** Running tasks with progress and a stop button, then the history with a clear button. */
 @Composable
-fun TasksScreen(queue: TaskQueue, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
+fun TasksScreen(queue: TaskQueue, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null, onOpen: (TaskKind) -> Unit = {}) {
     val running by queue.running.collectAsState()
     val history by queue.history.collectAsState()
     val clear: @Composable () -> Unit = {
@@ -50,7 +51,7 @@ fun TasksScreen(queue: TaskQueue, modifier: Modifier = Modifier, onBack: (() -> 
             Text("Nothing running", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyColumn(Modifier.fillMaxSize()) {
-            items(running, key = { "r${it.id}" }) { t -> RunningRow(t) { queue.stop(t.id) } }
+            items(running, key = { "r${it.id}" }) { t -> RunningRow(t, onOpen = { onOpen(t.kind) }) { queue.stop(t.id) } }
             if (history.isNotEmpty()) {
                 item(key = "h") {
                     Text("History", Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall)
@@ -72,8 +73,9 @@ private fun iconFor(kind: TaskKind): ImageVector = when (kind) {
 }
 
 @Composable
-private fun RunningRow(t: TaskItem, onStop: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun RunningRow(t: TaskItem, onOpen: () -> Unit = {}, onStop: () -> Unit) {
+    val opens = t.kind == TaskKind.Info || t.kind == TaskKind.Covers
+    Row(Modifier.fillMaxWidth().then(if (opens) Modifier.clickable(onClick = onOpen) else Modifier).padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         AppIcon(iconFor(t.kind), null)
         Column(Modifier.weight(1f).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(t.title, style = MaterialTheme.typography.bodyLarge)

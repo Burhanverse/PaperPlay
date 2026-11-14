@@ -112,6 +112,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             if (history.size > 40) history.removeAt(0)
         }
     }
+    fun openLive(kind: io.max.paperplay.core.app.TaskKind) {
+        MissingStart.filter = if (kind == io.max.paperplay.core.app.TaskKind.Covers) Missing.NoCover else Missing.Waiting
+        navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("missing") }
+    }
+
     fun goBack() {
         val to = history.removeLastOrNull()
         if (to != null) {
@@ -291,7 +296,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         k.tab == 1 -> SearchScreen(backend::search, songs, currentId, actions, { d2 -> navigate { detail = d2 } }, barsHeight)
                         k.tab == 2 -> LibraryScreen(lib, favorites, currentId, actions, { d2 -> navigate { detail = d2 } }, { newPlaylist = true }, barsHeight, selectedTab = libraryTab,
                             recents = recents, onImportSpotify = { navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("spotify") } })
-                        k.tasks -> TasksScreen(backend.tasks, Modifier.fillMaxSize().padding(bottom = barsHeight), onBack = ::goBack)
+                        k.tasks -> TasksScreen(backend.tasks, Modifier.fillMaxSize().padding(bottom = barsHeight), onBack = ::goBack, onOpen = { kd -> openLive(kd) })
                         else -> ProfileScreen(
                             songs.size, favorites.size, lib.playlists.size, conn, prefs,
                             mainChatTitle,
@@ -444,7 +449,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                     scan = scan,
                                     updates = backend.services.updates,
                                 )
-                                k.page == "tasks" -> TasksScreen(backend.tasks, onBack = ::goBack)
+                                k.page == "tasks" -> TasksScreen(backend.tasks, onBack = ::goBack, onOpen = { kd -> openLive(kd) })
                                 k.page == "upload" -> Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) { TopBar("Upload"); UploadsPage(backend); androidx.compose.foundation.layout.Spacer(Modifier.height(120.dp)) }
                                 k.page == "songs" -> Column { TopBar("Songs"); SongList(songs, currentId, actions, Modifier.fillMaxSize(), pad, empty = "No songs yet. Add a chat in Settings.", listKey = "library:songs") }
                                 k.page == "playlists" -> Column {
