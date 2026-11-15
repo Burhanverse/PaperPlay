@@ -99,15 +99,23 @@ fun HomeScreen(
     val skeleton = (lib.songs is Load.Loading || planning) && !waited
     val ready = !skeleton
     // All the placeholders show first and the whole page fades in once everything is ready, so nothing pops in piece by piece.
-    val reveal by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, androidx.compose.animation.core.tween(450), label = "home reveal")
-    LazyColumn(modifier.graphicsLayer { alpha = if (ready) reveal else 1f }, contentPadding = PaddingValues(bottom = bottomPadding)) {
-        item { HomeHeader(name) }
-        if (!ready) {
-            item { SkeletonTiles() }
-            item { SkeletonShelf() }
-            item { SkeletonShelf() }
-            item { SkeletonShelf() }
-        }
+    val reveal by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, androidx.compose.animation.core.tween(300), label = "home reveal")
+    // One greeting line for both layers, or the two would pick different ones while they cross-fade.
+    val message = remember { homeMessages.random() }
+    // The placeholders fade out as the page fades in, on top of each other, so nothing goes blank in between.
+    androidx.compose.foundation.layout.Box(modifier) {
+    if (reveal < 1f) LazyColumn(
+        Modifier.fillMaxSize().graphicsLayer { alpha = 1f - reveal }, userScrollEnabled = false,
+        contentPadding = PaddingValues(bottom = bottomPadding),
+    ) {
+        item { HomeHeader(name, message) }
+        item { SkeletonTiles() }
+        item { SkeletonShelf() }
+        item { SkeletonShelf() }
+        item { SkeletonShelf() }
+    }
+    LazyColumn(Modifier.fillMaxSize().graphicsLayer { alpha = reveal }, contentPadding = PaddingValues(bottom = bottomPadding)) {
+        item { HomeHeader(name, message) }
         if (ready && tileRows.isNotEmpty()) item {
             // Each column holds three tiles; two columns fill the screen and the rest wait a swipe away.
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -166,6 +174,7 @@ fun HomeScreen(
             }
         }
     }
+    }
 }
 
 private val homeMessages = listOf(
@@ -175,10 +184,9 @@ private val homeMessages = listOf(
 
 /** Greeting with the user's name and one message that stays fixed while the screen is open. */
 @Composable
-private fun HomeHeader(name: String) {
+private fun HomeHeader(name: String, message: String) {
     val h = io.max.paperplay.ui.currentHour()
     val greeting = if (h < 12) "Good morning" else if (h < 18) "Good afternoon" else "Good evening"
-    val message = remember { homeMessages.random() }
     val who = name.trim()
     Column(Modifier.barSurface().padding(start = 16.dp, end = 16.dp, top = 28.dp, bottom = 16.dp)) {
         Text(if (who.isEmpty()) greeting else "$greeting, $who", style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -382,7 +390,7 @@ private fun HomeScreenPreview() {
 
 @Preview(name = "Header", showBackground = true)
 @Composable
-private fun HomeHeaderPreview() = io.max.paperplay.ui.PreviewFrame { HomeHeader("Max") }
+private fun HomeHeaderPreview() = io.max.paperplay.ui.PreviewFrame { HomeHeader("Max", "Turn it up.") }
 
 @Preview(name = "Status toast", showBackground = true)
 @Composable
