@@ -186,7 +186,11 @@ internal fun MissingInfoPage(backend: CoreBackend) {
             Column {
                 MissingSongRow(
                     ui, s.title, s.artist, missing, picked,
-                    onClick = { if (selection.ids.isNotEmpty()) selection = selection.toggle(s.unique_id) },
+                    // Tapping plays the song (with the shown songs after it); while some are picked it picks instead.
+                    onClick = {
+                        if (selection.ids.isNotEmpty()) selection = selection.toggle(s.unique_id)
+                        else listActions?.play(shown.map { it.first.toUi() }, shown.indexOfFirst { it.first.unique_id == s.unique_id }.coerceAtLeast(0))
+                    },
                     onLongClick = { selection = selection.toggle(s.unique_id) },
                     menu = listActions?.let { la -> @Composable { SongMenu(ui, la.rowActions()) } },
                 )
