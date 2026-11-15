@@ -5,6 +5,8 @@ import io.max.paperplay.core.integrations.HttpFetcher
 import io.max.paperplay.core.integrations.defaultHttpFetcher
 import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.metadata.CoverImage
+import io.max.paperplay.core.metadata.TagSource
+import io.max.paperplay.core.metadata.readEmbeddedTags
 import io.max.paperplay.core.metadata.CoverQuery
 import io.max.paperplay.core.metadata.CoverSources
 import io.max.paperplay.core.metadata.CoverWork
@@ -434,12 +436,15 @@ class CoverService(
         val clients = listOfNotNull(botOwnerOf(song.remote_id)?.let { tdFor(song) } ?: td(), accountClient()).distinct()
         var tdRateLimited = false
         var answered = false
+        var audioFile: JsonObject? = null
+        var audioClient: TdClient? = null
         val notes = ArrayList<String>()
         for (client in clients) {
           if (song.chat_id != 0L && song.message_id != 0L) {
             val thumbResult = fetchTelegramThumbnail(client, song)
             notes += "${if (client === clients.first()) "first" else "account"} client: ${thumbResult.why}"
             if (thumbResult.answered) answered = true
+            if (thumbResult.audio != null && audioFile == null) { audioFile = thumbResult.audio; audioClient = client }
             if (thumbResult.rateLimited) {
                 tdRateLimited = true
             } else if (thumbResult.bytes != null) {
@@ -455,6 +460,25 @@ class CoverService(
                 }
             }
           }
+        }
+
+        // 2b. No thumbnail on the post: the cover may still be inside the audio file itself (FLAC picture block, ID3 art), which sits in
+        // its first few megabytes. Only that start of the file is downloaded.
+        val head = audioFile
+        val headClient = audioClient
+        if (head != null && headClient != null) {
+            val bytes = embeddedCoverOf(headClient, head)
+            if (bytes != null) {
+                val outPath = writeCoverFile(uid, bytes)
+                if (outPath != null) {
+                    repo.updateCover(uniqueId = uid, coverPath = outPath, notify = false)
+                    notifyWake.trySend(Unit)
+                    recordGiveUp(uid, found = true)
+                    markDone(uid, Outcome.Done)
+                    return
+                }
+            }
+            notes += "no cover inside the start of the file"
         }
 
         // 3. Search services, all asked at once: Deezer and iTunes (the stored sources were tried already).
@@ -596,7 +620,7 @@ class CoverService(
     }
 
     /** [answered] is true when Telegram returned the post, so a missing thumbnail is a fact and not a failure to ask. */
-    private class TdThumbResult(val bytes: ByteArray? = null, val rateLimited: Boolean = false, val answered: Boolean = false, val why: String = "")
+    private class TdThumbResult(val bytes: ByteArray? = null, val rateLimited: Boolean = false, val answered: Boolean = false, val why: String = "", val audio: JsonObject? = null)
 
     private suspend fun fetchTelegramThumbnail(client: TdClient, song: Song): TdThumbResult {
         if (!reserveTdSlot()) return TdThumbResult(rateLimited = true)
@@ -614,10 +638,28 @@ class CoverService(
             return TdThumbResult(rateLimited = true, why = "rate limited")
         }
         val msg = msgRes.getOrNull() ?: return TdThumbResult(why = "getMessage failed: ${msgErr?.message}")
-        val thumb = thumbFileOfMessage(msg) ?: return TdThumbResult(answered = true, why = "the post has no thumbnail")
+        val thumb = thumbFileOfMessage(msg) ?: return TdThumbResult(answered = true, why = "the post has no thumbnail", audio = fileOfMessage(msg))
         val localPath = downloadTdFile(client, thumb) ?: return TdThumbResult(rateLimited = clock() < tdBlockedUntil, why = "thumbnail download failed")
         val bytes = readWholeFile(localPath) ?: return TdThumbResult(why = "thumbnail file unreadable")
         return TdThumbResult(bytes = bytes.takeIf { looksLikeImage(it, null) }, answered = true, why = if (looksLikeImage(bytes, null)) "ok" else "thumbnail is not an image")
+    }
+
+    /** The cover picture inside the first megabytes of an audio file, or null. Downloads only that start. */
+    private suspend fun embeddedCoverOf(client: TdClient, file: JsonObject): ByteArray? {
+        val fileId = file.long("id")?.toInt()?.takeIf { it != 0 } ?: return null
+        val res = withTimeoutOrNull(20.seconds) {
+            runCatchingCancellable {
+                client.call(request("downloadFile") {
+                    put("file_id", fileId); put("priority", 8); put("offset", 0); put("limit", HEAD_BYTES); put("synchronous", true)
+                })
+            }
+        }?.getOrNull() ?: return null
+        val local = res.obj("local") ?: return null
+        val path = local.str("path")?.takeIf { it.isNotEmpty() } ?: return null
+        val have = minOf(local.long("downloaded_prefix_size") ?: local.long("downloaded_size") ?: 0L, fileLength(path))
+        if (have <= 0L) return null
+        return runCatching { readEmbeddedTags(TagSource(have) { off, n -> readRange(path, off, n) })?.cover }.getOrNull()
+            ?.takeIf { looksLikeImage(it, null) }
     }
 
     private suspend fun reserveTdSlot(): Boolean {
@@ -733,6 +775,7 @@ class CoverService(
 
     private companion object {
         const val MAX_THUMB_BYTES = 10 * 1024 * 1024
+        const val HEAD_BYTES = 3 * 1024 * 1024
         const val GIVE_UP_KEY = "covers_nofind"
         const val ACCOUNT_RETRY_KEY = "covers_account_retry"
         /** A song no source had a cover for is left alone for good; a scan started by hand asks again ([forgetGiveUps]). */
