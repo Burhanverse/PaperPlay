@@ -237,18 +237,24 @@ class ChatIndex(
     override suspend fun missingFromMainChat(): List<ChatPost> {
         val chat = mainChat() ?: return emptyList()
         // By message id only: the library keeps every post of the chat, repeats included, so duplicates can be found and deleted.
-        val have = library.songsInChat(chat).map { it.message_id }.toSet()
+        val have = knownPostIds(chat)
         return store.posts(chat).filter { it.messageId !in have }
     }
 
     override suspend fun addPostsNotInLibrary(): MainChatAdd {
-        val chat = mainChat() ?: return MainChatAdd(0, 0)
-        val seen = fullRead[chat] ?: return MainChatAdd(0, 0)
-        val have = library.songsInChat(chat).map { it.message_id }.toSet()
+        val chat = mainChat() ?: return MainChatAdd(0, 0, 0)
+        val seen = fullRead[chat] ?: return MainChatAdd(0, 0, 0)
+        val have = knownPostIds(chat)
         val missing = store.posts(chat).filter { it.messageId in seen && it.messageId !in have }
         missing.forEach { addToLibrary(it) }
-        return MainChatAdd(seen.size, missing.size)
+        val repeats = library.repo.db.filingQueries.allPostCopies().executeAsList().count { it.chat_id == chat }
+        return MainChatAdd(seen.size, missing.size, repeats)
     }
+
+    /** Posts the library already holds: the listed song of each file, and its other posts (repeats) kept as copies. */
+    private fun knownPostIds(chat: Long): Set<Long> =
+        library.songsInChat(chat).map { it.message_id }.toSet() +
+            library.repo.db.filingQueries.allPostCopies().executeAsList().filter { it.chat_id == chat }.map { it.message_id }
 
     override suspend fun addMissingFromMainChat(): Int {
         val missing = missingFromMainChat()

@@ -91,8 +91,8 @@ data class IndexedSong(
 data class IndexProgress(val chatId: Long, val chatTitle: String, val found: Int, val running: Boolean)
 
 /** The saved index of the account's chats. Persisted, so it survives restarts and logouts. */
-/** What [ChatIndexApi.addPostsNotInLibrary] found: posts the account saw in the main chat, and how many of them it added. */
-data class MainChatAdd(val seen: Int, val added: Int)
+/** What [ChatIndexApi.addPostsNotInLibrary] found: posts the account saw in the main chat, how many it added, and how many repeat posts of a file the library keeps as copies (the Duplicates page lists them). */
+data class MainChatAdd(val seen: Int, val added: Int, val repeats: Int = 0)
 
 interface ChatIndexApi {
     /** Chats that are indexed: id to title. */
@@ -130,7 +130,7 @@ interface ChatIndexApi {
      * twice like the chat has it. Uses only the posts the last full read of the chat in this session saw, so posts deleted
      * since are not brought back. [MainChatAdd.seen] is 0 when no full read has run yet.
      */
-    suspend fun addPostsNotInLibrary(): MainChatAdd = MainChatAdd(0, 0)
+    suspend fun addPostsNotInLibrary(): MainChatAdd = MainChatAdd(0, 0, 0)
 
     /** Indexed posts of the main chat that the library lacks: what the bot cannot read. */
     suspend fun missingFromMainChat(): List<ChatPost> = emptyList()

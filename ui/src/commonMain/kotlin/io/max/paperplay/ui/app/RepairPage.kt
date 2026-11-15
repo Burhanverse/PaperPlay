@@ -205,7 +205,8 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
         val r = backend.chatIndex.addPostsNotInLibrary()
         log(
             if (r.seen == 0) "Your account read no posts from the main chat"
-            else "Your account saw ${r.seen} posts in the main chat; " + if (r.added > 0) "added ${r.added} the library lacked" else "the library already has all of them",
+            else "Your account saw ${r.seen} posts in the main chat; " + (if (r.added > 0) "added ${r.added} the library lacked" else "the library has all of them") +
+                " (${r.repeats} of the posts are repeats of a file, kept for the Duplicates page)",
         )
     }.onFailure { log("The account could not read the chat: ${it.message}") }
     watch.cancel()
