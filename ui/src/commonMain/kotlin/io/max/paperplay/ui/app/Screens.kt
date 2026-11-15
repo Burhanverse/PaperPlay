@@ -452,11 +452,21 @@ private fun SearchResults(
     val rowActions = remember(actions) { actions.rowActions() }
     val albums = remember(results) { results.filter { it.album.isNotBlank() }.distinctBy { it.album to it.artist }.take(6) }
     val artists = remember(results) { results.filter { it.artist.isNotBlank() }.distinctBy { it.artist }.take(6) }
+    // Like a video search: an artist whose own name matches what was typed comes first, above the songs.
+    val q = remember(query) { io.max.paperplay.core.metadata.SearchQuery(query) }
+    val topArtists = remember(artists, q) { artists.filter { io.max.paperplay.core.metadata.songSearchScore(q, it.artist, "", "", null, null) > 0 }.take(3) }
+    val otherArtists = remember(artists, topArtists) { artists.filter { a -> topArtists.none { it.artist == a.artist } } }
     if (results.isEmpty()) {
         Text("No songs match \"${query.trim()}\".", modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding + 16.dp)) {
+        if (topArtists.isNotEmpty()) {
+            item(key = "h-top") { SearchHeader("Top result", topArtists.size) }
+            items(topArtists, key = { "t-${it.artist}" }) { s ->
+                SearchGroupRow(s.artist, "Artist", s.coverUri, "artist:${s.artist}", circle = true) { onOpen(Detail.Artist(s.artist)) }
+            }
+        }
         item(key = "h-songs") { SearchHeader("Songs", results.size) }
         itemsIndexed(results, key = { _, s -> "s-${s.id}" }) { i, song ->
             SongRow(
@@ -471,9 +481,9 @@ private fun SearchResults(
                 SearchGroupRow(s.album, s.artist, s.coverUri, s.id, circle = false) { onOpen(Detail.Album(s.album, s.artist.ifBlank { null })) }
             }
         }
-        if (artists.isNotEmpty()) {
-            item(key = "h-artists") { SearchHeader("Artists", artists.size) }
-            items(artists, key = { "r-${it.artist}" }) { s ->
+        if (otherArtists.isNotEmpty()) {
+            item(key = "h-artists") { SearchHeader("Artists", otherArtists.size) }
+            items(otherArtists, key = { "r-${it.artist}" }) { s ->
                 SearchGroupRow(s.artist, "", s.coverUri, "artist:${s.artist}", circle = true) { onOpen(Detail.Artist(s.artist)) }
             }
         }
