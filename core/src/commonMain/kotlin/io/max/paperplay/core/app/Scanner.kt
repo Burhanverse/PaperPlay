@@ -275,13 +275,14 @@ class Scanner(
         val missing = mutableListOf<Song>()
         val unseen = repo.songsInChat(chat.id).filter { it.message_id !in seen && it.remote_id != ACCOUNT_REMOTE && botOwnerOf(it.remote_id) == null }
         val gen = stopGen
+        val batch = batchSize()
         try {
             // First in batches of 100 (one call each); only songs a batch returned nothing for are asked about one by one.
             val doubtful = mutableListOf<Song>()
-            val chunks = unseen.chunked(WALK_BATCH)
+            val chunks = unseen.chunked(batch)
             for ((c, chunk) in chunks.withIndex()) {
                 if (stopGen != gen) return false
-                _progress.value = ScanProgress("${tag()}Checking saved songs in ${chat.title}: ${minOf((c + 1) * WALK_BATCH, unseen.size)} of ${unseen.size}", (c + 1).toDouble() / chunks.size)
+                _progress.value = ScanProgress("${tag()}Checking saved songs in ${chat.title}: ${minOf((c + 1) * batch, unseen.size)} of ${unseen.size}", (c + 1).toDouble() / chunks.size)
                 if (c > 0) delay(effectiveMinPause())
                 val page = retrying { client.call(request("getMessages") { put("chat_id", chat.id); put("message_ids", JsonArray(chunk.map { JsonPrimitive(it.message_id) })) }) }
                 val byId = (page["messages"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>().mapNotNull { m -> songFromMessage(m)?.let { it.message_id to it } }.toMap()
@@ -352,6 +353,7 @@ class Scanner(
         val seen = mutableSetOf<Long>()
         calm = false
         val gen = stopGen
+        val batch = batchSize()
         val initialFloor = effectiveMinPause()
         if (pause < initialFloor) pause = initialFloor
         var chatTitle = chat.title
@@ -382,7 +384,7 @@ class Scanner(
                     if (!shownLive || knownEnd <= 0) continue
                     if (_progress.value?.text?.contains("Syncing") != true) continue
                     val est = (shownDone + (shownRate * shownAt.elapsedNow().inWholeMilliseconds / 1000.0).toLong())
-                        .coerceIn(shownDone, minOf(shownDone + WALK_BATCH * lanes(), knownEnd / MESSAGE_ID_STEP))
+                        .coerceIn(shownDone, minOf(shownDone + batch * lanes(), knownEnd / MESSAGE_ID_STEP))
                     _progress.value = ScanProgress("${tag()}Syncing $chatTitle: $est of ${knownEnd / MESSAGE_ID_STEP} messages, $shownCounts", est.toDouble() * MESSAGE_ID_STEP / knownEnd)
                 }
             }
@@ -398,7 +400,7 @@ class Scanner(
                 }
                 if (window.isEmpty()) {
                     // Several batches are asked for at once; they are used in order below.
-                    val starts = List(lanes()) { next + it * WALK_BATCH * MESSAGE_ID_STEP }
+                    val starts = List(lanes()) { next + it * batch * MESSAGE_ID_STEP }
                     window.addAll(
                         coroutineScope {
                             starts.map { st ->
@@ -406,7 +408,7 @@ class Scanner(
                                     retrying {
                                         client.call(request("getMessages") {
                                             put("chat_id", chat.id)
-                                            put("message_ids", JsonArray(idsFrom(st, WALK_BATCH).map(::JsonPrimitive)))
+                                            put("message_ids", JsonArray(idsFrom(st, batch).map(::JsonPrimitive)))
                                         })
                                     }
                                 }
@@ -418,7 +420,7 @@ class Scanner(
                 val floorPause = effectiveMinPause()
                 if (pause > floorPause) pause = maxOf(floorPause, pause * 0.85)
                 val raw = (page["messages"] as? JsonArray).orEmpty()
-                val requested = idsFrom(next, WALK_BATCH)
+                val requested = idsFrom(next, batch)
                 val got = raw.filterIsInstance<JsonObject>().toMutableList()
                 // An id that came back empty and lies before the end may still exist: ask for those once more.
                 val empty = requested.filterIndexed { i, id -> id <= knownEnd && raw.getOrNull(i) !is JsonObject }
@@ -449,7 +451,7 @@ class Scanner(
                 if (!full && persist) {
                     if (lastWrite.elapsedNow() >= 1.seconds) { repo.setScan(chat.id, newest, chat.walk_done); lastWrite = clockMark.markNow() }
                 }
-                next += WALK_BATCH * MESSAGE_ID_STEP
+                next += batch * MESSAGE_ID_STEP
                 val share = if ((full || !chat.walk_done) && knownEnd > 0 && next <= knownEnd) next.toDouble() / knownEnd else null
                 shownCounts = "${seen.size} songs read, $added new"
                 shownLive = share != null
@@ -533,6 +535,9 @@ class Scanner(
     private var autoRpm = 0L
     private var autoCeiling = 0L
     private var autoOk = 0
+
+    /** Ids asked for in one request while reading: the owner's choice, 10 to 100 (what Telegram answers in one call). */
+    private fun batchSize(): Int = (repo.pref("reading_batch")?.toIntOrNull() ?: WALK_BATCH).coerceIn(10, WALK_BATCH)
 
     private fun autoOn() = repo.pref("reading_auto") == "true"
 
