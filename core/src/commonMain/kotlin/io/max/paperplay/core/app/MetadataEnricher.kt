@@ -278,19 +278,30 @@ class MetadataEnricher(
                 relaxedHit = io.max.paperplay.core.metadata.pickRelaxed(dzList.map { it.match } + lrclibList, title, dur)
             }
         }
+        // Many uploads are named "Title - Artist" but are read as "Artist - Title" (and some tags are filled the wrong way round), so the two
+        // are swapped. When nothing matched, try them the other way round.
+        var swappedHit: ExternalMatch? = null
+        if (match == null && dzHit == null && adbHit == null && itunesHit == null && lrclibHit == null && relaxedHit == null &&
+            artist.isNotBlank() && artist != "Unknown artist"
+        ) {
+            val sTerm = "${searchTitle(cleanTitle(artist, title))} ${firstArtist(title)}"
+            val sList = probe(15_000) { deezerRaw(sTerm) }.getOrNull().orEmpty().map { it.match } +
+                probe(15_000) { lrclib(searchTitle(cleanTitle(artist, title)), title) }.getOrNull().orEmpty()
+            swappedHit = pickExternal(sList, artist, title, dur)
+        }
         if (match == null) io.max.paperplay.player.PlayLog.log(
             "lookup",
             "\"$title\" by \"$artist\" ${dur}s: MusicBrainz ${mbR.describe { it.size }}, Deezer ${dzR.describe { it.size }}, AudioDB ${adbR.describe { it.size }}" +
-                (if (itunesFailed) ", iTunes failed" else "") + ", LRCLIB ${lrclibList.size}" +
-                " -> " + (dzHit ?: adbHit ?: itunesHit ?: lrclibHit ?: relaxedHit)?.let { "${it.source}: ${it.artist} - ${it.title} (${it.lengthSec}s)" }.orEmpty().ifEmpty { "no match" },
+                (if (itunesFailed) ", iTunes failed" else "") + ", LRCLIB ${lrclibList.size}" + (if (swappedHit != null) ", swapped title and artist" else "") +
+                " -> " + (dzHit ?: adbHit ?: itunesHit ?: lrclibHit ?: relaxedHit ?: swappedHit)?.let { "${it.source}: ${it.artist} - ${it.title} (${it.lengthSec}s)" }.orEmpty().ifEmpty { "no match" },
         )
-        val primary = dzHit ?: adbHit ?: itunesHit ?: lrclibHit ?: relaxedHit
+        val primary = dzHit ?: adbHit ?: itunesHit ?: lrclibHit ?: relaxedHit ?: swappedHit
         if (match == null && primary == null) {
             if (mbR.exceptionOrNull() is ServiceBusy) throw ServiceBusy()
             if (mbR.isFailure && dzR.isFailure && itunesFailed) throw (mbR.exceptionOrNull() ?: IllegalStateException("offline"))
         }
         // Gaps in the winner are filled from the other safe hits.
-        val extras = listOfNotNull(dzHit, adbHit, itunesHit, lrclibHit, relaxedHit)
+        val extras = listOfNotNull(dzHit, adbHit, itunesHit, lrclibHit, relaxedHit, swappedHit)
         var genre = extras.firstNotNullOfOrNull { it.genre }
         var year = match?.year ?: extras.firstNotNullOfOrNull { it.year }
         val coverUrl = extras.firstNotNullOfOrNull { it.coverUrl }
