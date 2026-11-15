@@ -43,6 +43,9 @@ interface AccountApi {
     /** A line about the last [songsIn] read: posts it skipped because they are not songs, and how many small songs it kept. Empty before a read. */
     val lastReadNotes: String get() = ""
 
+    /** The forum topics of [chatId] with the names Telegram gives them, by topic id. Empty when the chat has none or Telegram could not be asked. */
+    suspend fun topicNames(chatId: Long): Map<Long, String> = emptyMap()
+
     val step: StateFlow<LoginStep>
     val loggedIn: StateFlow<Boolean>
 

@@ -327,6 +327,45 @@ class UserSession(
         if (afterMessageId == 0L) lastReadNotes = "Posts returned by Telegram: " + found.entries.joinToString(", ") { "${it.value} by " + it.key.removePrefix("searchMessagesFilter").lowercase() + (totals[it.key]?.let { t -> " (Telegram counts $t)" } ?: "") } + ". Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
     }
 
+    override suspend fun topicNames(chatId: Long): Map<Long, String> {
+        if (!_loggedIn.value) return emptyMap()
+        return try {
+            val c = ready()
+            knowChat(c, chatId, loadList = true)
+            val out = HashMap<Long, String>()
+            var offsetDate = 0L
+            var offsetMessage = 0L
+            var offsetTopic = 0L
+            repeat(30) {
+                val page = call(c, request("getForumTopics") {
+                    put("chat_id", chatId)
+                    put("query", "")
+                    put("offset_date", offsetDate)
+                    put("offset_message_id", offsetMessage)
+                    put("offset_forum_topic_id", offsetTopic)
+                    put("offset_message_thread_id", offsetTopic)
+                    put("limit", 100)
+                })
+                val topics = page["topics"] as? JsonArray ?: return out
+                if (topics.isEmpty()) return out
+                for (t in topics) {
+                    val info = t.jsonObject.obj("info") ?: continue
+                    val id = info.long("forum_topic_id") ?: info.long("message_thread_id") ?: continue
+                    info.str("name")?.takeIf { it.isNotEmpty() }?.let { out[id] = it }
+                }
+                offsetDate = page.long("next_offset_date") ?: 0L
+                offsetMessage = page.long("next_offset_message_id") ?: 0L
+                offsetTopic = page.long("next_offset_forum_topic_id") ?: page.long("next_offset_message_thread_id") ?: 0L
+                if (offsetDate == 0L && offsetMessage == 0L && offsetTopic == 0L) return out
+            }
+            out
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: TdError) {
+            emptyMap()
+        }
+    }
+
     private fun readingRate() = (pref(READING_RATE_PREF)?.toIntOrNull() ?: DEFAULT_READING_RATE).coerceIn(1, 1200)
 
     /** Makes [chatId] known to this session; a new session knows no chats yet. */

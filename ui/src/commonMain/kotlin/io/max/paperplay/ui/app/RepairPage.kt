@@ -213,6 +213,10 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
                 " (${r.repeats} of the posts are repeats of a file, kept for the Duplicates page)",
         )
         backend.account.lastReadNotes.takeIf { it.isNotEmpty() }?.let { log("Your account: $it") }
+        // Posts the bots never read have topics the library never got the name of; Telegram's own topic list supplies them.
+        val topics = backend.account.topicNames(main)
+        topics.forEach { (id, name) -> services.library.saveTopic(main, id, name) }
+        if (topics.isNotEmpty()) log("Your account named ${topics.size} topics of the main chat")
         // Your account saw every post, so songs it did not see are gone from Telegram; dropping them lets another post of the same file take over.
         when (val gone = backend.chatIndex.pruneGoneFromMainChat()) {
             -2 -> log("Songs whose post is gone were not removed: your account saw far fewer posts than the library holds")
