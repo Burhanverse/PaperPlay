@@ -237,7 +237,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
         }
         if (ticked.isNotEmpty() && !active && main != null) androidx.compose.material3.ExtendedFloatingActionButton(
             onClick = { confirm = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = bottomPadding + 16.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = minOf(bottomPadding, 84.dp) + 16.dp),
             icon = { io.max.paperplay.ui.components.AppIcon(Icons.Rounded.Delete, null) },
             text = { Text("Delete ${ticked.size}") },
         )
