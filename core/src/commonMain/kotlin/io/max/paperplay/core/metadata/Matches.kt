@@ -93,6 +93,23 @@ fun pickExternal(results: List<ExternalMatch>, title: String, artist: String, du
     return null
 }
 
+/**
+ * For a song with no artist: the closest result when its title is the same up to a small typo and its length is within 8 seconds.
+ * Looser than [pickExternal], so it is only used when nothing else matched and the song has nothing to lose.
+ */
+fun pickRelaxed(results: List<ExternalMatch>, title: String, durationSec: Int): ExternalMatch? {
+    if (durationSec <= 0) return null
+    val want = comparableText(searchTitle(cleanTitle(title, "Unknown artist")))
+    if (want.length < 4) return null
+    return results.filter { kotlin.math.abs(it.lengthSec - durationSec) <= 8 && it.artist.isNotBlank() }
+        .minByOrNull { r ->
+            val got = comparableText(searchTitle(r.title))
+            val d = slips(want, got, 2)
+            (if (d > 1) 100 else d * 10) + kotlin.math.abs(r.lengthSec - durationSec)
+        }
+        ?.takeIf { r -> slips(want, comparableText(searchTitle(r.title)), 1) <= 1 }
+}
+
 /** First match safe to apply without asking: score >= 90 and length within 5s. */
 fun pickMatch(matches: List<MbMatch>, durationSec: Int): MbMatch? {
     if (durationSec <= 0) return null

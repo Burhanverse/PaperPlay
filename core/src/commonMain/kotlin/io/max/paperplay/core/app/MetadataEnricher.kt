@@ -76,6 +76,7 @@ class MetadataEnricher(
     private val itunesGate = Gate(itunesIntervalMs)
     private val deezerGate = Gate(deezerIntervalMs)
     private val audioDbGate = Gate(audioDbIntervalMs)
+    private val lrclibGate = Gate(300L)
 
     /** Spaces calls to one service so its rate limit is kept however many workers ask. */
     private inner class Gate(private val interval: Long) {
@@ -264,13 +265,32 @@ class MetadataEnricher(
             itunesHit = r.getOrNull()
             itunesFailed = r.isFailure
         }
-        val primary = dzHit ?: adbHit ?: itunesHit
+        // LRCLIB (a lyrics library) knows many songs the others do not, such as film songs, with artist, album and length.
+        var lrclibHit: ExternalMatch? = null
+        var relaxedHit: ExternalMatch? = null
+        var lrclibList: List<ExternalMatch> = emptyList()
+        if (match == null && dzHit == null && adbHit == null && itunesHit == null) {
+            val lr = probe(15_000) { lrclib(searchTitle(cleanTitle(title, artist)), artist) }
+            lrclibList = lr.getOrNull().orEmpty()
+            lrclibHit = pickExternal(lrclibList, title, artist, dur)
+            // A song with no artist has nothing to lose: take the closest title within 8 seconds of its length.
+            if (lrclibHit == null && (artist.isBlank() || artist == "Unknown artist")) {
+                relaxedHit = io.max.paperplay.core.metadata.pickRelaxed(dzList.map { it.match } + lrclibList, title, dur)
+            }
+        }
+        if (match == null) io.max.paperplay.player.PlayLog.log(
+            "lookup",
+            "\"$title\" by \"$artist\" ${dur}s: MusicBrainz ${mbR.describe { it.size }}, Deezer ${dzR.describe { it.size }}, AudioDB ${adbR.describe { it.size }}" +
+                (if (itunesFailed) ", iTunes failed" else "") + ", LRCLIB ${lrclibList.size}" +
+                " -> " + (dzHit ?: adbHit ?: itunesHit ?: lrclibHit ?: relaxedHit)?.let { "${it.source}: ${it.artist} - ${it.title} (${it.lengthSec}s)" }.orEmpty().ifEmpty { "no match" },
+        )
+        val primary = dzHit ?: adbHit ?: itunesHit ?: lrclibHit ?: relaxedHit
         if (match == null && primary == null) {
             if (mbR.exceptionOrNull() is ServiceBusy) throw ServiceBusy()
             if (mbR.isFailure && dzR.isFailure && itunesFailed) throw (mbR.exceptionOrNull() ?: IllegalStateException("offline"))
         }
         // Gaps in the winner are filled from the other safe hits.
-        val extras = listOfNotNull(dzHit, adbHit, itunesHit)
+        val extras = listOfNotNull(dzHit, adbHit, itunesHit, lrclibHit, relaxedHit)
         var genre = extras.firstNotNullOfOrNull { it.genre }
         var year = match?.year ?: extras.firstNotNullOfOrNull { it.year }
         val coverUrl = extras.firstNotNullOfOrNull { it.coverUrl }
@@ -466,6 +486,25 @@ class MetadataEnricher(
         val root = parse(res) ?: return null to null
         val genre = objects(root["genres"] as? JsonObject, "data").firstOrNull()?.let { (it["name"] as? JsonPrimitive)?.content }
         return genre to io.max.paperplay.core.metadata.yearOf((root["release_date"] as? JsonPrimitive)?.content)
+    }
+
+    private fun <T> Result<T>.describe(size: (T) -> Int): String = fold({ "${size(it)} results" }, { "failed" })
+
+    /** LRCLIB search by title (and artist when known): artist, album and length of each result. No cover. */
+    private suspend fun lrclib(title: String, artist: String): List<ExternalMatch> {
+        if (title.isBlank()) return emptyList()
+        lrclibGate.pass()
+        val known = artist.isNotBlank() && artist != "Unknown artist"
+        val res = get(httpsUrl("lrclib.net", "/api/search", mapOf("track_name" to title, "artist_name" to if (known) firstArtist(artist) else null)))
+        if (res.status != 200) return emptyList()
+        val arr = runCatching { json.parseToJsonElement(res.text) as? kotlinx.serialization.json.JsonArray }.getOrNull() ?: return emptyList()
+        fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        return arr.filterIsInstance<JsonObject>().take(10).map { o ->
+            ExternalMatch(
+                source = "LRCLIB", title = o.s("trackName") ?: "", artist = o.s("artistName") ?: "", album = o.s("albumName") ?: "",
+                lengthSec = ((o["duration"] as? JsonPrimitive)?.content?.toDoubleOrNull() ?: 0.0).toInt(),
+            )
+        }.filter { it.title.isNotBlank() }
     }
 
     /** TheAudioDB track lookup (free public key); needs a known artist. */
