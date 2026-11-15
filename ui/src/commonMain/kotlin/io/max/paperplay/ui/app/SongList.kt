@@ -304,7 +304,7 @@ fun SongList(
                     if (i < shown.size) { val song = shown[i]; item(key = song.id) { songRow(song, i) } }
                 }
             } else {
-                itemsIndexed(shown, key = { _, s -> s.id }) { i, song -> songRow(song, i) }
+                itemsIndexed(shown, key = { _, s -> s.copyKey ?: s.id }) { i, song -> songRow(song, i) }
             }
             // While searching, the ghosts that match are gathered after the songs (their place in the order means nothing for a result list).
             val tail = if (query.isBlank()) ghosts else ghosts.filter { it.title.contains(query.trim(), ignoreCase = true) || it.artist.contains(query.trim(), ignoreCase = true) }

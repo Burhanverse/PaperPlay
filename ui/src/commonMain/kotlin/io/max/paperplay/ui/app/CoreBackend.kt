@@ -136,7 +136,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             }
             byGroupKey = groupsByKey
             LibraryUi(
-                songs = Load.Ready(songs.map(Song::toUi)),
+                songs = Load.Ready(songs.map(Song::toUi) + repeatPosts(byId)),
                 albums = songs.filter { it.album.isNotBlank() }.groupBy { it.album }.entries.sortedBy { it.key.lowercase() }.flatMap { (name, list) ->
                     io.max.paperplay.core.library.splitAlbum(list) { it.artist }.map { (owner, part) ->
                         GroupUi(if (owner == null) name else "$name | $owner", name, albumSubtitle(part), covers(part), owner)
@@ -1104,6 +1104,12 @@ private fun albumSubtitle(list: List<Song>): String {
 }
 
 private val LOSSLESS = setOf("flac", "alac", "wav", "aiff", "aif", "ape", "wv")
+
+/** Every other post of a file the library lists once, as its own row, so the Songs list shows each post of the chat. */
+private fun CoreBackend.repeatPosts(byId: Map<String, Song>): List<SongUi> =
+    services.library.repo.db.filingQueries.allPostCopies().executeAsList().mapNotNull { c ->
+        byId[c.unique_id]?.toUi()?.copy(copyKey = "${c.chat_id}:${c.message_id}", addedAt = c.date)
+    }
 
 internal fun Song.toUi(): SongUi {
     val ext = (codec ?: file_name.substringAfterLast('.', "")).lowercase().trim()
