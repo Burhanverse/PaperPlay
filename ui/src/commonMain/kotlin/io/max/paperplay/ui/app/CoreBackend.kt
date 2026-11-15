@@ -996,8 +996,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         scope.launch { services.logOutBot(); hasCredentials.value = false }
     }
 
-    fun logOutAccount() {
-        scope.launch { services.logOutAccount() }
+    /** Logs the account out and tells [done] how it went, so a logout is never silent. */
+    fun logOutAccount(done: (String) -> Unit = {}) {
+        scope.launch {
+            if (!account.loggedIn.value) { done("Your account was not logged in"); return@launch }
+            val failed = runCatching { services.logOutAccount() }.exceptionOrNull()
+            val out = failed == null && kotlinx.coroutines.withTimeoutOrNull(5_000) { account.loggedIn.first { !it } } != null
+            done(if (out) "Logged out of your account" else "Could not log out: ${failed?.message ?: "the account still shows as logged in"}")
+        }
     }
 
     fun logOutAll() {

@@ -536,8 +536,8 @@ class Scanner(
     private var autoCeiling = 0L
     private var autoOk = 0
 
-    /** Ids asked for in one request while reading: the owner's choice, 10 to 100 (what Telegram answers in one call). */
-    private fun batchSize(): Int = (repo.pref("reading_batch")?.toIntOrNull() ?: WALK_BATCH).coerceIn(10, WALK_BATCH)
+    /** Ids asked for in one request while reading: the owner's choice, 10 to [MAX_BATCH]; 100 is the size Telegram is known to answer. */
+    private fun batchSize(): Int = (repo.pref("reading_batch")?.toIntOrNull() ?: WALK_BATCH).coerceIn(10, MAX_BATCH)
 
     private fun autoOn() = repo.pref("reading_auto") == "true"
 
@@ -585,5 +585,6 @@ class Scanner(
 
     companion object {
         const val WALK_BATCH = 100
+        const val MAX_BATCH = 200
     }
 }

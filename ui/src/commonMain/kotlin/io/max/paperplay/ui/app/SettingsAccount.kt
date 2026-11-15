@@ -44,6 +44,7 @@ internal fun AccountPage(backend: CoreBackend, onOpenIndex: (() -> Unit)?, onLog
         onPhone = { account.phone(it) }, onCode = { account.code(it) }, onPassword = { account.password(it) },
         onRestore = { runCatching { backend.services.indexCloud.restore() }.getOrDefault(false) },
         indexedChats = indexed.size, onOpenIndex = onOpenIndex,
+        extra = { RateSlider("accountCopy", backend, remember { androidx.compose.runtime.mutableStateOf<String?>(null) }) },
     )
 }
 
@@ -59,6 +60,7 @@ internal fun AccountContent(
     onRestore: suspend () -> Boolean,
     indexedChats: Int = 0,
     onOpenIndex: (() -> Unit)? = null,
+    extra: @Composable () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var input by remember(step) { mutableStateOf("") }
@@ -122,6 +124,7 @@ internal fun AccountContent(
                     "Your account is only used to read chats the bot is not in and to copy songs into your main chat.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                extra()
                 OutlinedButton(onLogOut) { Text("Log out") }
             }
             is LoginStep.Failed -> {

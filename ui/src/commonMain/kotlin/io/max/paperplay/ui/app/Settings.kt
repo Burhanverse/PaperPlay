@@ -297,14 +297,12 @@ internal fun SettingsPage(
             }
         }
         "telegram" -> {
-            RateSlider("reading", backend, notice)
-            RateSlider("accountCopy", backend, notice)
             NavRow("Channels and chats", "Added channels, the main chat, and your own chats and channels", Icons.Rounded.Forum) { stack.add("channels") }
             NavRow("Bots", "Main bot credentials and extra bots for uploading", Icons.Rounded.SmartToy) { stack.add("bots") }
             val accountStep by backend.account.step.collectAsState()
             NavRow(
                 "Your account (optional)",
-                if (accountStep == io.max.paperplay.core.account.LoginStep.Ready) "Logged in. Your chats can be read and copied from" else "Log in as yourself to read and copy from your chats",
+                if (accountStep == io.max.paperplay.core.account.LoginStep.Ready) "Logged in. Your chats can be read and copied from" else "Logged out. Log in as yourself to read and copy from your chats",
                 Icons.Rounded.Person,
             ) { stack.add("account") }
             NavRow("Activity log", "Reads, downloads, uploads, rate limits and problems. Search, copy and save", Icons.Rounded.MonitorHeart) { stack.add("log") }
@@ -454,13 +452,15 @@ internal fun SettingsPage(
         else -> if (id.startsWith("index:")) ChatSongsPage(backend, id.removePrefix("index:").toLongOrNull() ?: 0L, stack) else NotBuilt(subTitles[id] ?: id)
     }
     notice.value?.let { Text(it, Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    val listToast = LocalListActions.current
+    val tell = { m: String -> listToast?.notice(m) ?: run { notice.value = m } }
     when (confirm) {
         "savebackup" -> BackupPasswordDialog({ pw ->
             backend.services.scope.launch { notice.value = backend.saveBackup(pw, "paperplay-backup-${io.max.paperplay.core.app.dayOf(io.max.paperplay.ui.nowMoment().epochMs)}.zip") }
         }) { confirm = null }
         "restore" -> ConfirmDialog("Restore a backup?", "This replaces your library, playlists and favorites with the backup.", "Restore", onRestore) { confirm = null }
         "clearcache" -> ConfirmDialog("Clear the cache?", "Streamed songs stored on this device are deleted. Stop playback first. They download again when played.", "Clear", { backend.clearCache { notice.value = it } }) { confirm = null }
-        "accountout" -> ConfirmDialog("Log out of your account?", "Your index stays on this device. Chats and channels need a new login. The bot is not affected.", "Log out", backend::logOutAccount) { confirm = null }
+        "accountout" -> ConfirmDialog("Log out of your account?", "Your index stays on this device. Chats and channels need a new login. The bot is not affected.", "Log out", { backend.logOutAccount(tell) }) { confirm = null }
         "clearlearned" -> ConfirmDialog("Clear what mixes have learned?", "Forgets play and skip counts and your \"doesn't fit this mix\" choices. Songs and playlists stay.", "Clear", backend::clearLearned) { confirm = null }
         "logout" -> ConfirmDialog("Log out?", "Your account is logged out (if there is one) and the main bot's API id, hash and token are forgotten, so the setup screen shows again. Songs, playlists, settings and extra bots stay.", "Log out", backend::logOutAll) { confirm = null }
         "logoutbot" -> ConfirmDialog("Log out the bot?", "The main bot's API id, hash and token are forgotten and the setup screen shows again. Your account, songs, playlists, settings and extra bots stay.", "Log out", backend::logOutBot) { confirm = null }
@@ -491,9 +491,9 @@ internal fun RateSlider(key: String, backend: CoreBackend, notice: androidx.comp
     SliderRow("${w.label}: $v a minute", v.toFloat(), 1f..top.toFloat(), { v = it.toInt() }, hint = "Requests to Telegram a minute. Slower avoids its rate limit, which pauses the work for a while; faster finishes sooner.",
         onDone = { backend.setPref(w.key, "$v") })
     if (key == "reading") {
-        var n by remember { mutableStateOf(backend.pref("reading_batch")?.toIntOrNull()?.coerceIn(10, 100) ?: 100) }
-        SliderRow("Messages per request: $n", n.toFloat(), 10f..100f, { n = it.toInt() },
-            hint = "How many messages each request asks Telegram about. 100 is the most it answers at once; a lower number makes smaller requests.",
+        var n by remember { mutableStateOf(backend.pref("reading_batch")?.toIntOrNull()?.coerceIn(10, 200) ?: 100) }
+        SliderRow("Messages per request: $n", n.toFloat(), 10f..200f, { n = it.toInt() },
+            hint = "How many messages each request asks Telegram about. 100 is what Telegram is known to answer; above that it may refuse, and the Activity log then shows the error.",
             onDone = { backend.setPref("reading_batch", "$n") })
     }
 }
