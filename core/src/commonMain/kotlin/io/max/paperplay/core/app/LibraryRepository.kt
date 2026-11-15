@@ -66,7 +66,26 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun invalidateSoon() { soft.trySend(Unit) }
 
     private fun <T> watch(query: () -> T): Flow<T> =
-        changes.map { query() }.distinctUntilChanged().flowOn(Dispatchers.IO)
+        changes.map { stableRead(query) }.distinctUntilChanged().flowOn(Dispatchers.IO)
+
+    /**
+     * A long list is read through several cursor windows; a delete between two of them shifts the rows and Android's cursor then
+     * fails with a null (it crashed the app while duplicates were being deleted). One transaction keeps the rows still while
+     * they are read, and a read that still fails is tried again.
+     */
+    private fun <T> stableRead(read: () -> T): T {
+        var failure: RuntimeException? = null
+        repeat(3) {
+            try {
+                return repo.db.transactionWithResult { read() }
+            } catch (e: NullPointerException) {
+                failure = e
+            } catch (e: IllegalStateException) {
+                failure = e
+            }
+        }
+        throw failure!!
+    }
 
     private fun <T> write(soft: Boolean = false, notify: Boolean = true, block: () -> T): T =
         block().also { if (notify) { if (soft) invalidateSoon() else invalidate() } }

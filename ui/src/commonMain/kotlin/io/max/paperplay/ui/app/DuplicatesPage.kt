@@ -235,9 +235,11 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                 }
             }
         }
+        // Just above the bars; bottomPadding grows by the mini player's height while one shows and carries 40 dp of spare room.
+        val buttonBottom by androidx.compose.animation.core.animateDpAsState((bottomPadding - 40.dp).coerceAtLeast(0.dp) + 16.dp, label = "deleteButton")
         if (ticked.isNotEmpty() && !active && main != null) androidx.compose.material3.ExtendedFloatingActionButton(
             onClick = { confirm = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = minOf(bottomPadding, 84.dp) + 16.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = buttonBottom),
             icon = { io.max.paperplay.ui.components.AppIcon(Icons.Rounded.Delete, null) },
             text = { Text("Delete ${ticked.size}") },
         )
