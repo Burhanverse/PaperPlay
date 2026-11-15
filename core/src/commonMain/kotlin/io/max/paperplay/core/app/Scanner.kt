@@ -355,6 +355,7 @@ class Scanner(
         val gen = stopGen
         // Only a scan the owner starts (a full read) uses the chosen size; the automatic reads at start and for new posts always ask for 100.
         val batch = if (full) batchSize() else WALK_BATCH
+        automaticRead = !full
         val initialFloor = effectiveMinPause()
         if (pause < initialFloor) pause = initialFloor
         var chatTitle = chat.title
@@ -539,10 +540,16 @@ class Scanner(
 
     /** Requests a minute for reading, or null for the built-in default: the chosen speed, or the self-adjusting one when that is on. */
     private fun readingRpm(): Long? {
-        if (!autoOn()) return repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L)
-        if (autoRpm == 0L) autoRpm = (repo.pref("reading_auto_rpm") ?: repo.pref("rate_reading"))?.toLongOrNull()?.coerceIn(10L, 1200L) ?: 30L
-        return autoRpm
+        val chosen = if (!autoOn()) repo.pref("rate_reading")?.toLongOrNull()?.coerceIn(1L, 1200L)
+        else {
+            if (autoRpm == 0L) autoRpm = (repo.pref("reading_auto_rpm") ?: repo.pref("rate_reading"))?.toLongOrNull()?.coerceIn(10L, 1200L) ?: 30L
+            autoRpm
+        }
+        // The automatic reads stay at or under AUTO_RPM whatever the slider says; only a scan the owner starts goes as fast as chosen.
+        return if (automaticRead) minOf(chosen ?: AUTO_RPM, AUTO_RPM) else chosen
     }
+
+    @kotlin.concurrent.Volatile private var automaticRead = false
 
     private fun speedUp() {
         if (!autoOn() || calm || autoRpm == 0L) return
@@ -604,5 +611,6 @@ class Scanner(
     companion object {
         const val WALK_BATCH = 100
         const val MAX_BATCH = 500
+        const val AUTO_RPM = 50L
     }
 }
