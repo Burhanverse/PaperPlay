@@ -104,14 +104,13 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun chats(): Flow<List<LibraryChat>> = watch { misc.chats().executeAsList() }
 
     /**
-     * Songs where every word of [query] starts a word of the title, artist, album (the film, for film songs), genre or year,
-     * best first: a title hit beats an artist hit beats an album hit, and a title equal to the whole query comes first.
-     * Words are matched from their start ("udi" finds "Udi Udi" but not "Studio"); letters and combining marks of any script count.
+     * Songs where every word of [query] matches the title, artist, album (the film, for film songs), genre or year, best first
+     * (see [io.max.paperplay.core.metadata.songSearchScore]): exact words, word starts, parts of words and small typos count,
+     * accents are ignored, and a title equal to the whole query comes first. Letters and combining marks of any script count.
      */
     fun search(query: String): Flow<List<Song>> {
-        val words = searchTokens(query)
-        if (words.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyList())
-        val whole = words.joinToString(" ")
+        val q = io.max.paperplay.core.metadata.SearchQuery(query)
+        if (q.isEmpty) return kotlinx.coroutines.flow.flowOf(emptyList())
         return allShared.map { l ->
             // A song's language: from the writing of its title, artist and album, else from the language the topic it is filed in is named for.
             val topicLanguages = misc.topics().executeAsList().mapNotNull { t ->
@@ -120,7 +119,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
             l.mapNotNull { s ->
                 val languages = io.max.paperplay.core.metadata.languagesOfText(s.title, s.artist, s.album) +
                     listOfNotNull(s.topic_id?.let { topicLanguages[s.chat_id to it] })
-                s.searchScore(words, whole, languages).takeIf { it > 0 }?.let { s to it }
+                s.searchScore(q, languages).takeIf { it > 0 }?.let { s to it }
             }.sortedByDescending { it.second }.map { it.first }
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
     }
@@ -259,31 +258,9 @@ data class PlaylistSummary(val id: Long, val uuid: String, val name: String, val
 
 private const val SOFT_GAP_MS = 2_000L
 
-private val NON_WORD = Regex("[^\\p{L}\\p{N}\\p{M}]+")
-
-/** Lowercase words of [text]; punctuation separates them, combining marks (Malayalam, Hindi, Tamil vowel signs) stay inside. */
-internal fun searchTokens(text: String): List<String> = text.lowercase().split(NON_WORD).filter { it.isNotEmpty() }
-
-/** 0 when some word of the query starts no word of the song; otherwise higher is a better match. */
-internal fun Song.searchScore(words: List<String>, whole: String, languages: List<String> = emptyList()): Int {
-    val t = searchTokens(title); val a = searchTokens(artist); val al = searchTokens(album)
-    val g = searchTokens(genre.orEmpty()); val y = year?.toString()
-    // "japanese songs" or "lang:hindi": the filler words are dropped as long as another word is left to search for.
-    val core = words.filter { it !in io.max.paperplay.core.metadata.languageFiller }.ifEmpty { words }
-    var total = 0
-    for (w in core) {
-        total += when {
-            t.any { it.startsWith(w) } -> 40
-            a.any { it.startsWith(w) } -> 30
-            al.any { it.startsWith(w) } -> 20
-            g.any { it.startsWith(w) } || y == w -> 10
-            io.max.paperplay.core.metadata.languageMatches(w, languages) -> 15
-            else -> return 0
-        }
-    }
-    if (t.joinToString(" ") == whole) total += 100
-    return total
-}
+/** 0 when some word of the query matches nothing in the song; otherwise higher is a better match. */
+internal fun Song.searchScore(q: io.max.paperplay.core.metadata.SearchQuery, languages: List<String> = emptyList()): Int =
+    io.max.paperplay.core.metadata.songSearchScore(q, title, artist, album, genre, year?.toInt(), languages, plays.toInt(), favorite)
 
 /** UTC calendar day of [millis] as yyyy-MM-dd. */
 fun dayOf(millis: Long): String {
