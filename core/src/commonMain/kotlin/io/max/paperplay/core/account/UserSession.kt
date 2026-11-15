@@ -552,6 +552,8 @@ class UserAccountDeleter(private val session: UserSession) : io.max.paperplay.co
 
     override val lastError: String? get() = session.lastDeleteError
 
+    override suspend fun existing(chatId: Long, ids: List<Long>): Set<Long>? = if (isLoggedIn) session.existing(chatId, ids) else null
+
     override suspend fun deleteBatch(chatId: Long, ids: List<Long>): List<Long> {
         if (!isLoggedIn) return ids
         val left = ArrayList<Long>()

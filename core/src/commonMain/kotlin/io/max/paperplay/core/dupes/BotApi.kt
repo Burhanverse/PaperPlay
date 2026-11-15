@@ -16,6 +16,9 @@ fun interface HttpPoster {
     suspend fun post(url: String, form: Map<String, String>): String?
 }
 
+/** What [BotDeleter.deleteOne] answers when Telegram says the post is not found. */
+const val NOT_FOUND = "message to delete not found"
+
 /** The Bot API step of a delete: removes what TDLib's stale rights refused. */
 fun interface BotDeleter {
     /** Deletes up to 100 posts in one call. Telegram skips the ones it can't delete and still answers ok. */
@@ -24,7 +27,7 @@ fun interface BotDeleter {
     /** True when [deleteOne] asks Telegram's server about one post, so its answer can be trusted over TDLib's. */
     val perPost: Boolean get() = false
 
-    /** Deletes one post and returns null when it is gone (deleted now, or already gone); otherwise Telegram's reason it is refused. */
+    /** Deletes one post and returns null when it was deleted now, [NOT_FOUND] when Telegram says it has no such post, else Telegram's reason it is refused. */
     suspend fun deleteOne(chatId: Long, tdlibMessageId: Long): String? = null
 }
 
@@ -40,8 +43,8 @@ class BotApi(private val token: suspend () -> String?, private val http: HttpPos
 
     override suspend fun deleteOne(chatId: Long, tdlibMessageId: Long): String? {
         val reason = deleteMessage(chatId, tdlibMessageId) ?: return null
-        // "message to delete not found" means it is already gone, which is what was wanted.
-        return if (reason.contains("not found", ignoreCase = true)) null else reason
+        // "message to delete not found" can mean already gone, but also a post this bot may not touch; the caller checks.
+        return if (reason.contains("not found", ignoreCase = true)) NOT_FOUND else reason
     }
 
     private suspend fun call(method: String, params: Map<String, String>): JsonObject? {

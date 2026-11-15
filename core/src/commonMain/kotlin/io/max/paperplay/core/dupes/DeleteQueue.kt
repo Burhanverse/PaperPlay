@@ -41,6 +41,9 @@ interface AccountDeleter {
 
     /** Telegram's reason for the last refusal, for the log. */
     val lastError: String? get() = null
+
+    /** Which of [ids] the account still sees in [chatId]; null when it cannot be asked (not logged in, or Telegram did not answer). */
+    suspend fun existing(chatId: Long, ids: List<Long>): Set<Long>? = null
 }
 
 /** The library database and deletion record a delete touches. The owner wires it to LibraryRepo and sync. */
@@ -363,9 +366,23 @@ class DeleteQueue(
             // TDLib says ok for posts this bot never saw (another bot's posts) without deleting them, so its answer proves nothing.
             // Telegram's own answer for each post does: deleted now, already gone, or refused with a reason.
             val refused = LinkedHashMap<Long, String>()
+            val notFound = ArrayList<Long>()
             for (id in ids) {
                 val why = bot.deleteOne(chat, id)
-                if (why == null) onGone(id) else refused[id] = why
+                when (why) {
+                    null -> onGone(id)
+                    NOT_FOUND -> notFound += id
+                    else -> refused[id] = why
+                }
+            }
+            if (notFound.isNotEmpty()) {
+                // "Not found" is believed only when your account, which sees every post, no longer finds it either. Believing it blindly
+                // removed songs from the library whose posts were still in Telegram.
+                val alive = account.existing(chat, notFound)
+                for (id in notFound) {
+                    if (alive != null && id !in alive) onGone(id)
+                    else refused[id] = if (alive == null) "Telegram says the post is not found and it could not be checked" else "Telegram says the post is not found, but your account still sees it"
+                }
             }
             if (refused.isNotEmpty()) log("Telegram refused ${refused.size} of ${ids.size}: ${refused.values.first()}")
             if (refused.isEmpty()) return emptyList()
