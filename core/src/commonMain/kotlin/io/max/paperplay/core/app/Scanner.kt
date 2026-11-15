@@ -566,14 +566,23 @@ class Scanner(
     private suspend fun getMessagesChecked(client: TdClient, chatId: Long, ids: List<Long>, batch: Int): JsonObject = retrying {
         try {
             client.call(request("getMessages") { put("chat_id", chatId); put("message_ids", JsonArray(ids.map(::JsonPrimitive))) })
+                .also { bigBatchWaits = 0 }
         } catch (e: TdError) {
             if (batch > WALK_BATCH && e.retryAfter == null) {
                 repo.setPref("reading_batch", "$WALK_BATCH")
                 throw TdError(e.code, "Telegram refused $batch messages in one request, so the setting is back to $WALK_BATCH. (${e.message})")
             }
+            // Asked to wait again and again with a big request: waiting does not help, so the size goes back and the read stops.
+            if (batch > WALK_BATCH && e.retryAfter != null && ++bigBatchWaits >= 2) {
+                bigBatchWaits = 0
+                repo.setPref("reading_batch", "$WALK_BATCH")
+                throw TdError(400, "Telegram kept making the scan wait with $batch messages per request, so the setting is back to $WALK_BATCH. Run the scan again.")
+            }
             throw e
         }
     }
+
+    private var bigBatchWaits = 0
 
     /** Waits out Telegram rate limits and tries again. */
     private suspend fun retrying(call: suspend () -> JsonObject): JsonObject {
