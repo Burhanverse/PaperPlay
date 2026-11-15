@@ -74,7 +74,6 @@ fun SongRow(
     val coverKey = song.album.ifBlank { song.title.ifBlank { song.id } }
 
     BoxWithConstraints(modifier.fillMaxWidth()) {
-    val wide = maxWidth >= 420.dp
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = io.max.paperplay.ui.app.appShape(16.dp),
@@ -115,11 +114,11 @@ fun SongRow(
                     style = MaterialTheme.typography.titleMedium,
                     color = if (current) scheme.primary else scheme.onSurface,
                 )
-                val detail = remember(song.sizeBytes, song.durationSec, wide) {
+                val detail = remember(song.sizeBytes, song.durationSec) {
                     val kbps = if (song.durationSec > 0) song.sizeBytes * 8 / song.durationSec / 1000 else 0L
                     listOfNotNull(
-                        if (wide && kbps > 0) "$kbps kbps" else null,
-                        if (wide && song.sizeBytes > 0) "${song.sizeBytes / 1_000_000} MB" else null,
+                        if (kbps > 0) "$kbps kbps" else null,
+                        if (song.sizeBytes > 0) "${song.sizeBytes / 1_000_000} MB" else null,
                     ).joinToString(" · ")
                 }
                 val format = if (isHiRes(song)) "Hi-Res" else song.qualityLabel?.substringBefore(' ')?.takeIf { it.isNotBlank() }
@@ -127,15 +126,15 @@ fun SongRow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    if (format != null) FormatChip(format)
                     Text(
                         text = song.artist,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyMedium,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                     )
-                    if (format != null) FormatChip(format)
                     if (song.pinned || song.offline) {
                         AppIcon(
                             imageVector = if (song.pinned) Icons.Rounded.PushPin else Icons.Rounded.DownloadDone,
