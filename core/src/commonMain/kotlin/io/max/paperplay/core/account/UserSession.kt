@@ -274,6 +274,8 @@ class UserSession(
         val skipped = HashMap<String, Int>()
         var small = 0
         val c = ready()
+        // A session that has not seen the chat yet answers "Chat not found" to every read of it.
+        knowChat(c, chatId, loadList = true)
         val seen = HashSet<Long>()
         for (filter in listOf("searchMessagesFilterAudio", "searchMessagesFilterDocument")) {
             var from = 0L
