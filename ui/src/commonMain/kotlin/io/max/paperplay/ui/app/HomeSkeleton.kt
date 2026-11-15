@@ -21,21 +21,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.theme.LocalReduceMotion
 
-/** A grey placeholder shape that pulses softly (still when the system asks for reduced motion). */
+/** A grey placeholder shape with a soft light sweeping across it (still when the system asks for reduced motion). */
 @Composable
 fun Modifier.skeleton(shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(10.dp)): Modifier {
     val reduce = LocalReduceMotion.current
-    val pulse by rememberInfiniteTransition(label = "skeleton").animateFloat(
-        initialValue = 0.55f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "skeleton alpha",
+    val base = MaterialTheme.colorScheme.surfaceContainerHigh
+    val light = androidx.compose.ui.graphics.lerp(base, MaterialTheme.colorScheme.onSurface, 0.10f)
+    val sweep by rememberInfiniteTransition(label = "skeleton").animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1300, easing = androidx.compose.animation.core.LinearEasing), RepeatMode.Restart), label = "skeleton sweep",
     )
-    return this.graphicsLayer { alpha = if (reduce) 0.8f else pulse }
-        .clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHigh)
+    return this.clip(shape).background(base).drawWithCache {
+        val w = size.width.coerceAtLeast(1f)
+        val brush = androidx.compose.ui.graphics.Brush.linearGradient(
+            listOf(androidx.compose.ui.graphics.Color.Transparent, light, androidx.compose.ui.graphics.Color.Transparent),
+            start = androidx.compose.ui.geometry.Offset(-w + sweep * 2f * w, 0f),
+            end = androidx.compose.ui.geometry.Offset(sweep * 2f * w, size.height * 0.4f),
+        )
+        onDrawWithContent { drawContent(); if (!reduce) drawRect(brush) }
+    }
 }
 
 /** [skeleton] as a ready-made modifier for a cover-sized shape (the clip comes from the caller's box). */

@@ -93,12 +93,22 @@ fun HomeScreen(
     }
     // Until the library and the plan are ready the page shows the shape of what is coming, so it looks loaded at once.
     val planning = songs.isNotEmpty() && home.tiles.isEmpty() && home.shelves.isEmpty()
-    val skeleton = lib.songs is Load.Loading || planning
-    LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding)) {
+    // A plan that never comes (nothing to plan) must not keep the placeholders for good.
+    var waited by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(4_000); waited = true }
+    val skeleton = (lib.songs is Load.Loading || planning) && !waited
+    val ready = !skeleton
+    // All the placeholders show first and the whole page fades in once everything is ready, so nothing pops in piece by piece.
+    val reveal by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, androidx.compose.animation.core.tween(450), label = "home reveal")
+    LazyColumn(modifier.graphicsLayer { alpha = if (ready) reveal else 1f }, contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name) }
-        if (skeleton && tileRows.isEmpty()) item { SkeletonTiles() }
-        if (skeleton) item { SkeletonShelf() }
-        if (tileRows.isNotEmpty()) item {
+        if (!ready) {
+            item { SkeletonTiles() }
+            item { SkeletonShelf() }
+            item { SkeletonShelf() }
+            item { SkeletonShelf() }
+        }
+        if (ready && tileRows.isNotEmpty()) item {
             // Each column holds three tiles; two columns fill the screen and the rest wait a swipe away.
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(tileRows) { column ->
@@ -117,19 +127,17 @@ fun HomeScreen(
                 }
             }
         }
-        if (home.mixes.isNotEmpty()) item {
+        if (ready && home.mixes.isNotEmpty()) item {
             Column {
                 Section("Your daily mixes")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
                     items(home.mixes, key = { it.id }) { m -> MixCard(m) { onOpen(Detail.Mix(m.name, m.id, m.songs)) } }
                 }
             }
-        } else if (skeleton) {
-            if (songs.isNotEmpty()) item { SkeletonShelf() }
-        } else if (songs.isNotEmpty()) item {
+        } else if (ready && songs.isNotEmpty()) item {
             Text("Daily mixes appear as Paper Play learns your music.", Modifier.padding(16.dp, 20.dp, 16.dp, 0.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (lib.playlists.isNotEmpty()) item {
+        if (ready && lib.playlists.isNotEmpty()) item {
             Column {
                 Section("Your playlists")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
@@ -142,7 +150,7 @@ fun HomeScreen(
                 }
             }
         }
-        items(home.shelves, key = { it.title }) { shelf ->
+        items(if (ready) home.shelves else emptyList(), key = { it.title }) { shelf ->
             when (shelf.kind) {
                 ShelfKindUi.Songs -> SongShelf(shelf.title, shelf.songs, currentId, actions)
                 else -> Column {
