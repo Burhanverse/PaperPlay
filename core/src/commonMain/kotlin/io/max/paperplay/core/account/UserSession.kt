@@ -277,6 +277,7 @@ class UserSession(
         // A session that has not seen the chat yet answers "Chat not found" to every read of it.
         knowChat(c, chatId, loadList = true)
         val seen = HashSet<Long>()
+        val found = LinkedHashMap<String, Int>()
         for (filter in listOf("searchMessagesFilterAudio", "searchMessagesFilterDocument")) {
             var from = 0L
             while (true) {
@@ -289,6 +290,7 @@ class UserSession(
                     put("filter", buildJsonObject { put("@type", filter) })
                 })
                 val messages = page["messages"] as? JsonArray ?: JsonArray(emptyList())
+                found[filter] = (found[filter] ?: 0) + messages.size
                 val batch = ArrayList<ChatPost>()
                 var reached = false
                 for (m in messages) {
@@ -316,7 +318,7 @@ class UserSession(
                 pause(60_000L / readingRate())
             }
         }
-        lastReadNotes = "Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
+        lastReadNotes = "Posts returned by Telegram: " + found.entries.joinToString(", ") { "${it.value} by " + it.key.removePrefix("searchMessagesFilter").lowercase() } + ". Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
     }
 
     private fun readingRate() = (pref(READING_RATE_PREF)?.toIntOrNull() ?: DEFAULT_READING_RATE).coerceIn(1, 1200)
