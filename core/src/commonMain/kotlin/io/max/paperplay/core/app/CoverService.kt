@@ -245,6 +245,13 @@ class CoverService(
         runCatching { repo.setPref(GIVE_UP_KEY, text) }
     }
 
+    /** Forgets which songs no source had a cover for, so the next [kick] asks for all of them again. */
+    suspend fun forgetGiveUps() {
+        giveUpMutex.withLock { giveUpMap2().clear(); giveUpDirty++ }
+        persistGiveUps()
+        queueMutex.withLock { attempted.clear() }
+    }
+
     /** Refreshes the background queue from [LibraryRepository.songsNeedingCovers]. */
     fun kick(retryTdMissing: Boolean = false) {
         ensureStarted()
@@ -717,7 +724,8 @@ class CoverService(
         const val MAX_THUMB_BYTES = 10 * 1024 * 1024
         const val GIVE_UP_KEY = "covers_nofind"
         const val ACCOUNT_RETRY_KEY = "covers_account_retry"
-        const val GIVE_UP_MS = 7L * 24 * 60 * 60 * 1000
+        /** A song no source had a cover for is left alone for good; a scan started by hand asks again ([forgetGiveUps]). */
+        const val GIVE_UP_MS = 3650L * 24 * 60 * 60 * 1000
     }
 }
 

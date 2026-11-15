@@ -103,7 +103,11 @@ private suspend fun runScan(backend: CoreBackend, off: Set<String>, loggedIn: Bo
         } finally {
             services.scanner.retryEmptyIds = false
         }
-        log("Starting info and cover lookups")
+        // Started by hand, so what no source could find is asked for again.
+        val unmatched = services.library.unmatchedSongs()
+        log("Starting info and cover lookups" + if (unmatched.isEmpty()) "" else ", including ${unmatched.size} songs with no match before")
+        if (unmatched.isNotEmpty()) services.enricher.retrySongs(unmatched)
+        services.covers.forgetGiveUps()
         services.enricher.kick()
         services.covers.kick()
         val songs = services.library.allSongs().first()

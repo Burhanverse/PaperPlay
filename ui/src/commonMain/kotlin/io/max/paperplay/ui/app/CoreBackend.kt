@@ -768,18 +768,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     init {
         scope.launch(Dispatchers.Default) {
             kotlinx.coroutines.withTimeoutOrNull(60_000) { services.ready.first { it } }
-            // Let the catch-up and info scans settle first; then look again every half hour for songs that arrived since.
+            // Once after start, when the catch-up has settled: lyrics for songs that have none yet. Song info and covers are not
+            // asked again here; what could not be found stays as it is until a scan from the Scan library page starts them.
             kotlinx.coroutines.delay(30_000)
-            while (true) {
-                if (lyricsAuto && taste.value.lookups) {
-                    // Song info, covers and genres for songs that still lack them, then lyrics. Each one skips what is already done.
-                    runCatching { services.enricher.kick() }
-                    runCatching { services.covers.kick() }
-                    runCatching { services.moodScanner.start() }
-                    if (!lyricsRunning.value) startLyricsRun()
-                }
-                kotlinx.coroutines.delay(30 * 60_000L)
-            }
+            if (lyricsAuto && taste.value.lookups && !lyricsRunning.value) startLyricsRun()
         }
     }
 
