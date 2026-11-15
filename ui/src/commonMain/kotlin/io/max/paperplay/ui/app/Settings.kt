@@ -491,9 +491,9 @@ internal fun RateSlider(key: String, backend: CoreBackend, notice: androidx.comp
     SliderRow("${w.label}: $v a minute", v.toFloat(), 1f..top.toFloat(), { v = it.toInt() }, hint = "Requests to Telegram a minute. Slower avoids its rate limit, which pauses the work for a while; faster finishes sooner.",
         onDone = { backend.setPref(w.key, "$v") })
     if (key == "reading") {
-        var n by remember { mutableStateOf(backend.pref("reading_batch")?.toIntOrNull()?.coerceIn(10, 200) ?: 100) }
-        SliderRow("Messages per request: $n", n.toFloat(), 10f..200f, { n = it.toInt() },
-            hint = "How many messages each request asks Telegram about. 100 is what Telegram is known to answer; above that it may refuse, and the Activity log then shows the error.",
+        var n by remember { mutableStateOf(backend.pref("reading_batch")?.toIntOrNull()?.coerceIn(10, 500) ?: 100) }
+        SliderRow("Messages per request: $n", n.toFloat(), 10f..500f, { n = it.toInt() },
+            hint = "How many messages each request asks Telegram about. 100 is what Telegram is known to answer; above that it may refuse, and the setting then goes back to 100 by itself.",
             onDone = { backend.setPref("reading_batch", "$n") })
     }
 }

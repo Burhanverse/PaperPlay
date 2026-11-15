@@ -405,12 +405,7 @@ class Scanner(
                         coroutineScope {
                             starts.map { st ->
                                 async {
-                                    retrying {
-                                        client.call(request("getMessages") {
-                                            put("chat_id", chat.id)
-                                            put("message_ids", JsonArray(idsFrom(st, batch).map(::JsonPrimitive)))
-                                        })
-                                    }
+                                    getMessagesChecked(client, chat.id, idsFrom(st, batch), batch)
                                 }
                             }.awaitAll()
                         },
@@ -567,6 +562,19 @@ class Scanner(
         repo.setPref("reading_auto_rpm", "$autoRpm")
     }
 
+    /** One getMessages call. A refusal at a size above the known-safe one puts the setting back, so the next scan works. */
+    private suspend fun getMessagesChecked(client: TdClient, chatId: Long, ids: List<Long>, batch: Int): JsonObject = retrying {
+        try {
+            client.call(request("getMessages") { put("chat_id", chatId); put("message_ids", JsonArray(ids.map(::JsonPrimitive))) })
+        } catch (e: TdError) {
+            if (batch > WALK_BATCH && e.retryAfter == null) {
+                repo.setPref("reading_batch", "$WALK_BATCH")
+                throw TdError(e.code, "Telegram refused $batch messages in one request, so the setting is back to $WALK_BATCH. (${e.message})")
+            }
+            throw e
+        }
+    }
+
     /** Waits out Telegram rate limits and tries again. */
     private suspend fun retrying(call: suspend () -> JsonObject): JsonObject {
         while (true) {
@@ -585,6 +593,6 @@ class Scanner(
 
     companion object {
         const val WALK_BATCH = 100
-        const val MAX_BATCH = 200
+        const val MAX_BATCH = 500
     }
 }

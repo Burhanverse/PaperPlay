@@ -318,7 +318,8 @@ class UserSession(
                 pause(60_000L / readingRate())
             }
         }
-        lastReadNotes = "Posts returned by Telegram: " + found.entries.joinToString(", ") { "${it.value} by " + it.key.removePrefix("searchMessagesFilter").lowercase() } + ". Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
+        // Only a full read writes the notes; the short catch-up read after it would overwrite them with its first page.
+        if (afterMessageId == 0L) lastReadNotes = "Posts returned by Telegram: " + found.entries.joinToString(", ") { "${it.value} by " + it.key.removePrefix("searchMessagesFilter").lowercase() } + ". Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
     }
 
     private fun readingRate() = (pref(READING_RATE_PREF)?.toIntOrNull() ?: DEFAULT_READING_RATE).coerceIn(1, 1200)
