@@ -653,3 +653,33 @@ elease` must say Java 25 and the setup exe must start.
 ### Repository
 - [x] Four commits (`5e97c42`, `fdea970`, `01bf96a`, `c2cf455`) pushed to `main` and `beta`. The manifest was committed with only these changes: the other session's service entry points at a class this build copy does not have, and the build crashed on it until its entry was left out.
 - [ ] Merge the friend's memory-leak branch when he pushes it, as a plain merge so he can update with a pull. Both sides add a memory monitor: keep one `MemoryProbe`, merge by hand where they overlap.
+
+
+## Update 2026-11-16 (scan page, account reading, duplicates, search, rate limits). Key as above: [x] seen working, [~] built and installed but not tried, [ ] open
+### Scan library and the account
+- [x] One Scan library page (`RepairPage.kt`) with a switch for every source (main bot, each extra bot, your account) and the two reading dials; it replaced Repair and Full rescan (Profile > Library > Scan library, and the Scan button on Channels). Steps also go to the Activity log.
+- [x] Reading with the account (`UserSession.songsIn`: `searchChatMessages`, filters Audio and Document, 100 a page) adds every main-chat post the library lacks; extra posts of one file are kept as `post_copies` (shown on Find duplicates, and now as rows in Library > Songs). Result line: "Posts returned by Telegram: 3571 by audio (Telegram counts 3571), 17 by document (Telegram counts 17)"; library 3465 songs + 123 repeats = 3588 posts, matching what Telegram's search returns.
+- [x] `AUTH_KEY_DUPLICATED` on the account scan = the same login session used from two places; log out of the account and log in again (Settings > Telegram > Your account). A session that had not seen the chat answered "Chat not found" to every read: reads now load the chat first (`knowChat`).
+- [x] Songs whose post is gone are removed after an account scan (`pruneGoneFromMainChat`; refuses when it would remove more than half the library). Log line: "Removed N saved songs whose post is gone from Telegram".
+- [~] The account read keeps going past an early empty page and the live count is the real count (an estimate between pages ran ahead and dropped back); the counter says "posts (repeats included)" because repeats count there but not in Songs.
+- [~] Topic names: after the account read, `getForumTopics` fills the names of the main chat's topics (bots cannot see topics another bot made), so Find duplicates no longer says "Unnamed topic". Line "Your account named N topics of the main chat". The TDLib field names were not checked against a live answer.
+- [ ] The owner counts 3603 songs in Telegram; Telegram's own search total and the app agree on 3588. Not settled. Idea: ask the account for every message id 1 to 5308 (`getMessages`, about 54 calls) and count the songs, which no filter can hide.
+### Reading speed and rate limits
+- [x] "Messages per request" slider (10 to 500, default 100) next to "Reading channels". Cause of a 31 s rate-limit loop that lasted 22 minutes: 299 ids at 100 requests a minute, and the start-up catch-up read used the setting too.
+- [x] Only a scan the owner starts uses the chosen ids per request; automatic reads (start, new posts) always use 100 ids and at most 50 requests a minute. A manual scan that is refused, or made to wait twice in a row, with more than 100 ids puts the setting back to 100 and stops. Start-up catch-up now finishes in 6 s with no waits.
+- [ ] Whether Telegram answers more than 100 ids in one `getMessages` is not known; the account scan stays at 100 (the search call's limit).
+### Find duplicates
+- [x] Crash while deleting (15 Nov 23:48): `CursorWindow: Failed to read row 346 ... from a window with 345 rows`; a delete between two cursor windows shifted the rows. Fix: every library read runs in one transaction and is tried 3 times (`LibraryRepository.stableRead`). No crash since.
+- [x] The account delete used to answer ok for posts it never loaded, so posts left the library but stayed in Telegram (the library lost songs this way). Now the account asks Telegram which posts still exist, and "Your account removed N of M: <reason>" is logged. Extra copies went 167 > 129 > 93 and the chat from 3650 to 3587 posts.
+- [~] A post can be in two groups; a tick counts in both, so a group could show every post ticked. `keepOnePerGroup` unticks the copy to keep of such a group. The Delete button sits just above the bars and follows the mini player.
+- [ ] Why the first deletes were refused ("Telegram wouldn't let this post be deleted") is not known; the new log line will say.
+### Library, search, covers
+- [~] Songs list shows every repeat post of a file as its own row (`SongUi.copyKey`); song rows always show format chip, bitrate and size.
+- [~] New search engine (`SongSearch.kt`): accents, typos, words inside words, best match first, a matching artist as "Top result". Not tried on the phone.
+- [~] Covers: Telegram thumbnails also through the account, the first 3 MB of the file when the post has none, give up only when Telegram answered; song info also asks LRCLIB and tries title and artist swapped. Songs without a match are retried only by a manual scan; no repeat every 30 min.
+- [~] Home: all placeholders show first, then they cross-fade into the page (the blank step in between is fixed); the greeting line is chosen once.
+### Settings and Profile
+- [~] Profile Library list is shorter; Devices and Storage are one card. Settings > Telegram: no speed dials, the account row says Logged in or Logged out, the copy speed moved to the account page, a logout shows a toast ("Logged out", "Your account was not logged in" or the error). The account page restores the saved index off the main thread (lag).
+- [x] The friend's memory-leak and performance commit `fd71732` is in `main`: all 479 added lines still present (checked 16 Nov); his repo has no newer commits. Memory over runs of 1 to 7 h is flat (7 h run: PSS 352 > 384 MB).
+### Repository
+- [ ] Nothing since `c2cf455` is pushed. Pull with `git pull --rebase --autostash origin main` first. The release build (`d009d44`) is on the phone; a release build cannot be read with `adb run-as`, install a debug build to read the logs.
