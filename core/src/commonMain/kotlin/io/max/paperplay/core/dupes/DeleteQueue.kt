@@ -38,6 +38,9 @@ interface AccountDeleter {
 
     /** Deletes for everyone, up to 100 to a call. Returns the ids Telegram still refused (all if not logged in). */
     suspend fun deleteBatch(chatId: Long, ids: List<Long>): List<Long>
+
+    /** Telegram's reason for the last refusal, for the log. */
+    val lastError: String? get() = null
 }
 
 /** The library database and deletion record a delete touches. The owner wires it to LibraryRepo and sync. */
@@ -367,7 +370,7 @@ class DeleteQueue(
             if (refused.isNotEmpty()) log("Telegram refused ${refused.size} of ${ids.size}: ${refused.values.first()}")
             if (refused.isEmpty()) return emptyList()
             val rest = if (account.isLoggedIn) account.deleteBatch(chat, refused.keys.toList()) else refused.keys.toList()
-            if (account.isLoggedIn) log("Your account removed ${refused.size - rest.size} of ${refused.size}")
+            if (account.isLoggedIn) log("Your account removed ${refused.size - rest.size} of ${refused.size}" + (if (rest.isNotEmpty()) account.lastError?.let { ": $it" }.orEmpty() else ""))
             return rest
         }
         // TDLib refuses the whole call if one post can't go. Ask Telegram directly, which skips those it can't delete.
@@ -383,7 +386,7 @@ class DeleteQueue(
         )
         if (left.isEmpty()) return emptyList()
         val rest = account.deleteBatch(chat, left)
-        log("Your account removed ${left.size - rest.size} of ${left.size}")
+        log("Your account removed ${left.size - rest.size} of ${left.size}" + (if (rest.isNotEmpty()) account.lastError?.let { ": $it" }.orEmpty() else ""))
         return rest
     }
 }

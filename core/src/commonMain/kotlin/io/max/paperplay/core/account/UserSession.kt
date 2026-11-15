@@ -379,6 +379,30 @@ class UserSession(
     }
 
     /** Deletes [ids] for everyone in one call. False when not logged in or Telegram refuses. */
+    /** Telegram's reason the last delete failed, for the log. */
+    @Volatile var lastDeleteError: String? = null
+
+    /** Which of [ids] this account can still see in [chatId]; null when Telegram could not be asked. TDLib answers a delete with ok even for posts it never loaded, so a delete is only believed after this. */
+    suspend fun existing(chatId: Long, ids: List<Long>): Set<Long>? = try {
+        val c = ready()
+        knowChat(c, chatId, loadList = true)
+        val alive = HashSet<Long>()
+        for (chunk in ids.chunked(100)) {
+            val page = call(c, request("getMessages") {
+                put("chat_id", chatId)
+                put("message_ids", buildJsonArray { chunk.forEach { add(it) } })
+            })
+            val messages = page["messages"] as? JsonArray ?: return null
+            chunk.forEachIndexed { i, id -> if (messages.getOrNull(i) is JsonObject) alive += id }
+        }
+        alive
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: TdError) {
+        lastDeleteError = e.message
+        null
+    }
+
     suspend fun deleteMessages(chatId: Long, ids: List<Long>): Boolean {
         if (!_loggedIn.value) return false
         return try {
@@ -392,7 +416,8 @@ class UserSession(
             true
         } catch (e: CancellationException) {
             throw e
-        } catch (_: TdError) {
+        } catch (e: TdError) {
+            lastDeleteError = e.message
             false
         }
     }
@@ -476,6 +501,8 @@ private fun JsonArray?.orEmpty(): JsonArray = this ?: JsonArray(emptyList())
 class UserAccountDeleter(private val session: UserSession) : io.max.paperplay.core.dupes.AccountDeleter {
     override val isLoggedIn: Boolean get() = session.loggedIn.value
 
+    override val lastError: String? get() = session.lastDeleteError
+
     override suspend fun deleteBatch(chatId: Long, ids: List<Long>): List<Long> {
         if (!isLoggedIn) return ids
         val left = ArrayList<Long>()
@@ -484,6 +511,8 @@ class UserAccountDeleter(private val session: UserSession) : io.max.paperplay.co
             // One refused post fails the whole call, so the rest go singly.
             for (id in chunk) if (!session.deleteMessages(chatId, listOf(id))) left += id
         }
-        return left
+        // Telegram is asked what is still there: a delete that answered ok for a post the account never loaded deleted nothing.
+        val alive = session.existing(chatId, ids) ?: return left
+        return ids.filter { it in alive }
     }
 }
