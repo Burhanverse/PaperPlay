@@ -278,8 +278,10 @@ class UserSession(
         knowChat(c, chatId, loadList = true)
         val seen = HashSet<Long>()
         val found = LinkedHashMap<String, Int>()
+        val totals = HashMap<String, Long>()
         for (filter in listOf("searchMessagesFilterAudio", "searchMessagesFilterDocument")) {
             var from = 0L
+            var emptyPages = 0
             while (true) {
                 val page = call(c, request("searchChatMessages") {
                     put("chat_id", chatId)
@@ -291,6 +293,7 @@ class UserSession(
                 })
                 val messages = page["messages"] as? JsonArray ?: JsonArray(emptyList())
                 found[filter] = (found[filter] ?: 0) + messages.size
+                if (filter !in totals) page.long("total_count")?.let { totals[filter] = it }
                 val batch = ArrayList<ChatPost>()
                 var reached = false
                 for (m in messages) {
@@ -313,13 +316,15 @@ class UserSession(
                 }
                 if (batch.isNotEmpty()) emit(batch)
                 val next = page.long("next_from_message_id") ?: 0L
-                if (reached || messages.isEmpty() || next == 0L) break
+                // TDLib may answer a page with fewer posts than asked, even none, while more follow; only the end marker or several empty pages in a row stop the read.
+                emptyPages = if (messages.isEmpty()) emptyPages + 1 else 0
+                if (reached || next == 0L || next == from || emptyPages > 3) break
                 from = next
                 pause(60_000L / readingRate())
             }
         }
         // Only a full read writes the notes; the short catch-up read after it would overwrite them with its first page.
-        if (afterMessageId == 0L) lastReadNotes = "Posts returned by Telegram: " + found.entries.joinToString(", ") { "${it.value} by " + it.key.removePrefix("searchMessagesFilter").lowercase() } + ". Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
+        if (afterMessageId == 0L) lastReadNotes = "Posts returned by Telegram: " + found.entries.joinToString(", ") { "${it.value} by " + it.key.removePrefix("searchMessagesFilter").lowercase() + (totals[it.key]?.let { t -> " (Telegram counts $t)" } ?: "") } + ". Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
     }
 
     private fun readingRate() = (pref(READING_RATE_PREF)?.toIntOrNull() ?: DEFAULT_READING_RATE).coerceIn(1, 1200)
