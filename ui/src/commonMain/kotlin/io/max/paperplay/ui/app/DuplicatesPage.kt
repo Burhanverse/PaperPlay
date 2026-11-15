@@ -67,6 +67,16 @@ private fun sizeText(bytes: Long) = "${(bytes * 10 / 1_048_576) / 10.0} MB"
 
 private fun postsOf(g: DuplicateGroup) = listOf(g.keep) + g.others
 
+/**
+ * One post can sit in two groups (as the copy to keep of an identical-file group, and as a worse file of a same-song group), and a tick
+ * counts in both. When that ticks every post of a group, the group's copy to keep is unticked, so the page never marks all of them.
+ */
+private fun keepOnePerGroup(groups: List<DuplicateGroup>, ticked: Set<PostKey>): Set<PostKey> {
+    var out = ticked
+    for (g in groups) if (postsOf(g).all { it.key in out }) out = out - g.keep.key
+    return out
+}
+
 /** Settings > Library > Find duplicates. Tick the posts to delete; nothing goes before the confirmation. */
 @Composable
 internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compose.ui.unit.Dp = 0.dp) {
@@ -100,8 +110,8 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
         if (found.isNotEmpty() && queue.dropGonePosts(found.flatMap { g -> postsOf(g).map { it.key } }) > 0) found = find()
         groups = found
         // The extras are ticked at once: repeats in the same topic and clearly worse copies. The best copy of every song is never in it.
-        ticked = found.filter { sectionOf(it) == DuplicateSection.Extras }
-            .flatMap { g -> g.others.filter { it.messageId in g.suggested }.map { it.key } }.toSet()
+        ticked = keepOnePerGroup(found, found.filter { sectionOf(it) == DuplicateSection.Extras }
+            .flatMap { g -> g.others.filter { it.messageId in g.suggested }.map { it.key } }.toSet())
     }
 
     fun jobOf(p: DuplicatePost) = jobs.lastOrNull { it.isDuplicate && it.postChat == p.chatId && it.postMessage == p.messageId }
@@ -111,7 +121,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
     fun tick(g: DuplicateGroup, wanted: Collection<DuplicatePost>) {
         val keys = wanted.filter { !busy(it) }.map { it.key }.toSet()
         val next = (ticked - postsOf(g).map { it.key }.toSet()) + keys
-        if (survivorOf(g) { it.key in next } != null) ticked = next
+        if (survivorOf(g) { it.key in next } != null) ticked = keepOnePerGroup(groups.orEmpty(), next)
     }
 
     // Posts that are gone leave the page at once; a group with no extra copy left goes with them.
