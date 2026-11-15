@@ -353,7 +353,8 @@ class Scanner(
         val seen = mutableSetOf<Long>()
         calm = false
         val gen = stopGen
-        val batch = batchSize()
+        // Only a scan the owner starts (a full read) uses the chosen size; the automatic reads at start and for new posts always ask for 100.
+        val batch = if (full) batchSize() else WALK_BATCH
         val initialFloor = effectiveMinPause()
         if (pause < initialFloor) pause = initialFloor
         var chatTitle = chat.title
