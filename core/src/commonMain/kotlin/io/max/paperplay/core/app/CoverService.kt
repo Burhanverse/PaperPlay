@@ -155,10 +155,11 @@ class CoverService(
         scope.launch {
             delay(startDelayMs)
             // Songs given up on before your account could read thumbnails are tried once more.
-            if (accountClient() != null && repo.pref(ACCOUNT_RETRY_KEY) == null) {
-                giveUpMutex.withLock { giveUpMap2().clear(); giveUpDirty++ }
+            if (accountClient() != null && repo.pref(ACCOUNT_RETRY_KEY) != "2") {
+                val gm = giveUpMap()
+                giveUpMutex.withLock { gm.clear(); giveUpDirty++ }
                 persistGiveUps()
-                repo.setPref(ACCOUNT_RETRY_KEY, "1")
+                repo.setPref(ACCOUNT_RETRY_KEY, "2")
             }
             kick(retryTdMissing = true)
         }
@@ -208,9 +209,6 @@ class CoverService(
         }
     }
 
-    /** The give-up map without taking the lock, for a caller that holds it. */
-    private fun giveUpMap2(): MutableMap<String, Long> = giveUps ?: HashMap<String, Long>().also { giveUps = it }
-
     private suspend fun giveUpMap(): MutableMap<String, Long> = giveUpMutex.withLock {
         giveUps ?: HashMap<String, Long>().also { m ->
             runCatching {
@@ -247,7 +245,8 @@ class CoverService(
 
     /** Forgets which songs no source had a cover for, so the next [kick] asks for all of them again. */
     suspend fun forgetGiveUps() {
-        giveUpMutex.withLock { giveUpMap2().clear(); giveUpDirty++ }
+        val gm = giveUpMap()
+        giveUpMutex.withLock { gm.clear(); giveUpDirty++ }
         persistGiveUps()
         queueMutex.withLock { attempted.clear() }
     }
@@ -434,9 +433,13 @@ class CoverService(
         // used while a scan runs); your account is the fallback, and works for posts no bot can read.
         val clients = listOfNotNull(botOwnerOf(song.remote_id)?.let { tdFor(song) } ?: td(), accountClient()).distinct()
         var tdRateLimited = false
+        var answered = false
+        val notes = ArrayList<String>()
         for (client in clients) {
           if (song.chat_id != 0L && song.message_id != 0L) {
             val thumbResult = fetchTelegramThumbnail(client, song)
+            notes += "${if (client === clients.first()) "first" else "account"} client: ${thumbResult.why}"
+            if (thumbResult.answered) answered = true
             if (thumbResult.rateLimited) {
                 tdRateLimited = true
             } else if (thumbResult.bytes != null) {
@@ -448,7 +451,6 @@ class CoverService(
                     markDone(uid, Outcome.Done)
                     // The thumbnail is only a stand-in; the full-size cover comes right after (not counted in the missing-cover progress).
                     if (lookups) queueUpgrade(uid)
-                    // The thumbnail is only a stand-in; the full-size cover comes right after.
                     return
                 }
             }
@@ -468,10 +470,18 @@ class CoverService(
             if (sources.itunesBlocked) httpRetryMs = 30_000L
         }
 
+        io.max.paperplay.player.PlayLog.log("cover", "\"${song.title}\" by \"${song.artist}\": no cover. " + (if (clients.isEmpty()) "no Telegram client could be asked" else notes.joinToString("; ")))
         when {
             clients.isEmpty() -> markDone(uid, Outcome.NeedsTd)
             tdRateLimited -> markDone(uid, Outcome.RetryLater, maxOf(1_000L, tdBlockedUntil - clock()))
             httpRetryMs > 0L -> markDone(uid, Outcome.RetryLater, httpRetryMs)
+            // Nobody could read the post (the chat is not known to the client yet, a timeout): that proves nothing, so the song is asked
+            // about again after a few hours instead of being given up on for good.
+            !answered -> {
+                val gm = giveUpMap()
+                giveUpMutex.withLock { gm[uid] = clock() - GIVE_UP_MS + 6L * 60 * 60 * 1000; giveUpDirty++ }
+                markDone(uid, Outcome.Done)
+            }
             else -> {
                 recordGiveUp(uid, found = false)
                 markDone(uid, Outcome.Done)
@@ -585,7 +595,8 @@ class CoverService(
         }
     }
 
-    private class TdThumbResult(val bytes: ByteArray? = null, val rateLimited: Boolean = false)
+    /** [answered] is true when Telegram returned the post, so a missing thumbnail is a fact and not a failure to ask. */
+    private class TdThumbResult(val bytes: ByteArray? = null, val rateLimited: Boolean = false, val answered: Boolean = false, val why: String = "")
 
     private suspend fun fetchTelegramThumbnail(client: TdClient, song: Song): TdThumbResult {
         if (!reserveTdSlot()) return TdThumbResult(rateLimited = true)
@@ -596,17 +607,17 @@ class CoverService(
                     put("message_id", song.message_id)
                 })
             }
-        } ?: return TdThumbResult()
+        } ?: return TdThumbResult(why = "getMessage timed out")
         val msgErr = msgRes.exceptionOrNull()
         if (msgErr is TdError && msgErr.code == 429) {
             recordTdRateLimit(msgErr.message)
-            return TdThumbResult(rateLimited = true)
+            return TdThumbResult(rateLimited = true, why = "rate limited")
         }
-        val msg = msgRes.getOrNull() ?: return TdThumbResult()
-        val thumb = thumbFileOfMessage(msg) ?: return TdThumbResult()
-        val localPath = downloadTdFile(client, thumb) ?: return TdThumbResult(rateLimited = clock() < tdBlockedUntil)
-        val bytes = readWholeFile(localPath) ?: return TdThumbResult()
-        return TdThumbResult(bytes = bytes.takeIf { looksLikeImage(it, null) })
+        val msg = msgRes.getOrNull() ?: return TdThumbResult(why = "getMessage failed: ${msgErr?.message}")
+        val thumb = thumbFileOfMessage(msg) ?: return TdThumbResult(answered = true, why = "the post has no thumbnail")
+        val localPath = downloadTdFile(client, thumb) ?: return TdThumbResult(rateLimited = clock() < tdBlockedUntil, why = "thumbnail download failed")
+        val bytes = readWholeFile(localPath) ?: return TdThumbResult(why = "thumbnail file unreadable")
+        return TdThumbResult(bytes = bytes.takeIf { looksLikeImage(it, null) }, answered = true, why = if (looksLikeImage(bytes, null)) "ok" else "thumbnail is not an image")
     }
 
     private suspend fun reserveTdSlot(): Boolean {

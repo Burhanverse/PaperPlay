@@ -360,11 +360,12 @@ class AppServices(
                 // Songs read through the account need its client running before they are played.
                 launch {
                     if (!account.loggedIn.value) return@launch
-                    val chats = driver.executeQuery(null, "SELECT DISTINCT chat_id FROM songs WHERE remote_id = ?", { cur ->
+                    // Every library chat, not only those with account songs: covers read thumbnails through the account too.
+                    val chats = driver.executeQuery(null, "SELECT DISTINCT chat_id FROM songs", { cur ->
                         val ids = mutableListOf<Long>()
                         while (cur.next().value) cur.getLong(0)?.let { ids += it }
                         app.cash.sqldelight.db.QueryResult.Value(ids)
-                    }, 1) { bindString(0, ACCOUNT_REMOTE) }.value
+                    }, 0).value
                     for (id in chats) (account as? io.max.paperplay.core.account.UserSession)?.warmUp(id)
                 }
                 // After the first login on this install, bring back the saved index and the user's song data once.
