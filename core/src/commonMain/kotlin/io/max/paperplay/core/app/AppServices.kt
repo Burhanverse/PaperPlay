@@ -381,8 +381,8 @@ class AppServices(
                 // Catching up and the one-time check run beside the rest, never in the way of connecting.
                 launch {
                     try {
+                        // Only posts newer than the last read; a full read of a chat is started by hand from Scan library.
                         scanner.catchUp()
-                        verifyChats()
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
@@ -401,31 +401,6 @@ class AppServices(
                 _error.value = e.message ?: e::class.simpleName
             }
         }
-    }
-
-    /**
-     * A library restored from a backup keeps that backup's scan position, so posts it never saw stay missing. Every chat
-     * is read from the start once; the chats done so far are remembered, so a closed app carries on with the rest.
-     * Waits for the foreground or a charger, and for the enricher to be idle.
-     */
-    private suspend fun verifyChats() {
-        if (library.pref("scan_verified") == "2") return
-        val done = (library.pref("scan_verified_chats") ?: "").split(',').mapNotNull { it.toLongOrNull() }.toMutableSet()
-        var all = true
-        scanner.retryEmptyIds = true
-        try {
-            for (chat in library.chatList()) {
-                if (chat.id in done) continue
-                while (!platform.canRunBackground() || enricher.progress.value != null) delay(60.seconds)
-                if (scanner.rescanChat(chat)) {
-                    done += chat.id
-                    library.setPref("scan_verified_chats", done.joinToString(","))
-                } else all = false
-            }
-        } finally {
-            scanner.retryEmptyIds = false
-        }
-        if (all) library.setPref("scan_verified", "2")
     }
 
     /**
