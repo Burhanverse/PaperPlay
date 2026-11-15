@@ -266,8 +266,13 @@ class UserSession(
         return out
     }
 
+    @kotlin.concurrent.Volatile override var lastReadNotes: String = ""
+        private set
+
     override fun songsIn(chatId: Long, afterMessageId: Long): Flow<List<ChatPost>> = flow {
         if (!_loggedIn.value) return@flow
+        val skipped = HashMap<String, Int>()
+        var small = 0
         val c = ready()
         val seen = HashSet<Long>()
         for (filter in listOf("searchMessagesFilterAudio", "searchMessagesFilterDocument")) {
@@ -288,8 +293,15 @@ class UserSession(
                     val msg = m.jsonObject
                     val id = msg.long("id") ?: continue
                     if (afterMessageId > 0 && id <= afterMessageId) { reached = true; break }
-                    val song = songFromMessage(msg) ?: continue
+                    val song = songFromMessage(msg)
+                    if (song == null) {
+                        val content = msg.obj("content")
+                        val kind = (content?.str("@type") ?: "unknown").removePrefix("message") + (content?.obj("document")?.str("file_name")?.substringAfterLast('.', "")?.let { " .$it" } ?: "")
+                        skipped[kind] = (skipped[kind] ?: 0) + 1
+                        continue
+                    }
                     if (!seen.add(id)) continue
+                    if (song.size in 1 until 2L * 1024 * 1024) small++
                     batch += ChatPost(
                         chatId = chatId, messageId = id, uniqueId = song.unique_id, title = song.title, artist = song.artist,
                         durationSec = song.duration_sec.toInt(), size = song.size, mime = song.mime, fileName = song.file_name, date = song.date,
@@ -302,6 +314,7 @@ class UserSession(
                 pause(60_000L / readingRate())
             }
         }
+        lastReadNotes = "Songs under 2 MB read: $small." + if (skipped.isEmpty()) "" else " Posts skipped because they are not songs: " + skipped.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.value} ${it.key}" } + "."
     }
 
     private fun readingRate() = (pref(READING_RATE_PREF)?.toIntOrNull() ?: DEFAULT_READING_RATE).coerceIn(1, 1200)

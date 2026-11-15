@@ -256,6 +256,19 @@ class ChatIndex(
         library.songsInChat(chat).map { it.message_id }.toSet() +
             library.repo.db.filingQueries.allPostCopies().executeAsList().filter { it.chat_id == chat }.map { it.message_id }
 
+    override suspend fun pruneGoneFromMainChat(): Int {
+        val chat = mainChat() ?: return -1
+        val seen = fullRead[chat] ?: return -1
+        val rows = library.songsInChat(chat)
+        val gone = rows.filter { it.message_id !in seen }
+        // A read that saw only a part of the chat must not wipe the library.
+        if (gone.size > rows.size / 2) return -2
+        for (s in gone) library.removePost(s.chat_id, s.message_id)
+        val db = library.repo.db
+        for (c in db.filingQueries.allPostCopies().executeAsList()) if (c.chat_id == chat && c.message_id !in seen) library.removePost(c.chat_id, c.message_id)
+        return gone.size
+    }
+
     override suspend fun addMissingFromMainChat(): Int {
         val missing = missingFromMainChat()
         missing.forEach { addToLibrary(it) }

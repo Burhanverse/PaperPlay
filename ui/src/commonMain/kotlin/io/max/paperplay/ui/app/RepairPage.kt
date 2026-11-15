@@ -208,6 +208,14 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
             else "Your account saw ${r.seen} posts in the main chat; " + (if (r.added > 0) "added ${r.added} the library lacked" else "the library has all of them") +
                 " (${r.repeats} of the posts are repeats of a file, kept for the Duplicates page)",
         )
+        backend.account.lastReadNotes.takeIf { it.isNotEmpty() }?.let { log("Your account: $it") }
+        // Your account saw every post, so songs it did not see are gone from Telegram; dropping them lets another post of the same file take over.
+        when (val gone = backend.chatIndex.pruneGoneFromMainChat()) {
+            -2 -> log("Songs whose post is gone were not removed: your account saw far fewer posts than the library holds")
+            -1 -> {}
+            0 -> log("No saved song has a deleted post")
+            else -> log("Removed $gone saved songs whose post is gone from Telegram")
+        }
     }.onFailure { log("The account could not read the chat: ${it.message}") }
     watch.cancel()
     services.scanner.announce(null)

@@ -40,6 +40,9 @@ sealed interface LoginStep {
 
 /** The owner's own Telegram account: login, chat listing, reading songs, copying. Built on its own TDLib client. */
 interface AccountApi {
+    /** A line about the last [songsIn] read: posts it skipped because they are not songs, and how many small songs it kept. Empty before a read. */
+    val lastReadNotes: String get() = ""
+
     val step: StateFlow<LoginStep>
     val loggedIn: StateFlow<Boolean>
 
@@ -131,6 +134,14 @@ interface ChatIndexApi {
      * since are not brought back. [MainChatAdd.seen] is 0 when no full read has run yet.
      */
     suspend fun addPostsNotInLibrary(): MainChatAdd = MainChatAdd(0, 0, 0)
+
+    /**
+     * Removes songs of the main chat whose post is no longer in Telegram, judged by the posts the last full read of the chat in this
+     * session saw (your account sees every post, so this is reliable). A song with another post of the same file is kept through that
+     * post. Returns how many songs went, -1 when no full read has run, or -2 when the read saw far fewer posts than the library
+     * holds, which is not trusted and removes nothing.
+     */
+    suspend fun pruneGoneFromMainChat(): Int = -1
 
     /** Indexed posts of the main chat that the library lacks: what the bot cannot read. */
     suspend fun missingFromMainChat(): List<ChatPost> = emptyList()
