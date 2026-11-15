@@ -66,6 +66,8 @@ class CoverService(
     private val startDelayMs: Long = 30_000L,
     /** The client that can read [song]'s post when it is not the main one (a song only an extra bot can read). */
     private val tdFor: (Song) -> TdClient? = { null },
+    /** Your own account's client, which sees every post of the chat, so it can read a thumbnail whoever posted the song and while a scan keeps the bot busy. */
+    private val accountClient: () -> TdClient? = { null },
 ) {
     private val queueMutex = Mutex()
     private val tdMutex = Mutex()
@@ -152,6 +154,12 @@ class CoverService(
         // The backlog is queued after a quiet half minute; screens ask for what they show before that.
         scope.launch {
             delay(startDelayMs)
+            // Songs given up on before your account could read thumbnails are tried once more.
+            if (accountClient() != null && repo.pref(ACCOUNT_RETRY_KEY) == null) {
+                giveUpMutex.withLock { giveUpMap2().clear(); giveUpDirty++ }
+                persistGiveUps()
+                repo.setPref(ACCOUNT_RETRY_KEY, "1")
+            }
             kick(retryTdMissing = true)
         }
     }
@@ -199,6 +207,9 @@ class CoverService(
             prioritize(songs)
         }
     }
+
+    /** The give-up map without taking the lock, for a caller that holds it. */
+    private fun giveUpMap2(): MutableMap<String, Long> = giveUps ?: HashMap<String, Long>().also { giveUps = it }
 
     private suspend fun giveUpMap(): MutableMap<String, Long> = giveUpMutex.withLock {
         giveUps ?: HashMap<String, Long>().also { m ->
@@ -412,10 +423,12 @@ class CoverService(
             }
         }
 
-        // 2. Embedded Telegram album_cover_thumbnail / thumbnail via TDLib (skipped while Scanner is active).
-        val client = botOwnerOf(song.remote_id)?.let { tdFor(song) } ?: td()
+        // 2. Embedded Telegram album_cover_thumbnail / thumbnail via TDLib. The bot that owns the post asks first (the main bot is not
+        // used while a scan runs); your account is the fallback, and works for posts no bot can read.
+        val clients = listOfNotNull(botOwnerOf(song.remote_id)?.let { tdFor(song) } ?: td(), accountClient()).distinct()
         var tdRateLimited = false
-        if (client != null && song.chat_id != 0L && song.message_id != 0L) {
+        for (client in clients) {
+          if (song.chat_id != 0L && song.message_id != 0L) {
             val thumbResult = fetchTelegramThumbnail(client, song)
             if (thumbResult.rateLimited) {
                 tdRateLimited = true
@@ -432,6 +445,7 @@ class CoverService(
                     return
                 }
             }
+          }
         }
 
         // 3. Search services, all asked at once: Deezer and iTunes (the stored sources were tried already).
@@ -448,7 +462,7 @@ class CoverService(
         }
 
         when {
-            client == null -> markDone(uid, Outcome.NeedsTd)
+            clients.isEmpty() -> markDone(uid, Outcome.NeedsTd)
             tdRateLimited -> markDone(uid, Outcome.RetryLater, maxOf(1_000L, tdBlockedUntil - clock()))
             httpRetryMs > 0L -> markDone(uid, Outcome.RetryLater, httpRetryMs)
             else -> {
@@ -702,6 +716,7 @@ class CoverService(
     private companion object {
         const val MAX_THUMB_BYTES = 10 * 1024 * 1024
         const val GIVE_UP_KEY = "covers_nofind"
+        const val ACCOUNT_RETRY_KEY = "covers_account_retry"
         const val GIVE_UP_MS = 7L * 24 * 60 * 60 * 1000
     }
 }

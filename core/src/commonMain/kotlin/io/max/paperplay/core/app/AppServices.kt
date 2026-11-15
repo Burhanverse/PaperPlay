@@ -211,6 +211,7 @@ class AppServices(
         scope,
         clock,
         tdFor = { s -> botOwnerOf(s.remote_id)?.let { botPool.clientOf(it) } },
+        accountClient = { (account as? io.max.paperplay.core.account.UserSession)?.streamClient() },
     )
 
     /** Fills title, artist, album and cover from tags inside downloaded files. */
