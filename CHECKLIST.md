@@ -710,8 +710,8 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Artists: a credit like "A, B & C" is split; the full player and the PC now-playing panel show each artist as its own tap target (and the album), the song menu has "Go to <artist>" per artist and "Go to album", and an artist page and the Artists tab list a song under each of its artists.
 ### Status (16 Nov, end of day)
 - Built and installed (phone release, PC installer) but not seen working on two devices at once: shared player and source switch, output names, sync of song data, covers, Spotify links and deleted songs, the PC right-click menu, Alt+Left, tappable artists and albums, the Spotify account list.
-- Open: `UserSessionTest.deleterBatchesAndReportsRefused` fails (account-delete test, not from the sync work); right-click menu on sidebar playlists; Ctrl+F for search; topic names do not sync between devices; why the first duplicate deletes were refused is still unknown; the 3603 vs 3588 count.
-- Nothing from 16 Nov is pushed.
+- Open: right-click menu on sidebar playlists; Ctrl+F for search; topic names do not sync between devices; why the first duplicate deletes were refused is still unknown; the 3603 vs 3588 count.
+- Pushed to `main` and `beta` at the end of 16 Nov (see Repository below).
 ### Audio, lyrics and covers on two devices (16 Nov, evening)
 - [~] Audio: the Android sink now outputs float, so 24-bit FLAC is not cut to 16 bits without dither (the likely cause of the grain; the playback log now has an "audio output ..." line with the real format). Not heard yet: play a 24-bit file and compare.
 - [~] Both devices pick the same album tags and cover when each found its own; a text or cover chosen by hand wins.
@@ -723,3 +723,9 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Nothing underneath is pressed through the player sheet or the mini player and navigation bars (`blockTouchesBehind`); to check on the phone: open the player, tap empty areas, the list behind must not play. Other overlays (dialogs, sheets) already have their own scrim.
 - [~] Covers: a match on a compilation ("Bravo Hits 95", "Top 100", "Now That's What I Call...") comes after the song's own album; a cover is never taken from a compilation; MusicBrainz releases that are compilations sort last. Settings > Library > "Fix compilation covers" clears album, cover and info of songs that already got one (hand-edited ones and file-tag albums stay), then Scan library looks them up again.
 - [~] Artist pages list every song an artist is credited on (a phone on an older build showed one song for "Dhee"); check after the install.
+### Rewind and packaging (16 Nov, night)
+- [~] Rewind (`PlaybackController.previous`): one press plays the song again from the start; a second press within 2.5 s goes to the song before; on the first song every press only restarts it. Tested with a fake engine. The notification and headset buttons use Android's own previous rule (restart only after 3 s) and are not changed.
+- [~] The desktop package includes `java.management`, so the PC memory line works (the log said "could not measure: ManagementFactory").
+- [ ] PC folder upload: reported broken, not found. The PC log shows a folder upload working at 16:13 and the folder picker script compiles; need the exact symptom (button, dialog, nothing after picking, or songs not uploading; "Choose folder" is disabled until an upload target is chosen).
+### Repository
+- [x] `main` and `beta` were pushed together at the end of 16 Nov (both remote branches were already inside `main`, so both were fast-forwards).
