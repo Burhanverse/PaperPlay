@@ -12,14 +12,16 @@ Built with Kotlin and Compose Multiplatform.
 ## What it does
 
 **Your library**
-- Reads songs from the chats and channels you choose. Scan, full rescan, forum topics, and a **Repair library** page that
-  re-reads every chat (with extra bots and your own account too) and never deletes anything by itself.
+- Reads songs from the chats and channels you choose, including forum topics. One **Scan library** page (Profile > Library)
+  reads the main chat with each source you switch on (the main bot, extra bots, your own account) and shows the result.
+  The topics of the main chat also appear as lists under Playlists, on Home and in the desktop sidebar, apart from your playlists.
 - Your own account can be added (phone, code, password or QR) to index chats, copy songs into the main chat, and play
   songs the bot cannot see.
 - Find and delete duplicate songs (Telegram is asked about every post, so a delete counts only when the post is really gone),
   move songs between topics, upload songs from your phone or desktop. Android reads a chosen music folder where it is, with no
   copy, asks before it takes subfolders, and skips songs under 2 MB.
-- Reading speed can adjust itself to what Telegram allows (Settings > Library > Speeds).
+- Reading speed can adjust itself to what Telegram allows (Settings > Library > Speeds). Only a scan you start uses the
+  "messages per request" setting; automatic reads stay at 100 ids and at most 50 requests a minute.
 - Search by title, artist, album, genre, year and language (try `japanese`, `hindi`, `lang:tamil`). Albums with the same name
   are split by artist.
 
@@ -28,21 +30,29 @@ Built with Kotlin and Compose Multiplatform.
 - Queue editing, play next, shuffle and repeat, sleep timer, speed, a 10-band equalizer with presets, loudness
   levelling, and restore of your last session.
 - Synced lyrics (tap a line to jump) and plain lyrics that scroll along; format badge and an output-info dialog.
-- Android: media notification, **standby mode** (a dark clock screen with the song), volume follows the system volume.
+- Artists in a credit like "A, B & C" are separate: each is its own tap target in the player, the song menu has "Go to" for
+  every artist and the album, and an artist page lists every song they are credited on.
+- Android: media notification, **standby mode** (a dark clock screen with the song, a grayscale cover tile and a Lyrics
+  style that scrolls several lines with faded edges), volume follows the system volume.
 - Desktop: now playing view, full-screen player, always-on-top mini player, tray menu, media keys, keyboard shortcuts.
 
 **Info, covers and mixes**
 - Song info from MusicBrainz, Deezer, iTunes and TheAudioDB, plus tags and covers read from the audio files.
 - Lyrics from LRCLIB, NetEase, Kugou, QQ Music and lyrics.ovh.
 - Daily mixes, genre and weather mixes, listening statistics, ListenBrainz.
-- Import Spotify playlists (public link, or log in with your own Spotify client id). Songs you do not have are listed greyed
+- Import Spotify playlists (public link, or log in with your own Spotify client id; a logged-in account lists its own
+  playlists for one-tap import or refresh). Songs you do not have are listed greyed
   out in the playlist's order, tap one to open it in Spotify, and a menu copies its real page on Spotify, Apple Music, Deezer,
   Tidal, Amazon Music and YouTube Music.
 - Covers, song info and uploads show their progress in the Tasks page and in a notification.
 
 **Several devices**
-- Local sync between your own devices on the same network: encrypted, paired with a code, merges your library both ways.
-- Linked devices show what is playing and can play, pause and skip.
+- Local sync between your own devices on the same network: encrypted, paired with a code, merges your library both ways:
+  favorites, plays, playlists (with their Spotify link and waiting list), edited tags, song info, lyrics, covers and deleted
+  songs. What you made by hand wins over what was found automatically; a deletion removes the song on the other device too
+  (a sync that would remove more than 2% of the library removes nothing and says so in the log).
+- Linked devices show what the other plays and where the sound goes (headphones, speakers), can play, pause, skip and seek it,
+  and the source can be switched from the player. The PC reads its real Windows output.
 - **Network play**: let other people on your Wi-Fi join a listening session with a PIN or link.
 
 **Backup**
@@ -189,14 +199,15 @@ that need the database or Telegram have no preview yet.
   language. A song in Latin letters outside such a topic cannot be told.
 - **Windows:** the installer needs Windows 10 or newer, 64-bit. Windows 11 on ARM may run it through emulation (not tried); there
   is no native ARM build. It is not signed, so SmartScreen may warn.
+- **Not tried on two devices yet:** the shared player (what the other plays, source switch, output names), the sync of song data,
+  covers, Spotify links and deleted songs, and the PC right-click menu.
 - **Not tried on a device yet:** the greyed-out Spotify songs, deleting duplicates with the new per-post check, the language
   search, the self-adjusting reading speed, folder upload from an SD card, system volume on Windows, the tray, borderless full screen, the themed Spotify login page,
   the device popups, reading with extra bots, the new animations, installing an update through Shizuku, and Log out and
   delete all data.
 - **Memory:** the desktop app uses about 300 to 400 MB at rest, mostly the graphics driver and class data. Each extra bot is
   its own Telegram session started at launch.
-- **Not built yet:** playback handoff between devices, automatic filing, backup to a Telegram topic, a live equalizer level
-  meter, macOS packaging.
+- **Not built yet:** backup to a Telegram topic, a live equalizer level meter, macOS packaging.
 - **Written but not wired up:** `sync/WorkOwner.kt` (splitting background work between linked devices) and
   `recs/Suggestions.kt` (a "neighbours" view).
 - **Secrets on Linux and macOS** are stored as plain files in the app's data folder.
