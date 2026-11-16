@@ -708,3 +708,7 @@ elease` must say Java 25 and the setup exe must start.
 - [~] PC: right click on a song row opens its menu; Alt+Left goes back; sharing copies text to the clipboard or shows the file in Explorer; Spotify import is in the sidebar Tools; the keep-on-device pin shows on album, artist and Telegram lists too.
 - [ ] Not done: right-click menu on sidebar playlists, Go to album or artist in the song menu, Ctrl+F for search.
 - [~] Artists: a credit like "A, B & C" is split; the full player and the PC now-playing panel show each artist as its own tap target (and the album), the song menu has "Go to <artist>" per artist and "Go to album", and an artist page and the Artists tab list a song under each of its artists.
+### Status (16 Nov, end of day)
+- Built and installed (phone release, PC installer) but not seen working on two devices at once: shared player and source switch, output names, sync of song data, covers, Spotify links and deleted songs, the PC right-click menu, Alt+Left, tappable artists and albums, the Spotify account list.
+- Open: `UserSessionTest.deleterBatchesAndReportsRefused` fails (account-delete test, not from the sync work); right-click menu on sidebar playlists; Ctrl+F for search; topic names do not sync between devices; why the first duplicate deletes were refused is still unknown; the 3603 vs 3588 count.
+- Nothing from 16 Nov is pushed.
