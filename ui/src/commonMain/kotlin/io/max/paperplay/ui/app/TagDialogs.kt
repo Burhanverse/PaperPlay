@@ -86,7 +86,7 @@ private fun MatchDialog(backend: CoreBackend, song: Song, notice: (String) -> Un
         title = { Text("Find metadata") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(term, { term = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Search") })
+                OutlinedTextField(term, { term = it }, Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search), keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { if (term.isNotBlank() && !busy) searchKey++ }), label = { Text("Search") })
                 TextButton({ searchKey++ }, enabled = term.isNotBlank() && !busy && !applying) { Text("Search") }
                 val list = results.orEmpty()
                 when {
@@ -215,7 +215,7 @@ private fun CoverDialog(backend: CoreBackend, song: Song, notice: (String) -> Un
                         scope.launch { finish(backend.services.enricher.setCoverFromUrl(listOf(song), url.trim())) }
                     }, enabled = url.isNotBlank() && !working) { Text("Use") }
                 }
-                OutlinedTextField(term, { term = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Search online") })
+                OutlinedTextField(term, { term = it }, Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search), keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { if (term.isNotBlank() && !busy) searchKey++ }), label = { Text("Search online") })
                 TextButton({ searchKey++ }, enabled = term.isNotBlank() && !busy && !working) { Text("Search") }
                 val list = options.orEmpty()
                 when {
