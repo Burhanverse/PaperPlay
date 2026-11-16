@@ -28,6 +28,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +50,7 @@ fun LyricsPane(song: SongUi, backend: PlayerControls, large: Boolean, modifier: 
     var text by remember(id) { mutableStateOf<String?>(null) }
     var loaded by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) { text = backend.lyricsFor(id); loaded = true }
+    var choosing by remember(id) { mutableStateOf(false) }
     val lines = remember(text) { text?.let { io.max.paperplay.core.metadata.parseLrc(it) }.orEmpty() }
     val pos = backend.position.collectAsState()
     val current by remember(lines) { derivedStateOf { lines.indexOfLast { it.timeMs <= pos.value.positionMs } } }
@@ -54,21 +58,57 @@ fun LyricsPane(song: SongUi, backend: PlayerControls, large: Boolean, modifier: 
     LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem(maxOf(0, current - 2)) }
     val ink = MaterialTheme.colorScheme.onPrimaryContainer
     val style = if (large) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleLarge
-    when {
-        !loaded -> Text("Looking for lyrics", modifier.padding(24.dp), style = style, color = ink.copy(alpha = 0.6f))
-        text == null -> Text("No lyrics found for this song.", modifier.padding(24.dp), style = style, color = ink.copy(alpha = 0.6f))
-        lines.isEmpty() -> PlainLyrics(text.orEmpty(), style, ink, backend, song.durationSec * 1000L, modifier)
-        else -> LazyColumn(modifier, state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 48.dp)) {
-            itemsIndexed(lines) { i, l ->
-                Text(
-                    l.text.ifBlank { " " },
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { backend.seekToMs(l.timeMs) }.padding(horizontal = 8.dp, vertical = 10.dp),
-                    style = style.copy(fontWeight = if (i == current) FontWeight.ExtraBold else FontWeight.SemiBold),
-                    color = if (i == current) ink else ink.copy(alpha = 0.4f),
-                )
+    Box(modifier) {
+        when {
+            !loaded -> Text("Looking for lyrics", Modifier.padding(24.dp), style = style, color = ink.copy(alpha = 0.6f))
+            text == null -> Text("No lyrics found for this song.", Modifier.padding(24.dp), style = style, color = ink.copy(alpha = 0.6f))
+            lines.isEmpty() -> PlainLyrics(text.orEmpty(), style, ink, backend, song.durationSec * 1000L, Modifier.fillMaxSize())
+            else -> LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 48.dp)) {
+                itemsIndexed(lines) { i, l ->
+                    Text(
+                        l.text.ifBlank { " " },
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { backend.seekToMs(l.timeMs) }.padding(horizontal = 8.dp, vertical = 10.dp),
+                        style = style.copy(fontWeight = if (i == current) FontWeight.ExtraBold else FontWeight.SemiBold),
+                        color = if (i == current) ink else ink.copy(alpha = 0.4f),
+                    )
+                }
             }
         }
+        androidx.compose.material3.IconButton({ choosing = true }, Modifier.align(Alignment.TopEnd)) {
+            AppIcon(Icons.Rounded.Translate, "Choose lyrics", tint = ink.copy(alpha = 0.7f))
+        }
     }
+    if (choosing) LyricsChoiceDialog(backend, song, onPicked = { text = it; choosing = false }, onDismiss = { choosing = false })
+}
+
+/** Lists the versions of this song's lyrics the sources have; picking one keeps it for this song on every linked device. */
+@Composable
+private fun LyricsChoiceDialog(backend: PlayerControls, song: SongUi, onPicked: (String?) -> Unit, onDismiss: () -> Unit) {
+    var choices by remember(song.id) { mutableStateOf<List<LyricsChoiceUi>?>(null) }
+    LaunchedEffect(song.id) { choices = backend.lyricsChoices(song.id) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose lyrics") },
+        text = {
+            val list = choices
+            when {
+                list == null -> Text("Looking for versions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                list.isEmpty() -> Text("No other versions found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else -> LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    itemsIndexed(list) { _, c ->
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { backend.chooseLyrics(song.id, c.text); onPicked(c.text) }.padding(vertical = 8.dp, horizontal = 4.dp),
+                        ) {
+                            Text(c.label, style = MaterialTheme.typography.titleSmall)
+                            Text(c.preview, maxLines = 2, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onDismiss) { Text("Close") } },
+        dismissButton = { androidx.compose.material3.TextButton({ backend.chooseLyrics(song.id, null); onPicked(null) }) { Text("Automatic") } },
+    )
 }
 
 /**

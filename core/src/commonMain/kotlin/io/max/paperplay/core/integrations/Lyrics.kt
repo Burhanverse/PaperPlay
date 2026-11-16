@@ -235,6 +235,77 @@ private object LyricsCache {
     }
 }
 
+/** One version of a song's lyrics from a source, for the owner to pick: [label] names the source and the script. */
+class LyricsChoice(val label: String, val text: String)
+
+/** The dominant writing system of [text], in words ("Tamil script", "Latin letters"). */
+fun lyricsScriptName(text: String): String {
+    val counts = HashMap<String, Int>()
+    for (c in text) {
+        val code = c.code
+        val name = when (code) {
+            in 0x0B80..0x0BFF -> "Tamil script"
+            in 0x0900..0x097F -> "Devanagari script"
+            in 0x0C00..0x0C7F -> "Telugu script"
+            in 0x0C80..0x0CFF -> "Kannada script"
+            in 0x0D00..0x0D7F -> "Malayalam script"
+            in 0x0A00..0x0A7F -> "Gurmukhi script"
+            in 0x0980..0x09FF -> "Bengali script"
+            in 0x0600..0x06FF -> "Arabic script"
+            in 0x3040..0x30FF -> "Japanese"
+            in 0x4E00..0x9FFF -> "Chinese characters"
+            in 0xAC00..0xD7AF -> "Korean"
+            in 0x0400..0x04FF -> "Cyrillic"
+            else -> if (c.isLetter()) "Latin letters" else null
+        } ?: continue
+        counts[name] = (counts[name] ?: 0) + 1
+    }
+    return counts.maxByOrNull { it.value }?.key ?: "text"
+}
+
+/**
+ * The versions of a song's lyrics the sources have, so the owner can pick one: LRCLIB's records (each in its own script) and NetEase's
+ * original, romanized and translated lyrics. Empty when nothing is found; never throws.
+ */
+suspend fun lyricsChoices(http: HttpFetcher, title: String, artist: String, album: String, durationSec: Int): List<LyricsChoice> {
+    val q = LyricsQuery(title, artist, album, durationSec)
+    val out = ArrayList<LyricsChoice>()
+    withTimeoutOrNull(15_000) {
+        runCatching {
+            val rows = http.getJson("https://lrclib.net/api/search?track_name=${enc(q.title)}&artist_name=${enc(q.artist)}").arr()
+                ?: http.getJson("https://lrclib.net/api/search?q=${enc(q.keyword)}").arr()
+            for (e in rows.orEmpty().take(10)) {
+                val o = e.obj() ?: continue
+                val d = o["duration"].num() ?: 0.0
+                if (q.durationSec > 0 && d > 0 && kotlin.math.abs(d - q.durationSec) > 8) continue
+                val t = o["syncedLyrics"].str()?.takeIf { it.isNotBlank() } ?: o["plainLyrics"].str()?.takeIf { it.isNotBlank() } ?: continue
+                out += LyricsChoice("LRCLIB, ${lyricsScriptName(t)}" + (if (isSyncedLyrics(t)) ", timed" else ", plain"), t)
+            }
+        }
+        runCatching {
+            val h = mapOf("referer" to "https://music.163.com/")
+            val songs = http.getJson("https://music.163.com/api/search/get?s=${enc(q.keyword)}&type=1&limit=6&offset=0", h)
+                .obj()?.get("result").obj()?.get("songs").arr().orEmpty()
+            for (e in songs) {
+                val o = e.obj() ?: continue
+                if (!titleOk(q.cleanTitle, o["name"].str().orEmpty())) continue
+                val d = (o["duration"].num() ?: 0.0) / 1000
+                if (q.durationSec > 0 && d > 0 && kotlin.math.abs(d - q.durationSec) > 6) continue
+                val artists = o["artists"].arr().orEmpty().joinToString(" ") { it.obj()?.get("name").str().orEmpty() }
+                if (!artistOk(q.mainArtist, artists)) continue
+                val id = o["id"].num()?.toLong() ?: continue
+                val r = http.getJson("https://music.163.com/api/song/lyric?id=$id&lv=1&kv=1&tv=-1&rv=-1", h).obj() ?: continue
+                fun part(k: String) = r[k].obj()?.get("lyric").str()?.takeIf { it.isNotBlank() }
+                part("lrc")?.let { out += LyricsChoice("NetEase, original (${lyricsScriptName(it)})", it) }
+                part("romalrc")?.let { out += LyricsChoice("NetEase, romanized", it) }
+                part("tlyric")?.let { out += LyricsChoice("NetEase, translation (${lyricsScriptName(it)})", it) }
+                break
+            }
+        }
+    }
+    return out.distinctBy { it.text }
+}
+
 /**
  * Looks a song's lyrics up on every source at once (each behind its own rate gate and timeout) and returns the
  * best by source order: the first timed result, else the first plain one. Results and misses are cached for the

@@ -143,6 +143,21 @@ private fun ItemSync.live() = removedAt == null || removedAt <= addedAt
 
 private const val LYRICS_BUDGET = 8_000_000
 const val LYRICS_META_KEY = "lyrics_meta"
+
+/** Which songs have lyrics chosen by hand, and when each text was set: a preference, so no table changes. uid -> [manual 0/1, time]. */
+fun readLyricsMeta(library: LibraryRepository): Map<String, LyricsMeta> {
+    val o = runCatching { Json.parseToJsonElement(library.pref(LYRICS_META_KEY) ?: "{}").jsonObject }.getOrNull() ?: return emptyMap()
+    return o.mapNotNull { (k, v) ->
+        val a = v as? JsonArray ?: return@mapNotNull null
+        val manual = (a.getOrNull(0) as? JsonPrimitive)?.content == "1"
+        val at = (a.getOrNull(1) as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
+        k to LyricsMeta(manual, at)
+    }.toMap()
+}
+
+fun writeLyricsMeta(library: LibraryRepository, m: Map<String, LyricsMeta>) {
+    library.setPref(LYRICS_META_KEY, JsonObject(m.mapValues { (_, v) -> JsonArray(listOf(JsonPrimitive(if (v.manual) 1 else 0), JsonPrimitive(v.at))) }).toString())
+}
 private const val GONE_KEEP_MS = 365L * 24 * 3600 * 1000
 
 /** Builds a snapshot from the database and applies a merged one back. Songs this device does not have are skipped. */
@@ -190,20 +205,9 @@ class SnapshotStore(private val library: LibraryRepository) {
         return Snapshot(LibraryState(songs, goneRecord(), lists), extra, order)
     }
 
-    /** Which songs have lyrics chosen by hand, and when each text was set: a preference, so no table changes. uid -> [manual 0/1, time]. */
-    private fun lyricsMetaOf(): Map<String, LyricsMeta> {
-        val o = runCatching { Json.parseToJsonElement(library.pref(LYRICS_META_KEY) ?: "{}").jsonObject }.getOrNull() ?: return emptyMap()
-        return o.mapNotNull { (k, v) ->
-            val a = v as? JsonArray ?: return@mapNotNull null
-            val manual = (a.getOrNull(0) as? JsonPrimitive)?.content == "1"
-            val at = (a.getOrNull(1) as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
-            k to LyricsMeta(manual, at)
-        }.toMap()
-    }
+    private fun lyricsMetaOf(): Map<String, LyricsMeta> = readLyricsMeta(library)
 
-    private fun saveLyricsMeta(m: Map<String, LyricsMeta>) {
-        library.setPref(LYRICS_META_KEY, JsonObject(m.mapValues { (_, v) -> JsonArray(listOf(JsonPrimitive(if (v.manual) 1 else 0), JsonPrimitive(v.at))) }).toString())
-    }
+    private fun saveLyricsMeta(m: Map<String, LyricsMeta>) = writeLyricsMeta(library, m)
 
     /** The deletion record kept by the delete queue: song unique ids and content keys, with when they were deleted. Old entries expire. */
     private fun goneRecord(): Map<String, Long> {

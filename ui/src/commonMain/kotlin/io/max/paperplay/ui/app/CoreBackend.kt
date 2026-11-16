@@ -105,7 +105,16 @@ interface PlayerControls {
     fun playQueueIndex(index: Int)
     fun setSleepTimer(minutes: Int?)
     suspend fun lyricsFor(songId: String): String?
+
+    /** The versions of this song's lyrics the sources have (original, romanized, translation, other records). */
+    suspend fun lyricsChoices(songId: String): List<LyricsChoiceUi> = emptyList()
+
+    /** Keeps [text] as this song's lyrics, chosen by hand (it then wins over what other devices found); null goes back to automatic. */
+    fun chooseLyrics(songId: String, text: String?) {}
 }
+
+/** One lyrics version in the picker: its source and script, a two line preview, and the text. */
+data class LyricsChoiceUi(val label: String, val preview: String, val text: String)
 
 class CoreBackend(val services: AppServices) : PlayerControls {
     private val backendJob = SupervisorJob(services.scope.coroutineContext.job)
@@ -271,6 +280,30 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             services.driver.execute(null, "UPDATE songs SET lyrics = ? WHERE unique_id = ?", 2) { bindString(0, found); bindString(1, songId) }
         }
         return found
+    }
+
+    override suspend fun lyricsChoices(songId: String): List<LyricsChoiceUi> {
+        val song = byId[songId] ?: return emptyList()
+        val found = runCatching {
+            io.max.paperplay.core.integrations.lyricsChoices(http, song.title, song.artist, song.album, song.duration_sec.toInt())
+        }.getOrDefault(emptyList())
+        return found.map { c ->
+            val lines = io.max.paperplay.core.metadata.parseLrc(c.text).map { it.text }.ifEmpty { c.text.lines() }.map { it.trim() }.filter { it.isNotEmpty() }
+            LyricsChoiceUi(c.label, lines.take(2).joinToString("\n"), c.text)
+        }
+    }
+
+    override fun chooseLyrics(songId: String, text: String?) {
+        val now = nowMoment().epochMs
+        scope.launch {
+            runCatching {
+                services.driver.execute(null, "UPDATE songs SET lyrics = ? WHERE unique_id = ?", 2) { bindString(0, text); bindString(1, songId) }
+                val meta = io.max.paperplay.core.sync.readLyricsMeta(repo).toMutableMap()
+                if (text == null) meta.remove(songId) else meta[songId] = io.max.paperplay.core.sync.LyricsMeta(manual = true, at = now)
+                io.max.paperplay.core.sync.writeLyricsMeta(repo, meta)
+                repo.invalidate()
+            }
+        }
     }
 
     private var lyricsJob: kotlinx.coroutines.Job? = null
