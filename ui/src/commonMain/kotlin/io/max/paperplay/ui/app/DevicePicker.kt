@@ -40,8 +40,15 @@ class DeviceUi(val id: String, val name: String, val active: Boolean)
 fun DevicePickerButton(devices: List<DeviceUi> = listOf(DeviceUi("this", "This PC", true)), modifier: Modifier = Modifier, onOpen: ((String) -> Unit)? = null) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        IconButton({ open = !open }) {
-            AppIcon(Icons.Rounded.Devices, "Devices", Modifier.size(22.dp), tint = if (open || LocalOutputSwitch.current?.active?.collectAsState()?.value != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        val activeId = LocalOutputSwitch.current?.active?.collectAsState()?.value
+        val linked = LocalLanSync.current?.connected?.collectAsState()?.value.orEmpty()
+        val remote = activeId?.let { id -> linked.firstOrNull { it.id == id } }
+        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ open = !open }) {
+                AppIcon(Icons.Rounded.Devices, "Devices", Modifier.size(22.dp), tint = if (open || activeId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // Says where the music is playing when it is not on this device.
+            if (remote != null) Text("On ${remote.name}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
         }
         if (open) DevicePickerPopup(devices, onOpen) { open = false }
     }

@@ -90,6 +90,7 @@ import io.max.paperplay.ui.components.CoverImage
 import io.max.paperplay.ui.components.SongMenu
 import io.max.paperplay.ui.components.WavySeek
 import io.max.paperplay.ui.logic.formatDuration
+import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.FastForward
@@ -281,14 +282,24 @@ private fun PlayerBody(
                 val out = io.max.paperplay.ui.rememberOutputDevice()
                 var devicesOpen by remember { mutableStateOf(false) }
                 val switchOutput = io.max.paperplay.ui.rememberOutputSwitcher()
+                // When another linked device is the one playing, the pill says so instead of naming this phone's speaker or headphones.
+                val activeId = LocalOutputSwitch.current?.active?.collectAsState()?.value
+                val linked = LocalLanSync.current?.connected?.collectAsState()?.value.orEmpty()
+                val remoteDevice = activeId?.let { id -> linked.firstOrNull { it.id == id } }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     Row(
                         Modifier.clip(RoundedCornerShape(50)).background(scheme.onSurface.copy(alpha = 0.14f))
-                            .clickable(enabled = switchOutput != null || onDevices != null) { if (switchOutput != null) switchOutput() else devicesOpen = true }.padding(horizontal = 18.dp, vertical = 10.dp),
+                            .clickable(enabled = switchOutput != null || onDevices != null) { if (onDevices != null) devicesOpen = true else switchOutput?.invoke() }.padding(horizontal = 18.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        AppIcon(if (out.external) Icons.Rounded.Headphones else Icons.Rounded.PhoneAndroid, null, Modifier.size(20.dp))
-                        Text(out.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, modifier = Modifier.widthIn(max = 200.dp))
+                        AppIcon(
+                            when {
+                                remoteDevice != null -> if (remoteDevice.desktop) Icons.Rounded.Computer else Icons.Rounded.PhoneAndroid
+                                out.external -> Icons.Rounded.Headphones
+                                else -> Icons.Rounded.PhoneAndroid
+                            }, null, Modifier.size(20.dp),
+                        )
+                        Text(if (remoteDevice != null) "Playing on ${remoteDevice.name}" else out.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, modifier = Modifier.widthIn(max = 200.dp))
                     }
                 }
                 if (devicesOpen && onDevices != null) PhoneDevicesDialog(onDevices, switchOutput, song) { devicesOpen = false }
