@@ -67,6 +67,12 @@ import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.material.icons.rounded.Upload
+import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.MonitorHeart
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.Rule
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DriveFileMove
@@ -124,6 +130,9 @@ internal val libraryPages = listOf(
 internal val toolPages = listOf(
     SidePage("sort", "Sort General", Icons.Rounded.DriveFileMove), SidePage("dupes", "Duplicates", Icons.Rounded.ContentCopy),
     SidePage("missing", "Song info left", Icons.Rounded.Rule),
+    SidePage("repair", "Scan library", Icons.Rounded.Sync), SidePage("channels", "Channels and chats", Icons.Rounded.Forum),
+    SidePage("stats", "Listening statistics", Icons.Rounded.BarChart), SidePage("cache", "Cache manager", Icons.Rounded.Storage),
+    SidePage("log", "Activity log", Icons.Rounded.MonitorHeart),
 )
 
 /** Tints the native title bar with the colour the page gradient starts from, so the two meet without a seam. */
@@ -149,6 +158,7 @@ fun Sidebar(
 ) {
     val readTelegram = LocalTelegramLists.current
     val telegram = remember(readTelegram, playlists.size) { readTelegram() }
+    var toolsOpen by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
     val prefs = LocalUiPrefs.current
     val look = prefs?.selectionLook ?: SelectionLook.Fill
@@ -205,8 +215,17 @@ fun Sidebar(
         items(mainPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
         item { label("Your library") }
         items(libraryPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
-        item { label("Tools") }
-        items(toolPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, false) { onPage(p.id) } }
+        // Tools fold away like a drop-down; the arrow is the only thing shown when the sidebar is narrow.
+        item {
+            Row(
+                Modifier.fillMaxWidth().clickable { toolsOpen = !toolsOpen }.padding(start = if (expanded) 20.dp else 0.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center,
+            ) {
+                if (expanded) Text("Tools", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                AppIcon(if (toolsOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (toolsOpen) "Hide tools" else "Show tools", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
+            }
+        }
+        if (toolsOpen) items(toolPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, false) { onPage(p.id) } }
         item { item("settings", "Settings", { AppIcon(Icons.Rounded.Settings, null, Modifier.size(22.dp)) }, false) { onPage("settings") } }
         item { label("Playlists") { IconButton(onNewPlaylist, Modifier.size(32.dp)) { AppIcon(Icons.Rounded.Add, "New playlist", Modifier.size(20.dp)) } } }
         items(playlists, key = { it.id }) { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
