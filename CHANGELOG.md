@@ -2,6 +2,18 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.4] - 2026-11-16
+
+### Documentation
+- Audio engine rules and checklist ([`4a15dd4`](https://github.com/maxcodl/PaperPlay/commit/4a15dd4bea7ac3477afa122868d729df71e597e9))
+
+### Other changes
+- Ui: equalizer in the player menu, bass slider, earphone presets, engine rows in output info ([`5356454`](https://github.com/maxcodl/PaperPlay/commit/53564548c2f2e469e6d7dd9bdc2b59cf74c91bc4))
+- Player: run the engine equalizer and bass in the Android audio path ([`d63107e`](https://github.com/maxcodl/PaperPlay/commit/d63107e79a3eec3ef10f74fcc0a98b48cb46b0a7))
+- Engine: Rust equalizer, bass and limiter library ([`faee885`](https://github.com/maxcodl/PaperPlay/commit/faee8850b5229e724f3f5f581d5f9e6ce01f5b91))
+
+**Full changes:** [v1.8.3...v1.8.4](https://github.com/maxcodl/PaperPlay/compare/v1.8.3...v1.8.4)
+
 ## [1.8.3] - 2026-11-16
 
 ### Fixed
