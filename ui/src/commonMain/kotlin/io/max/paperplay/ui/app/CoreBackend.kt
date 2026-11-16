@@ -562,6 +562,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun clearLog() { log.value = emptyList() }
 
     init {
+        services.activityLog = { source, line -> addLog(source, line) }
         scope.launch { services.auth.collect { if (it.isNotEmpty()) addLog("Telegram", it.removePrefix("authorizationState")) } }
         scope.launch { services.scanner.report.collect { if (it != null) addLog("Scan", it) } }
         scope.launch { services.error.collect { if (it != null) addLog("Telegram", it, error = true) } }

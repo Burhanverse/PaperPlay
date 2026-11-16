@@ -243,8 +243,13 @@ class AppServices(
         io.max.paperplay.core.dupes.DeleteQueue(
             scope, caller, bot, acct, io.max.paperplay.core.dupes.LibraryDeleteStore(library.repo, rules),
             rules, { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) },
+            log = { line -> io.max.paperplay.player.PlayLog.log("delete", line); activityLog("Delete", line) },
         )
     }
+
+    /** Where background work writes lines for the Activity log; the screen layer sets it. */
+    @kotlin.concurrent.Volatile
+    var activityLog: (source: String, line: String) -> Unit = { _, _ -> }
 
     /** Moves songs between forum topics by reposting them. */
     val topicMover: io.max.paperplay.core.filing.TopicMover by lazy {

@@ -267,6 +267,7 @@ class DeleteQueue(
 
     private suspend fun deleteDuplicateBatch(batch: List<Pending>) {
         val main = mainChat()
+        log("Deleting ${batch.size} posts: checking the posts to keep first")
         // This device may not have heard that a kept post was moved or deleted; the only live post
         // of a song is never deleted as a "copy". One question per 100 keepers.
         val keepers = batch.map { it.keep.chatId to it.keep.messageId }.toSet()
@@ -308,6 +309,7 @@ class DeleteQueue(
                 else -> ok += e
             }
         }
+        log("Check done: ${ok.size} to delete, ${batch.size - ok.size} not deleted (keeper gone or unchecked)")
         for ((chat, entries) in ok.groupBy { it.post.chatId }) {
             for (e in entries) {
                 val loser = e.post.song
@@ -317,6 +319,7 @@ class DeleteQueue(
             deleteChatPosts(chat, entries)
         }
         store.announceChange()
+        log("Batch finished")
     }
 
     private suspend fun deleteChatPosts(chat: Long, entries: List<Pending>) {
