@@ -31,6 +31,9 @@ private const val SESSION_POS = "session_pos"
 /** The largest step between two position updates that is playing; a bigger forward jump is a seek, not listening. */
 private const val MAX_LISTEN_STEP_MS = 5_000L
 
+/** A second rewind press within this long goes to the song before; one press only plays the song again from the start. */
+const val PREVIOUS_AGAIN_MS = 2_500L
+
 /** What the player UI shows. [index] is into [queue], which is in play order (shuffled when [shuffle]). */
 data class NowPlaying(
     val song: Song? = null,
@@ -55,6 +58,7 @@ class PlaybackController(
     private val resolver: TrackResolver,
     private val repo: LibraryRepository,
     private val scope: CoroutineScope,
+    private val clock: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
 ) {
     private class Meta(val queue: List<Song>, val shuffle: Boolean, val repeat: Repeat, val error: String?)
 
@@ -311,7 +315,26 @@ class PlaybackController(
         engine.play()
     }
 
-    fun previous() = command { playIntent = true; engine.previous(); engine.play() }
+    @kotlin.concurrent.Volatile private var lastPreviousAt = 0L
+
+    /**
+     * Rewind. One press always plays this song again from the start. A second press within [PREVIOUS_AGAIN_MS] goes to the song before it;
+     * with no song before it (the first one of the list) every press just plays the song again from the start.
+     */
+    fun previous() = command {
+        playIntent = true
+        val now = clock()
+        val again = lastPreviousAt != 0L && now - lastPreviousAt in 0..PREVIOUS_AGAIN_MS
+        lastPreviousAt = now
+        if (again && engine.currentIndex.value > 0) {
+            lastPreviousAt = 0L
+            engine.seek(0)
+            engine.previous()
+        } else {
+            engine.seek(0)
+        }
+        engine.play()
+    }
 
     /** Reorders the rest of the queue around the song now playing, without restarting it. */
     fun setShuffle(on: Boolean) = command {

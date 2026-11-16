@@ -82,6 +82,55 @@ private class FakePlayerEngine : PlayerEngine {
 }
 
 class PlaybackControllerTest {
+    @Test
+    fun rewindRestartsTheSongAndAGoesBackOnlyOnASecondQuickPress() = runBlocking {
+        var clock = 10_000L
+        var now = 1_000L
+        val db = LibraryDatabase(libraryDriver())
+        val repo = LibraryRepository(LibraryRepo(db) { ++now }) { ++now }
+        val songs = (1L..3L).map { song(it) }
+        songs.forEach { db.songsQueries.insertSong(it) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = FakePlayerEngine()
+        val controller = PlaybackController(engine, TrackResolver { null }, repo, scope, clock = { clock })
+        try {
+            controller.setQueue(songs, startIndex = 1)
+            await { engine.lastQueue.size == 3 && engine.mutableCurrentIndex.value == 1 }
+
+            // One press: the same song again from the start.
+            engine.mutablePositionMs.value = 90_000L
+            controller.previous()
+            await { engine.mutablePositionMs.value == 0L }
+            assertEquals(1, engine.mutableCurrentIndex.value)
+
+            // Much later, one press again: still the same song.
+            clock += 10_000
+            engine.mutablePositionMs.value = 30_000L
+            controller.previous()
+            await { engine.mutablePositionMs.value == 0L }
+            assertEquals(1, engine.mutableCurrentIndex.value)
+
+            // A second press within the window: the song before it.
+            clock += 1_000
+            controller.previous()
+            await { engine.mutableCurrentIndex.value == 0 }
+
+            // First song of the list: every press restarts it, never goes anywhere.
+            engine.mutablePositionMs.value = 50_000L
+            clock += 20_000
+            controller.previous()
+            await { engine.mutablePositionMs.value == 0L }
+            engine.mutablePositionMs.value = 5_000L
+            clock += 500
+            controller.previous()
+            await { engine.mutablePositionMs.value == 0L }
+            assertEquals(0, engine.mutableCurrentIndex.value)
+        } finally {
+            controller.release()
+            scope.cancel()
+        }
+    }
+
     private fun song(id: Long) = Song(
         1L, id, "u$id", "r$id", "Title $id", "Artist", "Album", 200, 10_000, "audio/flac", "t$id.flac", id,
         null, null, null, null, null, null, false, false, false, 0, null, 0, null, false, 0, 0, 0, false, 0, 0, 0,
