@@ -318,7 +318,9 @@ class UserSession(
                 val next = page.long("next_from_message_id") ?: 0L
                 // TDLib may answer a page with fewer posts than asked, even none, while more follow; only the end marker or several empty pages in a row stop the read.
                 emptyPages = if (messages.isEmpty()) emptyPages + 1 else 0
-                if (reached || next == 0L || next == from || emptyPages > 3) break
+                if (reached || next == 0L || next == from) break
+                // A cursor that still moves means more may follow; ending here would record a partial read as whole.
+                if (emptyPages > 3) throw TdError(0, "Telegram stopped returning posts before the end of the chat. Try the read again.")
                 from = next
                 pause(60_000L / readingRate())
             }
@@ -465,8 +467,8 @@ class UserSession(
             true
         } catch (e: CancellationException) {
             throw e
-        } catch (e: TdError) {
-            lastDeleteError = e.message
+        } catch (e: Exception) {
+            lastDeleteError = e.message ?: e::class.simpleName
             false
         }
     }
@@ -563,7 +565,8 @@ class UserAccountDeleter(private val session: UserSession) : io.max.paperplay.co
             for (id in chunk) if (!session.deleteMessages(chatId, listOf(id))) left += id
         }
         // Telegram is asked what is still there: a delete that answered ok for a post the account never loaded deleted nothing.
-        val alive = session.existing(chatId, ids) ?: return left
+        // Not asked means not confirmed: everything stays unresolved.
+        val alive = session.existing(chatId, ids) ?: return ids
         return ids.filter { it in alive }
     }
 }
