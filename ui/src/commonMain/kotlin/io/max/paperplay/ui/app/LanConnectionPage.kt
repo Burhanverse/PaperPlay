@@ -12,6 +12,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
@@ -483,17 +486,40 @@ private fun DeviceGroup(
             title, icon = Icons.Rounded.Devices,
             subtitle = if (connected) "Connected" else if (paired) "Paired, not connected" else "Not paired yet",
         ) { Button(onConnect, enabled = !connected) { Text(if (connected) "Connected" else "Connect") } }
-        for (k in addresses) {
-            Row(Modifier.padding(start = 56.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("${k.host}:${k.port}", style = MaterialTheme.typography.bodyMedium)
-                    Text(resultText(k.lastResult), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // The addresses sit in a dropdown: closed it shows the first one and how many there are.
+        var open by remember { mutableStateOf(false) }
+        if (addresses.isNotEmpty()) Row(
+            Modifier.fillMaxWidth().clickable { open = !open }.padding(start = 56.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (open) "Addresses (${addresses.size})" else "${addresses.first().host}:${addresses.first().port}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    if (open) "Tap to close" else "${resultText(addresses.first().lastResult)}${if (addresses.size > 1) ". ${addresses.size - 1} more" else ""}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            AppIcon(if (open) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown, if (open) "Hide addresses" else "Show addresses")
+        }
+        androidx.compose.animation.AnimatedVisibility(open) {
+            Column {
+                for (k in addresses) {
+                    Row(Modifier.padding(start = 56.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${k.host}:${k.port}", style = MaterialTheme.typography.bodyMedium)
+                            Text(resultText(k.lastResult), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton({ onEdit(k.key) }) { AppIcon(Icons.Rounded.Edit, "Edit address ${k.host}") }
+                        IconButton({ onDelete(k.key) }) { AppIcon(Icons.Rounded.Delete, "Delete address ${k.host}") }
+                    }
                 }
-                IconButton({ onEdit(k.key) }) { AppIcon(Icons.Rounded.Edit, "Edit address ${k.host}") }
-                IconButton({ onDelete(k.key) }) { AppIcon(Icons.Rounded.Delete, "Delete address ${k.host}") }
+                TextButton(onAdd, Modifier.padding(start = 48.dp)) { Text("Add an address of $title") }
             }
         }
-        TextButton(onAdd, Modifier.padding(start = 48.dp)) { Text("Add an address of $title") }
+        if (addresses.isEmpty()) TextButton(onAdd, Modifier.padding(start = 48.dp)) { Text("Add an address of $title") }
     }
 }
 
