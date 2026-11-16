@@ -193,7 +193,15 @@ class TdStreamSource(
         }
         if (available <= 0 || path.isEmpty()) return null
         val n = minOf(available, maxOf(want.toLong(), BLOCK_BYTES.toLong()), song.size - offset).toInt()
-        val bytes = readRange(path, offset, n)
+        // TDLib moves a finished download out of its temp folder, so the path seen while it downloaded can vanish near the end. Forget it and ask TDLib for the new one.
+        val bytes = try {
+            readRange(path, offset, n)
+        } catch (e: Exception) {
+            PlayLog.log("file", "\"${song.title}\": file moved or gone at $path (${e.message}); asking TDLib for the new path")
+            path = ""
+            block = null
+            return null
+        }
         if (bytes.isEmpty()) return null
         block = Block(offset, bytes)
         return if (bytes.size <= want) bytes else bytes.copyOf(want)
