@@ -167,7 +167,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             notice = { scope.launch { snack.showSnackbar(it) } },
             playNext = { s -> backend.playNext(s); scope.launch { snack.showSnackbar("Plays next") } },
             setPinned = { s, p -> backend.setPinned(s.id, p) },
-            deleteSong = { s -> backend.deleteSong(s.id) { m -> scope.launch { snack.showSnackbar(m) } } },
+            deleteSong = { s ->
+                // A repeat row stands for one extra post of a file; deleting it by the file's id would delete the main post.
+                if (s.copyKey != null) scope.launch { snack.showSnackbar("Delete repeated posts from the Duplicates page") }
+                else backend.deleteSong(s.id) { m -> scope.launch { snack.showSnackbar(m) } }
+            },
             telegramLink = backend::telegramLink,
             findMetadata = { s -> tagDialogs.match = s },
             editTags = { s -> tagDialogs.tags = s },
@@ -406,6 +410,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                             },
                             onPlaylist = { g -> navigate { detail = Detail.Playlist(g.id, g.name); settings = false } },
                             onNewPlaylist = { newPlaylist = true },
+                            onTelegram = { t -> navigate { detail = Detail.Songs(t.name, t.songs); settings = false } },
                             modifier = Modifier.animatedWidth(if (sidebarExpanded) prefs.sidebarWidth.dp else 72.dp).fillMaxHeight(),
                         )
                         Spacer(Modifier.width(12.dp))

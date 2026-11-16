@@ -145,7 +145,10 @@ fun Sidebar(
     page: String, playlistId: String?, playlists: List<GroupUi>,
     expanded: Boolean, onToggle: () -> Unit,
     onPage: (String) -> Unit, onPlaylist: (GroupUi) -> Unit, onNewPlaylist: () -> Unit, modifier: Modifier = Modifier,
+    onTelegram: (CoreBackend.TelegramList) -> Unit = {},
 ) {
+    val readTelegram = LocalTelegramLists.current
+    val telegram = remember(readTelegram, playlists.size) { readTelegram() }
     val scheme = MaterialTheme.colorScheme
     val prefs = LocalUiPrefs.current
     val look = prefs?.selectionLook ?: SelectionLook.Fill
@@ -207,6 +210,13 @@ fun Sidebar(
         item { item("settings", "Settings", { AppIcon(Icons.Rounded.Settings, null, Modifier.size(22.dp)) }, false) { onPage("settings") } }
         item { label("Playlists") { IconButton(onNewPlaylist, Modifier.size(32.dp)) { AppIcon(Icons.Rounded.Add, "New playlist", Modifier.size(20.dp)) } } }
         items(playlists, key = { it.id }) { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
+        // The main chat's topics (and starred channels) sit apart from the playlists you made.
+        if (telegram.isNotEmpty()) {
+            item { label("From Telegram") }
+            items(telegram, key = { it.key }) { t ->
+                item(t.key, t.name, { CoverGrid(t.songs.mapNotNull { it.coverUri }.distinct().take(4), t.key, 28.dp, 6.dp) }, false) { onTelegram(t) }
+            }
+        }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }

@@ -83,6 +83,8 @@ fun HomeScreen(
     name: String = "",
 ) {
     val songs = (lib.songs as? Load.Ready)?.value.orEmpty()
+    val readTelegram = LocalTelegramLists.current
+    val telegram = remember(readTelegram, lib.playlists.size) { readTelegram() }
     // Quick tiles: favorites, every playlist, then generated collections to make at least six. Three stack in a column; swipe sideways for more.
     val tileRows = remember(favorites, lib.playlists, home.tiles, actions) {
         buildList<Pair<GroupUi, () -> Unit>> {
@@ -158,6 +160,21 @@ fun HomeScreen(
                 }
             }
         }
+        // The main chat's topics and starred channels, apart from the playlists you made; swipe sideways for the rest.
+        if (ready && telegram.isNotEmpty()) item {
+            Column {
+                Section("From Telegram")
+                LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    items(telegram, key = { it.key }) { t ->
+                        Column(Modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable { onOpen(Detail.Songs(t.name, t.songs)) }.padding(8.dp)) {
+                            CoverGrid(t.songs.mapNotNull { it.coverUri }.distinct().take(4), t.key, cardSize, 10.dp)
+                            Text(t.name, Modifier.padding(top = 8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                            Text("${t.songs.size} songs", maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
         items(if (ready) home.shelves else emptyList(), key = { it.title }) { shelf ->
             when (shelf.kind) {
                 ShelfKindUi.Songs -> SongShelf(shelf.title, shelf.songs, currentId, actions)
@@ -212,6 +229,8 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
     // Scan progress changes every second, so a swipe dismisses the whole run, not just the line that was showing.
     val key = if (text != null && text == scan?.text) "scan" else text
     if (text == null) { dismissed = null; offset = 0f }
+    // A dismissal belongs to one scan run: when the scan ends, the next one shows again.
+    if (scan == null && dismissed == "scan") dismissed = null
     androidx.compose.runtime.LaunchedEffect(key) { if (key != dismissed) offset = 0f }
     // A message that stays (not scan progress, which keeps changing) goes away after 20 seconds.
     androidx.compose.runtime.LaunchedEffect(if (scan != null && conn.error == null) null else text) {
