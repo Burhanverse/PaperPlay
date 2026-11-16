@@ -34,6 +34,9 @@ class TdStreamSource(
 ) : StreamSource {
     override val size: Long get() = song.size
 
+    /** Downloads the whole file (not a sliding window) and is not cancelled on pause: the song playing and the next two. */
+    @Volatile var whole = false
+
     @Volatile private var fileId = 0
     @Volatile private var path = ""
     @Volatile private var completed = false
@@ -114,7 +117,7 @@ class TdStreamSource(
 
     private fun windowBytes(offset: Long, length: Int): Long {
         val remaining = (song.size - offset).coerceAtLeast(0L)
-        if (remaining <= 0L || song.pinned || song.size <= WHOLE_FILE_BYTES) return 0L
+        if (remaining <= 0L || song.pinned || whole || song.size <= WHOLE_FILE_BYTES) return 0L
         val demand = maxOf(length.toLong(), 1L)
         val fromBitrate = if (song.duration_sec > 0 && song.size > 0) {
             ((song.size + song.duration_sec - 1) / song.duration_sec) * windowSeconds
@@ -146,9 +149,9 @@ class TdStreamSource(
         if (completed) return
         val window = windowBytes(0L, 0)
         val have = prefix
-        if (!song.pinned && window > 0L && have >= window) return
+        if (!song.pinned && !whole && window > 0L && have >= window) return
         paused = false
-        val limit = if (song.pinned) 0L else maxOf(0L, window - have)
+        val limit = if (song.pinned || whole) 0L else maxOf(0L, window - have)
         requestDownload(have, limit, PREFETCH_PRIORITY)
     }
 
@@ -165,6 +168,7 @@ class TdStreamSource(
 
     /** Stops any active download for non-pinned songs. Partial bytes stay on disk. */
     suspend fun cancel() {
+        if (whole) return
         paused = true
         requestedUntil = 0L
         if (fileId == 0 || completed || song.pinned) return
@@ -349,9 +353,28 @@ class TrackResolver(
     /** The start of [song]'s file, once playback has fetched it; see [TdStreamSource.head]. */
     suspend fun headOf(song: Song): ByteArray? = sources.value[song.unique_id]?.head()
 
+    @Volatile private var wholeIds: Set<String> = emptySet()
+
+    /**
+     * Downloads [songs] (the one playing and the next two) in full, ahead of time, so a seek anywhere in them is instant. They keep
+     * downloading when paused; a song that leaves the list goes back to the sliding window.
+     */
+    suspend fun fullyDownload(songs: List<Song>) {
+        val ids = songs.map { it.unique_id }.toSet()
+        // Songs that left the group stop being whole.
+        sources.value.filterKeys { it !in ids }.values.forEach { it.whole = false }
+        wholeIds = ids
+        for (s in songs) {
+            if (s.unique_id in external.value) continue
+            val src = sourceOf(s)
+            src.whole = true
+            runCatching { src.prefetch() }
+        }
+    }
+
     /** Keeps active downloads strictly to [current] and [next] (or pauses all when not playing). */
     suspend fun window(current: Song?, next: Song?, playing: Boolean = true, previous: Song? = null) {
-        val keep = setOfNotNull(current?.unique_id, next?.unique_id, previous?.unique_id)
+        val keep = setOfNotNull(current?.unique_id, next?.unique_id, previous?.unique_id) + wholeIds
         val stale = sources.value.filterKeys { it !in keep }
         if (stale.isNotEmpty()) {
             sources.update { it - stale.keys }

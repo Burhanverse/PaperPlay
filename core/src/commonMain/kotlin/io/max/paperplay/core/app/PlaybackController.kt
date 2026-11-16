@@ -134,6 +134,8 @@ class PlaybackController(
                     playIntent = false
                     val active = intent || engine.state.value == PlayerState.Playing || engine.state.value == PlayerState.Loading
                     runCatching { resolver.window(song, next, playing = active, previous = prev) }
+                    // The song and the next two come down in full, so seeking in them never waits for Telegram.
+                    if (song != null) launch { runCatching { resolver.fullyDownload(listOf(song) + q.drop(idx + 1).take(2)) } }
                     if (active) {
                         if (next != null) launch { runCatching { resolver.prefetch(next) } }
                         if (prev != null) {
@@ -397,7 +399,7 @@ class PlaybackController(
                 engine.setQueue(order.map(resolver::resolve), index)
                 if (seekMs > 0) engine.seek(seekMs)
             }
-            scope.launch { runCatching { resolver.prefetch(song) } }
+            scope.launch { runCatching { resolver.fullyDownload(order.drop(index).take(3)) } }
             warm.await()?.let { err ->
                 // The look-up can fail early (the chat is still loading) and succeed when the player asks again. Show the
                 // error only if the song does not start; a banner over a song that plays is wrong.
