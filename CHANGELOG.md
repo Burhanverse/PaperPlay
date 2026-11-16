@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.2] - 2026-11-16
+
+### Other changes
+- Playback: picking from the queue keeps its order (shuffle no longer reshuffles it) and rewind goes back to the song played before ([`0912b8c`](https://github.com/maxcodl/ PaperPlay/commit/0912b8cce0976c0ccfbe973a56a4eb88e2745bed))
+
+**Full changes:** [v1.8.1...v1.8.2](https://github.com/maxcodl/ PaperPlay/compare/v1.8.1...v1.8.2)
+
 ## [1.8.1] - 2026-11-16
 
 ### Other changes
