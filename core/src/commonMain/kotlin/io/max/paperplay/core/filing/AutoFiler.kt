@@ -58,7 +58,11 @@ class AutoFiler(
     private val _state = MutableStateFlow(AutoFileState())
     val state: StateFlow<AutoFileState> = _state
     private var cancelled = false
-    private val failed = HashSet<String>()
+    /** Songs that failed, with when; they are left out for an hour, then tried again. */
+    private val failed = HashMap<String, Long>()
+    private var runMain: Long? = null
+    private fun now() = kotlin.time.Clock.System.now().toEpochMilliseconds()
+    private fun recentlyFailed(k: String) = failed[k]?.let { now() - it < RETRY_MS } == true
 
     /** True when the owner has switched automatic filing on (Sort General page). */
     fun enabled(): Boolean = repo.pref(PREF_ON) == "true"
@@ -93,7 +97,7 @@ class AutoFiler(
         val copyUnique = copies.filter { it.chat_id == mainChat }.mapTo(HashSet()) { it.unique_id }
         val done = filedKeys()
         val candidates = all.filter {
-            it.chat_id != mainChat && key(it) !in done && key(it) !in failed &&
+            it.chat_id != mainChat && key(it) !in done && !recentlyFailed(key(it)) &&
                 it.unique_id !in mainUnique && it.unique_id !in copyUnique && (it.file_name.lowercase() to it.size) !in mainFiles
         }
         if (candidates.isEmpty()) return emptyList()
@@ -107,6 +111,7 @@ class AutoFiler(
         val picks = plan()
         if (picks.isEmpty()) { _state.value = AutoFileState(note = "Nothing to file"); return 0 }
         cancelled = false
+        runMain = parseMainChat(repo.pref(MAIN_CHAT_KEY))
         _state.value = AutoFileState(true, 0, picks.size)
         scope.launch {
             var done = 0
@@ -115,6 +120,7 @@ class AutoFiler(
                 for ((i, p) in picks.withIndex()) {
                     if (cancelled) break
                     if (i > 0) delay(Random.nextLong(6000, 12000))
+                    if (cancelled) break
                     val c = main()
                     if (c == null) { log("Auto filing stopped: the main bot is not connected"); break }
                     try {
@@ -123,11 +129,11 @@ class AutoFiler(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: TdError) {
-                        failed += key(p.song)
+                        failed[key(p.song)] = now()
                         log("Auto filing: \"${p.song.title}\" not filed: ${e.message}")
                         e.retryAfter?.let { delay((it + 1) * 1000L) }
                     } catch (e: Throwable) {
-                        failed += key(p.song)
+                        failed[key(p.song)] = now()
                         log("Auto filing: \"${p.song.title}\" not filed: ${e.message ?: e::class.simpleName}")
                     }
                     _state.value = AutoFileState(true, done, picks.size)
@@ -144,6 +150,8 @@ class AutoFiler(
         val song = p.song
         val topic = p.topic ?: return
         val mainChat = parseMainChat(repo.pref(MAIN_CHAT_KEY)) ?: throw TdError(0, "No main chat")
+        // The topics were planned for the main chat this run started with.
+        if (runMain != null && runMain != mainChat) throw TdError(0, "The main chat changed during the run")
         // Re-read: the song may have been removed or filed while this run waited.
         val now = repo.db.songsQueries.song(song.chat_id, song.message_id).executeAsOneOrNull() ?: return
         var owner = botOwnerOf(now.remote_id)?.let(botClient) ?: c
@@ -159,7 +167,9 @@ class AutoFiler(
             how = "downloaded and uploaded"
         }
         val newId = posted.long("id") ?: throw TdError(0, "The new post was not confirmed")
-        val landed = posted.obj("topic_id")?.long("forum_topic_id") ?: GENERAL_TOPIC_ID
+        // Older TDLib answers with message_thread_id instead of topic_id.
+        val landed = posted.obj("topic_id")?.long("forum_topic_id")
+            ?: posted.long("message_thread_id")?.takeIf { it != 0L } ?: GENERAL_TOPIC_ID
         // Read the new post back before trusting it.
         val back = c.call(request("getMessage") { put("chat_id", mainChat); put("message_id", newId) }, 30.seconds)
         val file = fileOfMessage(back) ?: throw TdError(0, "The new post is not a song")
@@ -172,7 +182,11 @@ class AutoFiler(
         }
         if (sameFile) {
             val remote = file.obj("remote")?.str("id") ?: now.remote_id
-            runCatching { repo.listAtCopy(now, mainChat, newId, remote, topic.id) }
+            // The new post must be registered (it carries the song's playlists and edits over) before the original may go.
+            if (runCatching { repo.listAtCopy(now, mainChat, newId, remote, topic.id) }.isFailure) {
+                log("Auto filing: \"${now.title}\" $how, but the new post could not be registered; the original is kept")
+                return
+            }
         }
         if (!sameFile && !sameSong) {
             log("Auto filing: \"${now.title}\" $how to ${topic.name}, but the new post does not match the original; the original is kept")
@@ -180,13 +194,20 @@ class AutoFiler(
         }
         log("Auto filing: \"${now.title}\" $how to ${topic.name} (${p.reason})")
         // 3. Delete the original only now that the same song is confirmed in the main chat.
+        // TDLib answers ok for posts it never saw, so the bot's answer is not believed: the post must be reported missing afterwards.
         val removed = runCatching {
             owner.call(request("deleteMessages") {
                 put("chat_id", now.chat_id)
                 put("message_ids", JsonArray(listOf(JsonPrimitive(now.message_id))))
                 put("revoke", true)
             }, 30.seconds)
-        }.isSuccess
+            try {
+                owner.call(request("getMessage") { put("chat_id", now.chat_id); put("message_id", now.message_id) }, 30.seconds)
+                false
+            } catch (e: TdError) {
+                e.code == 404 || e.message.contains("not found", ignoreCase = true)
+            }
+        }.getOrDefault(false)
         if (removed) {
             runCatching { repo.removePost(now.chat_id, now.message_id, mainChat) }
             log("Auto filing: original of \"${now.title}\" deleted")
@@ -278,5 +299,6 @@ class AutoFiler(
     private companion object {
         const val PREF_ON = "auto_file"
         const val PREF_DONE = "auto_filed"
+        const val RETRY_MS = 60L * 60 * 1000
     }
 }
