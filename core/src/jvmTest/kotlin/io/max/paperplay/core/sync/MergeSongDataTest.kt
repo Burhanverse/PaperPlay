@@ -31,7 +31,15 @@ class MergeSongDataTest {
         assertEquals("Hand", m.artist); assertEquals("Jazz", m.genre)
     }
 
-    @Test fun lyricsAreOnlyFilledIn() {
-        assertEquals("mine", mergeSongData(song(lyrics = "mine"), sync(false, 1), sync(true, 9), extra("A", lyrics = "theirs")).lyrics)
+    @Test fun lyricsConvergeAndManualWins() {
+        // Nothing tells the two apart: both devices pick the same text, whichever side they are.
+        val a = mergeSongData(song(lyrics = "aaa"), sync(false, 1), sync(false, 1), extra("A", lyrics = "bbb")).lyrics
+        val b = mergeSongData(song(lyrics = "bbb"), sync(false, 1), sync(false, 1), extra("A", lyrics = "aaa")).lyrics
+        assertEquals(a, b)
+        // A text chosen by hand is never replaced by an automatic one, and replaces an automatic one.
+        assertEquals("mine", mergeSongData(song(lyrics = "mine"), sync(false, 1), sync(false, 1), extra("A", lyrics = "theirs"), LyricsMeta(true, 5)).lyrics)
+        assertEquals("theirs", mergeSongData(song(lyrics = "mine"), sync(false, 1), sync(false, 1), extra("A", lyrics = "theirs").copy(lyrManual = true, lyrAt = 5)).lyrics)
+        // Timed lyrics beat plain ones.
+        assertEquals("[00:01.00]x", mergeSongData(song(lyrics = "plain long text here"), sync(false, 1), sync(false, 1), extra("A", lyrics = "[00:01.00]x")).lyrics)
     }
 }

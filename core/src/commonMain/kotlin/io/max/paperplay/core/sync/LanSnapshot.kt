@@ -20,6 +20,8 @@ data class SongExtra(
     val coverAt: Long = 0,
     /** This device has a cover file for the song (chosen by hand or found automatically). */
     val hasCover: Boolean = false,
+    /** The lyrics were chosen by hand, and when the text was set. */
+    val lyrManual: Boolean = false, val lyrAt: Long = 0,
 )
 
 /**
@@ -56,6 +58,8 @@ object SnapshotCodec {
                                 if (e.enriched) put("enr", JsonPrimitive(true))
                                 if (e.coverAt != 0L) put("cat", JsonPrimitive(e.coverAt))
                                 if (e.hasCover) put("hc", JsonPrimitive(true))
+                                if (e.lyrManual) put("lm", JsonPrimitive(true))
+                                if (e.lyrAt != 0L) put("la", JsonPrimitive(e.lyrAt))
                             }
                         },
                     )
@@ -107,6 +111,7 @@ object SnapshotCodec {
                 extra[id] = SongExtra(
                     j.reqStr("artist"), j.str("album") ?: "", j.str("genre"), j.lng("year"), j.flag("pinned") ?: false,
                     j.str("lyr"), j.str("rel"), j.str("curl"), j.str("msrc"), j.flag("enr") ?: false, j.lng("cat") ?: 0L, j.flag("hc") ?: false,
+                    j.flag("lm") ?: false, j.lng("la") ?: 0L,
                 )
             }
         }
@@ -137,6 +142,7 @@ object SnapshotCodec {
 private fun ItemSync.live() = removedAt == null || removedAt <= addedAt
 
 private const val LYRICS_BUDGET = 8_000_000
+const val LYRICS_META_KEY = "lyrics_meta"
 private const val GONE_KEEP_MS = 365L * 24 * 3600 * 1000
 
 /** Builds a snapshot from the database and applies a merged one back. Songs this device does not have are skipped. */
@@ -151,6 +157,7 @@ class SnapshotStore(private val library: LibraryRepository) {
         val songs = HashMap<String, SongSync>()
         val extra = HashMap<String, SongExtra>()
         var lyricsBudget = LYRICS_BUDGET
+        val lyricsMeta = lyricsMetaOf()
         for (s in db.songsQueries.allSongs().executeAsList()) {
             val has = s.favorite || s.plays > 0 || s.skips > 0 || s.last_played_at != null || s.user_edited || s.pinned
             // Everything that was looked up or chosen travels too, so a device that lacks it can fill it in.
@@ -162,6 +169,7 @@ class SnapshotStore(private val library: LibraryRepository) {
             extra[s.unique_id] = SongExtra(
                 s.artist, s.album, s.genre, s.year, s.pinned, lyrics, s.release_id, s.cover_url, s.metadata_source,
                 s.enrich_state == io.max.paperplay.core.library.EnrichState.DONE, s.cover_at, s.cover_path != null,
+                lyricsMeta[s.unique_id]?.manual ?: false, lyricsMeta[s.unique_id]?.at ?: 0L,
             )
         }
         for (p in db.playlistsQueries.emptyUuidPlaylists().executeAsList()) {
@@ -182,6 +190,21 @@ class SnapshotStore(private val library: LibraryRepository) {
         return Snapshot(LibraryState(songs, goneRecord(), lists), extra, order)
     }
 
+    /** Which songs have lyrics chosen by hand, and when each text was set: a preference, so no table changes. uid -> [manual 0/1, time]. */
+    private fun lyricsMetaOf(): Map<String, LyricsMeta> {
+        val o = runCatching { Json.parseToJsonElement(library.pref(LYRICS_META_KEY) ?: "{}").jsonObject }.getOrNull() ?: return emptyMap()
+        return o.mapNotNull { (k, v) ->
+            val a = v as? JsonArray ?: return@mapNotNull null
+            val manual = (a.getOrNull(0) as? JsonPrimitive)?.content == "1"
+            val at = (a.getOrNull(1) as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
+            k to LyricsMeta(manual, at)
+        }.toMap()
+    }
+
+    private fun saveLyricsMeta(m: Map<String, LyricsMeta>) {
+        library.setPref(LYRICS_META_KEY, JsonObject(m.mapValues { (_, v) -> JsonArray(listOf(JsonPrimitive(if (v.manual) 1 else 0), JsonPrimitive(v.at))) }).toString())
+    }
+
     /** The deletion record kept by the delete queue: song unique ids and content keys, with when they were deleted. Old entries expire. */
     private fun goneRecord(): Map<String, Long> {
         val cutoff = System.currentTimeMillis() - GONE_KEEP_MS
@@ -196,6 +219,8 @@ class SnapshotStore(private val library: LibraryRepository) {
         var songsChanged = 0
         var playlistsChanged = 0
         val wantCovers = ArrayList<String>()
+        val metaNow = lyricsMetaOf()
+        val metaNew = HashMap<String, LyricsMeta>()
         library.batch(soft = false) {
             val rows = db.songsQueries.allSongs().executeAsList().associateBy { it.unique_id }
             val changed = ArrayList<io.max.paperplay.core.library.Song>()
@@ -209,15 +234,21 @@ class SnapshotStore(private val library: LibraryRepository) {
                 )
                 val re = remote.extra[id]
                 if (re != null) {
-                    if (l != null && r != null) n = mergeSongData(n, l, r, re)
+                    if (l != null && r != null) n = mergeSongData(n, l, r, re, metaNow[id] ?: LyricsMeta())
+                    // Lyrics taken from the other device bring its choice (manual or not) and time along.
+                    if (n.lyrics != row.lyrics) metaNew[id] = LyricsMeta(re.lyrManual, re.lyrAt)
                     if (re.pinned && !n.pinned) n = n.copy(pinned = true)
                     // A cover the other device has and this one lacks, or a hand-chosen one that is newer: its file is asked for after the merge.
-                    if (re.coverAt > row.cover_at || (re.hasCover && row.cover_path == null)) wantCovers += id
+                    // Also when the merge adopted the other device's automatic cover source (same song, different album art): its picture replaces ours.
+                    val adoptedCover = re.hasCover && re.coverAt == 0L && row.cover_at == 0L && row.cover_path != null &&
+                        row.cover_url != re.coverUrl && n.cover_url == re.coverUrl
+                    if (re.coverAt > row.cover_at || (re.hasCover && row.cover_path == null) || adoptedCover) wantCovers += id
                 }
                 if (n != row) changed += n
             }
             library.replaceSongs(changed)
             songsChanged = changed.size
+            if (metaNew.isNotEmpty()) saveLyricsMeta(metaNow + metaNew)
 
             // Songs deleted on the other device go here too, unless the file was posted again after the deletion. Content keys
             // ("song:...") only stop a song coming back; they would also match the copy that was kept, so they remove nothing.
