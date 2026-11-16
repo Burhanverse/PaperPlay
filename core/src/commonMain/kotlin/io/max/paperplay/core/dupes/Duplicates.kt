@@ -91,6 +91,15 @@ private fun clearlyWorse(post: DuplicatePost, keep: DuplicatePost): Boolean {
     return keep.lossless == post.lossless && post.size * 3 < keep.size * 2
 }
 
+/** Lossy against lossless, another format ranked lower, or the same format at a clearly smaller size. */
+private fun worseQuality(post: DuplicatePost, keep: DuplicatePost, rules: SongRules): Boolean {
+    if (clearlyWorse(post, keep)) return true
+    val a = keep.song ?: return false
+    val b = post.song ?: return false
+    if (rules.compareQuality(a, b) >= 0) return false
+    return post.format != keep.format || post.size * 100 < keep.size * 95
+}
+
 /** The same format at nearly the same size: a re-upload of the same track, so the older one can go. */
 private fun reupload(post: DuplicatePost, keep: DuplicatePost) =
     post.format == keep.format && abs(post.size - keep.size) <= keep.size * 0.02
@@ -154,7 +163,8 @@ fun findDuplicates(songs: List<Song>, copies: List<PostCopy>, rules: SongRules, 
             val others = posts.drop(1)
             groups += DuplicateGroup(
                 DuplicateKind.LikelySameSong, keep.song!!.title, keep.song.artist, keep, others,
-                others.filter { it.topicId == keep.topicId && (clearlyWorse(it, keep) || reupload(it, keep)) }
+                // Lower quality always goes, in any topic. A re-upload of equal quality goes only from the same topic, as topics act as playlists.
+                others.filter { worseQuality(it, keep, rules) || (it.topicId == keep.topicId && reupload(it, keep)) }
                     .map { it.messageId }.toSet(),
             )
         }
