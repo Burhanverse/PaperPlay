@@ -16,8 +16,11 @@ object PlayLog {
     var sink: ((at: Long, tag: String, message: String) -> Unit)?
         get() = target
         set(value) {
-            val held = synchronized(early) { target = value; if (value == null) emptyList() else early.toList().also { early.clear() } }
-            if (value != null) held.forEach { (at, tag, m) -> value(at, tag, m) }
+            // Drained under the lock before the target is published, so a new line cannot overtake a held one.
+            synchronized(early) {
+                if (value != null) { early.forEach { (at, tag, m) -> value(at, tag, m) }; early.clear() }
+                target = value
+            }
         }
 
     /** Wall-clock milliseconds; set by the app, since common code has no clock. */
