@@ -59,7 +59,7 @@ fun PlayerSheetHost(open: Boolean, sheet: PlayerSheetState, content: @Composable
     val moving by remember { derivedStateOf { sheet.progress.value > 0f } }
     if (open || moving) {
         CompositionLocalProvider(LocalPlayerSheet provides sheet) {
-            Box(Modifier.fillMaxSize().graphicsLayer { translationY = size.height * (1f - sheet.progress.value) + sheet.pulled }) { content() }
+            Box(Modifier.fillMaxSize().graphicsLayer { translationY = size.height * (1f - sheet.progress.value) + sheet.pulled }.blockTouchesBehind()) { content() }
         }
     }
 }

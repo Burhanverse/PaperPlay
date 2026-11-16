@@ -344,7 +344,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     }
                 }
                 Column(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().blockTouchesBehind().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),
                 ) {
                     // Toasts sit above the mini player and the bar, where they cover the least; swipe one sideways to dismiss it.
                     AppSnackbarHost(snack, Modifier.fillMaxWidth().padding(bottom = 8.dp), tint)
