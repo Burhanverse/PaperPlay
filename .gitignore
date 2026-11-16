@@ -9,6 +9,8 @@ CONTEXT.md
 HANDOFF_CHECKLIST.md
 HANDOVER.md
 IDEAS_FROM_OTHERS.md
+ENGINE_PLAN.md
+*.apk
 .vscode/settings.json
 # TDLib is a platform-native runtime dependency; keep local binaries out of Git.
 native/
@@ -23,3 +25,6 @@ build-all.bat
 graphify-out/
 # Python bytecode from the release script tests
 __pycache__/
+# Rust engine build output
+engine/target/
+androidApp/src/main/jniLibs/arm64-v8a/libengine.so
