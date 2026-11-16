@@ -423,7 +423,7 @@ fun DesktopSettings(
             }
             else Text(title, Modifier.padding(start = 20.dp, end = 16.dp, top = 24.dp, bottom = 8.dp), style = MaterialTheme.typography.headlineMedium)
 
-            val isLazy = page == "missing" || page == "index" || page == "log" || page?.startsWith("index:") == true
+            val isLazy = page == "missing" || page == "dupes" || page == "index" || page == "log" || page?.startsWith("index:") == true
             Column(
                 // Sliders and rows stop at a readable width instead of stretching across a wide window.
                 Modifier.fillMaxSize().widthIn(max = 880.dp)
