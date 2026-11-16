@@ -149,6 +149,7 @@ class PlaybackService : MediaSessionService() {
     private fun applyEqualizer(audioSessionId: Int) {
         runCatching { eq?.release() }
         eq = null
+        if (EngineNative.available) return // the Rust engine in the audio chain does the equalizing
         val gains = PlaybackCore.eqGains ?: return
         if (gains.all { abs(it) < 0.05f }) return
         if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) return

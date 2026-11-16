@@ -9,3 +9,6 @@
 -keep class io.max.paperplay.compose.update.ShellInstallerService { *; }
 -keep class io.max.paperplay.compose.update.IShellInstaller { *; }
 -keep class io.max.paperplay.compose.update.IShellInstaller$Stub { *; }
+
+# Rust audio engine: JNI looks these up by name.
+-keep class io.max.paperplay.player.EngineNative { *; }

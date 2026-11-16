@@ -47,6 +47,7 @@ class AndroidPlayerEngine : PlayerEngine {
     private var released = false
     private var failed = false
     private var tickerRunning = false
+    private var infoTicks = 0
     private var volumeLevel = 1f
 
     private val _state = MutableStateFlow(PlayerState.Idle)
@@ -105,6 +106,7 @@ class AndroidPlayerEngine : PlayerEngine {
                 tickerRunning = false
                 return
             }
+            if (PlaybackCore.engineActive && ++infoTicks % 3 == 0) publishInfo(mc)
             _positionMs.value = mc.currentPosition.coerceAtLeast(0L)
             _bufferedMs.value = mc.bufferedPosition.coerceAtLeast(0L)
             handler.postDelayed(this, pollMs())
@@ -391,6 +393,10 @@ class AndroidPlayerEngine : PlayerEngine {
         }
     }
 
+    override fun setBass(db: Float) {
+        PlaybackCore.bassDb = db
+    }
+
     override fun setEqualizer(gainsDb: List<Float>?) {
         PlaybackCore.eqGains = gainsDb
         onMain {
@@ -429,9 +435,13 @@ class AndroidPlayerEngine : PlayerEngine {
                 android.media.AudioDeviceInfo.TYPE_USB_HEADSET, android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
             )
         }
-        val outRate = am.getProperty(android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
+        val usb = external != null && (external.type == android.media.AudioDeviceInfo.TYPE_USB_DEVICE || external.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET)
+        val outRate = (if (usb && external != null) usbMixerRate(external).takeIf { it > 0 } else null)
+            ?: am.getProperty(android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
+        val eqOn = PlaybackCore.eqGains?.any { kotlin.math.abs(it) >= 0.05f } == true
         val effects = buildList {
-            if (PlaybackCore.eqGains?.any { kotlin.math.abs(it) >= 0.05f } == true) add("Equalizer")
+            if (eqOn) add(if (PlaybackCore.engineActive) "Equalizer (engine)" else "Equalizer (system)")
+            if (eqOn && PlaybackCore.engineActive && PlaybackCore.bassDb >= 0.05f) add("Bass +${"%.1f".format(PlaybackCore.bassDb)} dB")
             if (PlaybackCore.normalize) add("Normalise")
             if (PlaybackCore.speed != 1f) add("Speed ${PlaybackCore.speed}x")
             if (volumeLevel < 0.995f) add("Volume ${(volumeLevel * 100).toInt()}%")
@@ -453,13 +463,43 @@ class AndroidPlayerEngine : PlayerEngine {
             device = external?.productName?.toString()?.takeIf { it.isNotBlank() } ?: (if (external != null) "Headphones" else android.os.Build.MODEL),
             outputRateHz = outRate,
             effects = effects,
+            details = engineDetails(eqOn),
             bitPerfect = effects.isEmpty() && matches && external == null,
             note = when {
+                eqOn && PlaybackCore.engineActive -> "The equalizer runs in 32-bit float and a limiter keeps peaks from clipping. This is not bit-perfect."
                 effects.isNotEmpty() -> "Effects change the sound before it reaches the output."
+                !matches && usb -> "Android mixes this DAC at ${outRate ?: 0} Hz and converts the track to it."
                 !matches -> "The device mixes at ${outRate ?: "an unknown"} Hz, so this track is resampled."
                 else -> "Android's mixer can still convert the format; only a bit-perfect USB DAC route skips it."
             },
         )
+    }
+
+    /** The rate Android runs a connected USB DAC at: the highest rate it lists (its own list, or the mixer list when that is empty); 0 if unknown. */
+    private fun usbMixerRate(dev: android.media.AudioDeviceInfo): Int {
+        var rates = dev.sampleRates.filter { it > 0 }
+        if (rates.isEmpty() && android.os.Build.VERSION.SDK_INT >= 34) {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            rates = am.getSupportedMixerAttributes(dev).map { it.format.sampleRate }.filter { it > 0 }
+        }
+        return rates.maxOrNull() ?: 0
+    }
+
+    /** The engine's real format and meters, only while it is in the audio path. */
+    private fun engineDetails(eqOn: Boolean): List<Pair<String, String>> {
+        if (!PlaybackCore.engineActive) return emptyList()
+        val st = PlaybackCore.engineStats
+        fun db(v: Float) = (if (v > 0) "+" else "") + "%.1f dB".format(v)
+        return buildList {
+            PlaybackCore.engineIn?.let { add("Engine input" to it) }
+            PlaybackCore.engineOut?.let { add("Engine output" to it) }
+            if (eqOn && st != null && st.size == 6) {
+                add("Curve peak" to db(st[5]))
+                add("Level trim" to "bass ${db(st[0])}, rest ${db(st[1])}")
+                fun lim(v: Float) = if (v < -0.05f) "up to ${"%.1f".format(-v)} dB" else "idle"
+                add("Limiter" to "bass ${lim(st[3])}, rest ${lim(st[4])}")
+            }
+        }
     }
 
     private fun sendNormalize(mc: MediaController, on: Boolean) {

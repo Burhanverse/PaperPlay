@@ -294,6 +294,7 @@ class PlaybackController(
     fun setVolume(volume: Float) { baseVolume = volume; if (fadeJob?.isActive != true) engine.setVolume(volume) }
     val outputInfo get() = engine.outputInfo
     fun setEqualizer(gainsDb: List<Float>?) = engine.setEqualizer(gainsDb)
+    fun setBass(db: Float) = engine.setBass(db)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)
     fun setNormalize(on: Boolean) = engine.setNormalize(on)
 

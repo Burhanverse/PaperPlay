@@ -41,6 +41,7 @@ class LazyPlayerEngine(
     private var pendingSeekMs: Long = 0L
     private var pendingVolume: Float? = null
     private var pendingEq: List<Float>? = null
+    private var pendingBass: Float? = null
     private var pendingSpeed: Float? = null
     private var pendingNormalize: Boolean? = null
 
@@ -65,6 +66,7 @@ class LazyPlayerEngine(
             val engine = factory()
             pendingVolume?.let { engine.setVolume(it) }
             pendingEq?.let { engine.setEqualizer(it) }
+            pendingBass?.let { engine.setBass(it) }
             pendingSpeed?.let { engine.setSpeed(it) }
             pendingNormalize?.let { engine.setNormalize(it) }
 
@@ -147,6 +149,11 @@ class LazyPlayerEngine(
     override fun setVolume(volume: Float) {
         pendingVolume = volume
         real?.setVolume(volume)
+    }
+
+    override fun setBass(db: Float) {
+        pendingBass = db
+        real?.setBass(db)
     }
 
     override fun setEqualizer(gainsDb: List<Float>?) {

@@ -76,6 +76,8 @@ data class OutputInfo(
     /** True only when nothing alters the samples between the file and the output. */
     val bitPerfect: Boolean = false,
     val note: String? = null,
+    /** Further label and value rows the engine can state truthfully (formats, meters). */
+    val details: List<Pair<String, String>> = emptyList(),
 )
 
 internal val NoOutputInfo: StateFlow<OutputInfo?> = kotlinx.coroutines.flow.MutableStateFlow(null)
@@ -107,6 +109,8 @@ interface PlayerEngine {
     val outputInfo: StateFlow<OutputInfo?> get() = NoOutputInfo
     /** Gains in dB for the bands of [EQ_BANDS_HZ], or null to turn the equalizer off. */
     fun setEqualizer(gainsDb: List<Float>?) {}
+    /** Extra bass in dB (0 to 12) on top of the equalizer; only engines with a DSP stage use it. */
+    fun setBass(db: Float) {}
     /** Playback speed, 1 is normal. */
     fun setSpeed(speed: Float) {}
     /** Evens out loud and quiet songs. */

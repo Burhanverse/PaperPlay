@@ -26,6 +26,14 @@ internal object PlaybackCore {
     @Volatile var appContext: Context? = null
     @Volatile var upstream: DataSource.Factory? = null
     @Volatile var eqGains: List<Float>? = null
+    /** True while the Rust engine is in the audio path (set by the sink wrapper), so the output info tells the truth. */
+    @Volatile var engineActive = false
+    /** Extra bass in dB for the Rust engine, 0 when the equalizer is off. */
+    @Volatile var bassDb = 0f
+    /** What the Rust engine reads and writes, and its meters, for the output info. Set by the sink wrapper. */
+    @Volatile var engineIn: String? = null
+    @Volatile var engineOut: String? = null
+    @Volatile var engineStats: FloatArray? = null
     @Volatile var normalize = false
     @Volatile var speed = 1f
     val sources = ConcurrentHashMap<String, StreamSource>()
