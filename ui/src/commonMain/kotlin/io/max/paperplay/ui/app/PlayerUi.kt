@@ -245,10 +245,10 @@ private fun PlayerBody(
                     ) { (title, artist) ->
                         Column {
                             Text(title, modifier = Modifier.basicMarquee(), maxLines = 1, style = MaterialTheme.typography.headlineSmall)
-                            Text(
-                                artist, modifier = Modifier.basicMarquee(), maxLines = 1,
-                                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium, color = scheme.onSurface.copy(alpha = 0.7f),
+                            ArtistLinks(
+                                artist, MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium), scheme.onSurface.copy(alpha = 0.7f),
                             )
+                            if (song.album.isNotBlank()) AlbumLink(song.album, MaterialTheme.typography.bodyMedium, scheme.onSurface.copy(alpha = 0.5f))
                         }
                     }
                     IconButton({ actions.setFavorite(song, !song.favorite) }) {
@@ -482,7 +482,8 @@ fun NowPlayingPanel(state: PlaybackUiState, backend: PlayerControls, actions: Li
             Row(Modifier.padding(top = 14.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text(song.title, style = MaterialTheme.typography.titleLarge)
-                    Text(song.artist, Modifier.padding(top = 2.dp), style = MaterialTheme.typography.bodyMedium, color = muted)
+                    ArtistLinks(song.artist, MaterialTheme.typography.bodyMedium, muted, Modifier.padding(top = 2.dp))
+                    if (song.album.isNotBlank()) AlbumLink(song.album, MaterialTheme.typography.bodySmall, muted.copy(alpha = 0.8f))
                 }
                 IconButton({ actions.setFavorite(song, !song.favorite) }) {
                     AppIcon(if (song.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (song.favorite) "Remove from favorites" else "Add to favorites")

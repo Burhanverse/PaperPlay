@@ -707,3 +707,4 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Spotify import lists the logged-in account's own playlists with Import or Refresh (needs the Spotify connection; the paste box stays for other people's links).
 - [~] PC: right click on a song row opens its menu; Alt+Left goes back; sharing copies text to the clipboard or shows the file in Explorer; Spotify import is in the sidebar Tools; the keep-on-device pin shows on album, artist and Telegram lists too.
 - [ ] Not done: right-click menu on sidebar playlists, Go to album or artist in the song menu, Ctrl+F for search.
+- [~] Artists: a credit like "A, B & C" is split; the full player and the PC now-playing panel show each artist as its own tap target (and the album), the song menu has "Go to <artist>" per artist and "Go to album", and an artist page and the Artists tab list a song under each of its artists.

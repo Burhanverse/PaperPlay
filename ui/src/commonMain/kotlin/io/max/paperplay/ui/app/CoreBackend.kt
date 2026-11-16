@@ -145,7 +145,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                         GroupUi(if (owner == null) name else "$name | $owner", name, albumSubtitle(part), covers(part), owner)
                     }
                 },
-                artists = groups(songs, { it.artist }) { name, list -> GroupUi(name, name, "${list.size} songs", covers(list)) },
+                artists = artistGroups(songs),
             )
         },
         repo.playlistSummaries().map { list ->
@@ -1182,6 +1182,16 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 private fun <T> groups(songs: List<Song>, key: (Song) -> String, make: (String, List<Song>) -> T): List<T> =
     songs.filter { key(it).isNotBlank() }.groupBy { key(it) }.entries
         .sortedBy { it.key.lowercase() }.map { make(it.key, it.value) }
+
+/** One group per artist: a song credited to several artists is in each of their groups. */
+private fun artistGroups(songs: List<Song>): List<GroupUi> {
+    val byName = LinkedHashMap<String, Pair<String, MutableList<Song>>>()
+    for (s in songs) {
+        val names = io.max.paperplay.core.metadata.splitArtists(s.artist).ifEmpty { listOf(s.artist) }.filter { it.isNotBlank() }
+        for (n in names) byName.getOrPut(n.lowercase()) { n to mutableListOf() }.second += s
+    }
+    return byName.values.sortedBy { it.first.lowercase() }.map { (name, list) -> GroupUi(name, name, "${list.size} songs", covers(list)) }
+}
 
 private fun covers(songs: List<Song>): List<String?> = songs.mapNotNull { it.cover_path }.distinct().take(4)
 
