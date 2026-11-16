@@ -167,31 +167,33 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
         }
         CopyLinksButton(backend, t)
         if (p != null && state == null && backend.pref("index_auto_copy") != "true") IconButton({
+            // Copying a post into the main chat is done by your own Telegram account; without it say so instead of doing nothing.
+            if (!backend.account.loggedIn.value) { state = "Log in your Telegram account to copy songs (Settings, Telegram, Your account)"; return@IconButton }
             state = "Adding"
             scope.launch {
-                val ok = withContext(Dispatchers.Default) {
+                val failure = withContext(Dispatchers.Default) {
                     runCatching {
                         backend.chatIndex.copyToMain(p)
                         val song = store.songs().firstOrNull { it.chat_id == p.chatId && it.message_id == p.messageId }
                         if (song != null) acceptMatch(store, t, song) else reconcileImports(store)
-                    }.isSuccess
+                    }.exceptionOrNull()
                 }
-                state = if (ok) "Added" else null
-                if (ok) onChanged()
+                state = if (failure == null) "Added" else "Could not add: ${failure.message ?: failure::class.simpleName}"
+                if (failure == null) onChanged()
             }
         }) { AppIcon(Icons.Rounded.Add, "Copy to main chat") }
         else if (p != null && state == null) TextButton({
             state = "Adding"
             scope.launch {
-                val ok = withContext(Dispatchers.Default) {
+                val failure = withContext(Dispatchers.Default) {
                     runCatching {
                         backend.chatIndex.addToLibrary(p)
                         val song = store.songs().firstOrNull { it.chat_id == p.chatId && it.message_id == p.messageId }
                         if (song != null) acceptMatch(store, t, song) else reconcileImports(store)
-                    }.isSuccess
+                    }.exceptionOrNull()
                 }
-                state = if (ok) "Added" else null
-                if (ok) onChanged()
+                state = if (failure == null) "Added" else "Could not add: ${failure.message ?: failure::class.simpleName}"
+                if (failure == null) onChanged()
             }
         }) { Text("Add") }
     }
