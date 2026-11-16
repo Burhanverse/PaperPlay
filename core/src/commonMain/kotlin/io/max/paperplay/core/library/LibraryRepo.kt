@@ -31,7 +31,12 @@ class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
 
     fun removeFromPlaylist(id: Long, s: Song) = lists.removeEntry(clock(), id, s.chat_id, s.message_id)
 
-    fun setPref(key: String, value: String) = misc.setPref(key, value)
+    fun setPref(key: String, value: String) {
+        misc.setPref(key, value)
+        // Every setting change is an event; secrets are never written and long values are cut.
+        val secret = listOf("token", "secret", "password", "hash", "key", "auth").any { key.contains(it, ignoreCase = true) }
+        io.max.paperplay.player.PlayLog.log("pref", "$key = " + if (secret) "<hidden>" else value.replace('\n', ' ').take(80) + if (value.length > 80) "... (${value.length} chars)" else "")
+    }
     fun pref(key: String): String? = misc.pref(key).executeAsOneOrNull()
 
     fun cacheLimit(): Long = pref("cache_limit")?.toLongOrNull() ?: DEFAULT_CACHE_LIMIT

@@ -6,6 +6,8 @@ import android.app.Application
 class PaperPlayApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        io.max.paperplay.player.PlayLog.nowMs = { System.currentTimeMillis() }
+        AppEvents.start(this)
         CrashLog.install(this)
         CrashLog.recordPreviousExits(this)
         CrashLog.startLogcat(this)

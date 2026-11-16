@@ -104,6 +104,9 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     // Where the phone came from, so Back returns there instead of jumping to Home or Settings.
     val history = remember { mutableStateListOf<NavSnapshot>() }
     fun snapshot() = NavSnapshot(tab, libraryTab, profilePage, detail, settings, settingsStack.toList(), settingsDeep, page)
+    // Every screen change goes in the log, so a shared log shows what was open when something went wrong.
+    val where = "tab=$tab page=$page library=$libraryTab profile=$profilePage detail=${detail?.let { it::class.simpleName }} settings=${if (settings) settingsStack.joinToString("/").ifEmpty { "list" } else "-"} player=$showPlayer"
+    LaunchedEffect(where) { io.max.paperplay.player.PlayLog.log("nav", where) }
     fun navigate(change: () -> Unit) {
         val before = snapshot()
         change()
