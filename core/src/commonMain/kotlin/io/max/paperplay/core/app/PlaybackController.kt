@@ -123,6 +123,11 @@ class PlaybackController(
                         "chat=${song?.chat_id} remote=${song?.remote_id?.take(10)} pinned=${song?.pinned}",
                 )
                 if (song?.unique_id != listening?.unique_id) {
+                    // The song that was playing goes on the history, so rewinding returns to it even in a shuffled queue.
+                    val before = listening
+                    if (before != null && song != null) {
+                        if (goingBack) goingBack = false else synchronized(history) { history.addLast(before); while (history.size > 200) history.removeFirst() }
+                    }
                     finishListening()
                     listening = song
                 }
@@ -249,6 +254,18 @@ class PlaybackController(
     }
 
     /** Resuming a paused song fades in over a fifth of a second; a song starting fresh does not. */
+    /**
+     * Plays the song at [index] of the queue as it is now: the order stays exactly as shown (also when shuffle is on, where setQueue
+     * would shuffle the rest again) and the list the queue was made from is not replaced by the shuffled one.
+     */
+    fun playIndex(index: Int) = command {
+        val m = meta.value
+        if (index !in m.queue.indices) return@command
+        playIntent = true
+        apply(m.queue, index, 0)
+        engine.play()
+    }
+
     fun play() {
         if (engine.state.value == PlayerState.Paused && baseVolume > 0f) {
             fadeJob?.cancel()
@@ -357,6 +374,25 @@ class PlaybackController(
 
     @kotlin.concurrent.Volatile private var lastPreviousAt = 0L
 
+    // The songs played before this one, oldest first: rewinding goes back along it, not along the (possibly shuffled) queue.
+    private val history = ArrayDeque<Song>()
+    @kotlin.concurrent.Volatile private var goingBack = false
+
+    /** The queue index of the song played last, taken off the history; songs no longer in the queue are skipped. Null when none is left. */
+    private fun takeFromHistory(): Int? {
+        val q = meta.value.queue
+        val cur = q.getOrNull(engine.currentIndex.value)?.unique_id
+        synchronized(history) {
+            while (history.isNotEmpty()) {
+                val s = history.removeLast()
+                if (s.unique_id == cur) continue
+                val i = q.indexOfFirst { it.unique_id == s.unique_id }
+                if (i >= 0) return i
+            }
+        }
+        return null
+    }
+
     /**
      * Rewind. One press always plays this song again from the start. A second press within [PREVIOUS_AGAIN_MS] goes to the song before it;
      * with no song before it (the first one of the list) every press just plays the song again from the start.
@@ -366,8 +402,14 @@ class PlaybackController(
         val now = clock()
         val again = lastPreviousAt != 0L && now - lastPreviousAt in 0..PREVIOUS_AGAIN_MS
         lastPreviousAt = now
-        if (again && engine.currentIndex.value > 0) {
+        val back = if (again) takeFromHistory() else null
+        if (back != null) {
             lastPreviousAt = 0L
+            goingBack = true
+            apply(meta.value.queue, back, 0)
+        } else if (again && engine.currentIndex.value > 0) {
+            lastPreviousAt = 0L
+            goingBack = true
             engine.seek(0)
             engine.previous()
         } else {

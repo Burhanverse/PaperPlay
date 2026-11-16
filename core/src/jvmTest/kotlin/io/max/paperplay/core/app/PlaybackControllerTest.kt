@@ -84,6 +84,75 @@ private class FakePlayerEngine : PlayerEngine {
 
 class PlaybackControllerTest {
     @Test
+    fun rewindGoesBackToTheSongPlayedBeforeEvenInAShuffledQueue() = runBlocking {
+        var clock = 10_000L
+        var now = 1_000L
+        val db = LibraryDatabase(libraryDriver())
+        val repo = LibraryRepository(LibraryRepo(db) { ++now }) { ++now }
+        val songs = (1L..6L).map { song(it) }
+        songs.forEach { db.songsQueries.insertSong(it) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = FakePlayerEngine()
+        val controller = PlaybackController(engine, TrackResolver { null }, repo, scope, clock = { clock })
+        try {
+            controller.setQueue(songs, startIndex = 0)
+            await { engine.lastQueue.size == 6 && engine.mutableCurrentIndex.value == 0 }
+            controller.playIndex(4)
+            await { engine.mutableCurrentIndex.value == 4 && controller.nowPlayingStatic.value.song?.unique_id == "u5" }
+            controller.playIndex(2)
+            await { engine.mutableCurrentIndex.value == 2 && controller.nowPlayingStatic.value.song?.unique_id == "u3" }
+
+            // Rewind twice: first restarts u3, the second goes to u5, the song played before it (not to u2 next to it in the queue).
+            controller.previous()
+            delay(150)
+            clock += 1_000
+            controller.previous()
+            await { controller.nowPlayingStatic.value.song?.unique_id == "u5" }
+            // And once more back: u1.
+            clock += 10_000
+            controller.previous()
+            delay(150)
+            clock += 1_000
+            controller.previous()
+            await { controller.nowPlayingStatic.value.song?.unique_id == "u1" }
+        } finally {
+            controller.release()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun pickingFromTheQueueKeepsItsOrderEvenWithShuffleOn() = runBlocking {
+        var now = 1_000L
+        val db = LibraryDatabase(libraryDriver())
+        val repo = LibraryRepository(LibraryRepo(db) { ++now }) { ++now }
+        val songs = (1L..8L).map { song(it) }
+        songs.forEach { db.songsQueries.insertSong(it) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = FakePlayerEngine()
+        val controller = PlaybackController(engine, TrackResolver { null }, repo, scope)
+        try {
+            controller.setShuffle(true)
+            await { controller.nowPlayingStatic.value.shuffle }
+            controller.setQueue(songs, startIndex = 2)
+            await { engine.lastQueue.size == 8 && engine.mutableCurrentIndex.value == 0 }
+            val order = engine.lastQueue.map { it.uri }
+
+            controller.playIndex(5)
+            await { engine.mutableCurrentIndex.value == 5 }
+            // The same queue, in the same order, with the picked song playing.
+            assertEquals(order, engine.lastQueue.map { it.uri })
+
+            // Turning shuffle off still gives the list as it was made, not the shuffled one.
+            controller.setShuffle(false)
+            await { engine.lastQueue.map { it.uri } == songs.map { "tg-${it.unique_id}" } }
+        } finally {
+            controller.release()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun pauseAndPlayFadeButAFreshStartDoesNot() = runBlocking {
         var now = 1_000L
         val db = LibraryDatabase(libraryDriver())

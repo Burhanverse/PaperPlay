@@ -1011,8 +1011,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         when (playbackMeta.value.repeat) { RepeatUi.Off -> Repeat.ALL; RepeatUi.All -> Repeat.ONE; RepeatUi.One -> Repeat.OFF },
     ) }
     override fun playQueueIndex(index: Int) {
-        val q = player.nowPlaying.value.queue
-        if (index in q.indices) player.setQueue(q, index)
+        // A song picked from the queue plays in place; the queue is not rebuilt (that reshuffled it while shuffle was on).
+        player.playIndex(index)
     }
 
     // Editing
