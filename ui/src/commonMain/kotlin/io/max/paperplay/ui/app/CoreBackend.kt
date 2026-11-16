@@ -1099,6 +1099,13 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun mainChatId(): Long? = parseMainChat(repo.pref(MAIN_CHAT_KEY))
 
+    /** Forgets which songs were deleted, so they are no longer removed from or kept out of the other devices. Returns how many entries went. */
+    fun clearDeletionRecord(): Int {
+        val n = runCatching { (kotlinx.serialization.json.Json.parseToJsonElement(repo.pref(io.max.paperplay.core.filing.GONE_KEY) ?: "{}") as kotlinx.serialization.json.JsonObject).size }.getOrDefault(0)
+        repo.setPref(io.max.paperplay.core.filing.GONE_KEY, "{}")
+        return n
+    }
+
     /** A Telegram topic or starred channel shown as a playlist. [key] is stable across refreshes. */
     data class TelegramList(val key: String, val name: String, val songs: List<SongUi>)
 

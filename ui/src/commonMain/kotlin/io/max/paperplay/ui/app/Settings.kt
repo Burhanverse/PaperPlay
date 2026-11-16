@@ -319,6 +319,11 @@ internal fun SettingsPage(
             NavRow("Scan library", "Read every chat with the bots and account you pick, fill in what is missing", Icons.Rounded.Sync) { stack.add("repair") }
             NavRow("Find duplicates", "Repeated songs in your main chat, and deleting them", Icons.Rounded.ContentCopy) { stack.add("dupes") }
             NavRow("Sort General", "Suggests topics for songs in General. Nothing moves till you confirm", Icons.Rounded.DriveFileMove) { stack.add("sort") }
+            SettingsRow(
+                "Clear the deletion record", icon = Icons.Rounded.DeleteSweep,
+                subtitle = "Songs you deleted are remembered so other devices remove them too. Clear it if a song was removed by mistake; no song is deleted by clearing",
+                onClick = { notice.value = "Cleared ${backend.clearDeletionRecord()} entries" },
+            )
             SettingsGroup("Speeds", "How fast the app asks Telegram for things", Icons.Rounded.Speed) {
                 RateSlider("reading", backend, notice)
                 var auto by remember { mutableStateOf(pref("reading_auto") == "true") }

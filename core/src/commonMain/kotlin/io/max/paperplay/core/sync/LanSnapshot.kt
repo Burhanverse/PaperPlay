@@ -204,16 +204,21 @@ class SnapshotStore(private val library: LibraryRepository) {
             // Songs deleted on the other device go here too, unless the file was posted again after the deletion. Content keys
             // ("song:...") only stop a song coming back; they would also match the copy that was kept, so they remove nothing.
             val removed = HashSet<String>()
-            for ((key, at) in merged.gone) {
-                if (key.startsWith("song:")) continue
-                val row = rows[key] ?: continue
-                if (row.date * 1000 > at) continue
+            val due = merged.gone.filter { !it.key.startsWith("song:") }.mapNotNull { (key, at) -> rows[key]?.takeIf { it.date * 1000 <= at }?.let { key to it } }
+            // A brake against a wrong record: a sync that would remove more than 2% of the library (at least 5 songs) removes nothing
+            // and says so in the log, so one mistake on one device cannot empty the other.
+            val tooMany = due.size > maxOf(5, rows.size / 50)
+            if (tooMany) io.max.paperplay.player.PlayLog.log("sync", "Deletion record NOT applied: it would remove ${due.size} of ${rows.size} songs. Clear the deletion record in Settings > Library if it is wrong.")
+            for ((key, row) in if (tooMany) emptyList() else due) {
                 for (c in db.miscQueries.postCopiesOf(row.unique_id).executeAsList()) library.repo.removePost(c.chat_id, c.message_id)
                 library.repo.removePost(row.chat_id, row.message_id)
                 removed += key
+                io.max.paperplay.player.PlayLog.log("sync", "Removed \"${row.title}\": it was deleted on another device")
             }
             songsChanged += removed.size
-            if (merged.gone != local.state.gone) library.setPref(GONE_KEY, JsonObject(merged.gone.mapValues { JsonPrimitive(it.value) }).toString())
+            // A file that is here again (posted after it was deleted) is wanted: its entry leaves the record so it syncs like any song.
+            val record = merged.gone.filter { (key, at) -> rows[key]?.let { it.date * 1000 > at } != true }
+            if (record != local.state.gone) library.setPref(GONE_KEY, JsonObject(record.mapValues { JsonPrimitive(it.value) }).toString())
 
             val have = db.lanQueries.allPlaylistsWithUuid().executeAsList().associateBy { it.uuid }
             val localEntries = db.lanQueries.allEntries().executeAsList()
