@@ -218,7 +218,21 @@ fun main() {
                 if (files.isNotEmpty()) onPicked(files.map { it.path }, false)
             },
             pickAudioFolder = { onPicked ->
-                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(scanFolder(it)) } }.start()
+                Thread {
+                    val log = io.max.paperplay.player.PlayLog
+                    try {
+                        val dir = NativeDialogs.pickFolder("Choose a music folder")
+                        if (dir == null) { log.log("upload", "folder picker closed with no folder"); return@Thread }
+                        val scan = scanFolder(dir)
+                        log.log("upload", "folder ${dir.path}: ${scan.top.size} songs in it, ${scan.subfolders.size} subfolders with songs")
+                        // Back on the window's own thread, where its state is changed.
+                        javax.swing.SwingUtilities.invokeLater { onPicked(scan) }
+                    } catch (e: Throwable) {
+                        log.log("upload", "folder could not be read: ${e::class.simpleName} ${e.message}")
+                        // An empty answer makes the page say that nothing was found, instead of staying silent.
+                        javax.swing.SwingUtilities.invokeLater { onPicked(io.max.paperplay.ui.app.FolderScan(emptyList(), emptyMap()) { _, ready -> ready(emptyList(), false) }) }
+                    }
+                }.start()
             },
             pickFolderPath = { onPicked ->
                 Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(it.path) } }.start()
