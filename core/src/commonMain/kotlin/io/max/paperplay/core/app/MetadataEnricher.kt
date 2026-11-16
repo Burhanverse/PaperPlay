@@ -77,6 +77,7 @@ class MetadataEnricher(
     private val deezerGate = Gate(deezerIntervalMs)
     private val audioDbGate = Gate(audioDbIntervalMs)
     private val lrclibGate = Gate(300L)
+    @Volatile private var lrclibUntil = 0L // no LRCLIB requests before this time (after a 429)
 
     /** Spaces calls to one service so its rate limit is kept however many workers ask. */
     private inner class Gate(private val interval: Long) {
@@ -504,10 +505,16 @@ class MetadataEnricher(
 
     /** LRCLIB search by title (and artist when known): artist, album and length of each result. No cover. */
     private suspend fun lrclib(title: String, artist: String): List<ExternalMatch> {
-        if (title.isBlank()) return emptyList()
+        if (title.isBlank() || clock() < lrclibUntil) return emptyList()
         lrclibGate.pass()
+        if (clock() < lrclibUntil) return emptyList()
         val known = artist.isNotBlank() && artist != "Unknown artist"
         val res = get(httpsUrl("lrclib.net", "/api/search", mapOf("track_name" to title, "artist_name" to if (known) firstArtist(artist) else null)))
+        if (res.status == 429) {
+            // Retry-After in seconds; missing or invalid means 60 s, and it is capped at 5 min. All workers share the deadline.
+            val secs = res.headers.entries.firstOrNull { it.key.equals("Retry-After", true) }?.value?.trim()?.toLongOrNull()?.takeIf { it > 0 } ?: 60L
+            lrclibUntil = maxOf(lrclibUntil, clock() + secs.coerceAtMost(300L) * 1000L)
+        }
         if (res.status != 200) return emptyList()
         val arr = runCatching { json.parseToJsonElement(res.text) as? kotlinx.serialization.json.JsonArray }.getOrNull() ?: return emptyList()
         fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
