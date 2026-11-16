@@ -293,7 +293,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     val phonePage: @Composable () -> Unit = {
                     val d = k.detail
                     when {
-                        k.settings -> SettingsHost(settingsStack, prefs, conn, songs.size, backend, onRestore, ::goBack, barsHeight, deep = settingsDeep)
+                        k.settings -> CompositionLocalProvider(LocalSettingsInfo provides true) { SettingsHost(settingsStack, prefs, conn, songs.size, backend, onRestore, ::goBack, barsHeight, deep = settingsDeep) }
                         d != null -> DetailScreen(d, backend, currentId, actions, ::goBack, barsHeight)
                         k.tab == 0 -> HomeScreen(lib, home, favorites, currentId, conn, scan, actions, { d2 -> navigate { detail = d2 } }, barsHeight, name = prefs.profileName)
                         k.tab == 1 -> SearchScreen(backend::search, songs, currentId, actions, { d2 -> navigate { detail = d2 } }, barsHeight)
@@ -423,7 +423,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                             val d = k.detail
                             when {
                                 k.now -> DesktopNowPlayingView(pb, backend, actions, { showNow = false }, Modifier.fillMaxSize())
-                                k.settings -> DesktopSettings(settingsStack, prefs, conn, songs.size, backend, onRestore, ::goBack, Modifier.fillMaxSize())
+                                k.settings -> CompositionLocalProvider(LocalSettingsInfo provides true) { DesktopSettings(settingsStack, prefs, conn, songs.size, backend, onRestore, ::goBack, Modifier.fillMaxSize()) }
                                 d != null -> DetailScreen(d, backend, currentId, actions, ::goBack, pad)
                                 k.page == "home" -> HomeScreen(lib, home, favorites, currentId, conn, scan, actions, { d2 -> navigate { detail = d2 } }, pad, name = prefs.profileName)
                                 k.page == "search" -> SearchScreen(backend::search, songs, currentId, actions, { d2 -> navigate { detail = d2 } }, pad)

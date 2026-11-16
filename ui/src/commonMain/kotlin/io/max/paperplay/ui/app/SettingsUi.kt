@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +65,25 @@ fun SettingsCard(icon: ImageVector, title: String, subtitle: String, onClick: ()
     }
 }
 
+/** True inside Settings: a row's explanation text sits behind an info button next to its title instead of under it. */
+val LocalSettingsInfo = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/** Longer subtitles explain the setting; short ones are values, such as "Logged in", and stay visible. */
+private fun isExplanation(subtitle: String?) = subtitle != null && subtitle.length >= 30
+
+/** The title with, when [explanation] is set, a small info button that shows or hides it. Same size and place in every row, so they line up. */
+@Composable
+private fun TitleWithInfo(title: String, explanation: String?, open: Boolean, onToggle: () -> Unit, color: androidx.compose.ui.graphics.Color, style: androidx.compose.ui.text.TextStyle) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f, fill = false), style = style, color = color)
+        if (explanation != null) {
+            IconButton(onToggle, Modifier.padding(start = 2.dp).size(32.dp)) {
+                AppIcon(Icons.Rounded.Info, if (open) "Hide explanation" else "Explain", Modifier.size(18.dp), tint = if (open) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
 /** A row inside a sub-page: optional icon, title, optional subtitle, optional trailing content. */
 @Composable
 fun SettingsRow(
@@ -80,8 +100,10 @@ fun SettingsRow(
         if (leading != null) Box(Modifier.padding(end = 16.dp)) { leading() }
         else if (icon != null) AppIcon(icon, null, Modifier.padding(end = 16.dp), tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline)
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline)
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val behindInfo = LocalSettingsInfo.current && isExplanation(subtitle)
+            var open by remember { mutableStateOf(false) }
+            TitleWithInfo(title, if (behindInfo) subtitle else null, open, { open = !open }, if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline, MaterialTheme.typography.titleMedium)
+            if (subtitle != null && (!behindInfo || open)) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         trailing()
     }
@@ -121,8 +143,10 @@ fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit, icon
 @Composable
 fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit, steps: Int = 0, hint: String? = null, onDone: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
-        Text(title, style = MaterialTheme.typography.bodyLarge)
-        if (hint != null) Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val behindInfo = LocalSettingsInfo.current && hint != null
+        var open by remember { mutableStateOf(false) }
+        TitleWithInfo(title, if (behindInfo) hint else null, open, { open = !open }, MaterialTheme.colorScheme.onSurface, MaterialTheme.typography.bodyLarge)
+        if (hint != null && (!behindInfo || open)) Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Slider(value, onChange, valueRange = range, steps = steps, onValueChangeFinished = onDone)
     }
 }
