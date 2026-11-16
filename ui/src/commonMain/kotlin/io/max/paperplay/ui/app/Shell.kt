@@ -49,6 +49,10 @@ import io.max.paperplay.ui.theme.panelExit
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
@@ -395,6 +399,10 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 var showNow by remember { mutableStateOf(false) }
                 LaunchedEffect(page, detail, settings) { showNow = false }
                 val keys = rememberPlayerKeys(backend, volume)
+                // Alt + Left arrow goes back, like the mouse's back button.
+                val backKey = Modifier.onPreviewKeyEvent { e ->
+                    if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.isAltPressed && e.key == androidx.compose.ui.input.key.Key.DirectionLeft) { handleBack(); true } else false
+                }
                 PublishMiniState(pb, backend, prefs.miniFormat)
                 val panel = prefs.nowPlayingPanel && pb.current != null && !showNow
                 var sidebarExpanded by remember { mutableStateOf(true) }
@@ -404,7 +412,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 // player bar sit on the same wash as the card instead of on the plain page background.
                 val nowSong = if (showNow) pb.current else null
                 val shell: @Composable () -> Unit = {
-                Column(Modifier.fillMaxSize().mouseBackButton(::handleBack).playerKeys(keys)) {
+                Column(Modifier.fillMaxSize().mouseBackButton(::handleBack).playerKeys(keys).then(backKey)) {
                     Row(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp)) {
                         Sidebar(
                             page, playlistId, lib.playlists,

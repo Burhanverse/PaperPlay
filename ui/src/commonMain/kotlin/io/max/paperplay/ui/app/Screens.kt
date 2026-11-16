@@ -283,6 +283,9 @@ fun DetailScreen(
     Box(modifier) {
     Column(Modifier.fillMaxSize()) {
         BackTopBar(name, onBack) {
+            if (detail !is Detail.Playlist && rawSongs.isNotEmpty()) {
+                IconButton({ actions.notice(if (backend.togglePinAll(rawSongs.map { it.id })) "Keeping this list on this device" else "List no longer kept on this device") }) { AppIcon(Icons.Rounded.PushPin, "Keep on this device") }
+            }
             if (detail is Detail.Playlist) {
                 IconButton({ actions.notice(if (backend.togglePinAll(rawSongs.map { it.id })) "Keeping this playlist on this device" else "Playlist no longer kept on this device") }) { AppIcon(Icons.Rounded.PushPin, "Pin for offline") }
                 AddSongsButton(backend, detail.id, rawSongs.map { it.id }.toSet(), { actions.notice(it) })

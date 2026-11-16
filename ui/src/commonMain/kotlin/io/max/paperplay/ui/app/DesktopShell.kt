@@ -133,7 +133,7 @@ internal val toolPages = listOf(
     SidePage("missing", "Song info left", Icons.Rounded.Rule),
     SidePage("repair", "Scan library", Icons.Rounded.Sync), SidePage("channels", "Channels and chats", Icons.Rounded.Forum),
     SidePage("stats", "Listening statistics", Icons.Rounded.BarChart), SidePage("cache", "Cache manager", Icons.Rounded.Storage),
-    SidePage("log", "Activity log", Icons.Rounded.MonitorHeart),
+    SidePage("log", "Activity log", Icons.Rounded.MonitorHeart), SidePage("spotify", "Spotify import", Icons.Rounded.QueueMusic),
 )
 
 /** Tints the native title bar with the colour the page gradient starts from, so the two meet without a seam. */

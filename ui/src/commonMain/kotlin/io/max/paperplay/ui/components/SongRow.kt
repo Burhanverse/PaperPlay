@@ -36,6 +36,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +62,7 @@ fun SongRow(
     actions: SongActions? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val menuOpen = remember { mutableStateOf(false) }
     // The row's colour eases between states, and a mouse pointer over it lightens it a little (a touch screen never hovers).
     val hover = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
@@ -85,6 +90,19 @@ fun SongRow(
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
                 .hoverable(hover)
+                // A right click (mouse) opens the same menu as the three dots.
+                .pointerInput(actions != null) {
+                    if (actions == null) return@pointerInput
+                    awaitPointerEventScope {
+                        while (true) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            if (e.type == PointerEventType.Press && e.buttons.isSecondaryPressed) {
+                                menuOpen.value = true
+                                e.changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                }
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
                 .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -160,7 +178,7 @@ fun SongRow(
                     modifier = Modifier.size(16.dp).padding(end = 4.dp),
                 )
             }
-            if (actions != null) SongMenu(song, actions) else Box(Modifier.size(8.dp))
+            if (actions != null) SongMenu(song, actions, openState = menuOpen) else Box(Modifier.size(8.dp))
         }
     }
     }
@@ -258,8 +276,14 @@ internal fun FormatChip(text: String) {
 }
 
 @Composable
-fun SongMenu(song: SongUi, actions: SongActions, icon: ImageVector = Icons.Rounded.MoreVert, onOutputInfo: (() -> Unit)? = null) {
-    var open by remember { mutableStateOf(false) }
+fun SongMenu(
+    song: SongUi, actions: SongActions, icon: ImageVector = Icons.Rounded.MoreVert, onOutputInfo: (() -> Unit)? = null,
+    /** Lets the row open this menu too (a right click). */
+    openState: androidx.compose.runtime.MutableState<Boolean>? = null,
+) {
+    val own = remember { mutableStateOf(false) }
+    val openRef = openState ?: own
+    var open by openRef
     var info by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val uri = androidx.compose.ui.platform.LocalUriHandler.current

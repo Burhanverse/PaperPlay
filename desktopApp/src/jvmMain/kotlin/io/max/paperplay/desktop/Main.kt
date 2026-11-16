@@ -152,6 +152,20 @@ fun main() {
     // Set jna.library.path for TDLib only. VlcLoader will append the VLC path
     // automatically when the first JvmPlayerEngine is created.
     tdlibDir()?.let { System.setProperty("jna.library.path", it) }
+    // No share sheet on Windows: shared text goes to the clipboard, a shared file is shown in Explorer.
+    io.max.paperplay.ui.app.BackupFiles.shareText = { text ->
+        java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(java.awt.datatransfer.StringSelection(text), null)
+    }
+    io.max.paperplay.ui.app.BackupFiles.shareFilePath = { _, path ->
+        runCatching { ProcessBuilder("explorer.exe", "/select,", File(path).absolutePath).start() }
+    }
+    io.max.paperplay.ui.app.BackupFiles.shareFile = { fileName, text ->
+        runCatching {
+            val dir = File(System.getProperty("java.io.tmpdir"), "paperplay-shared").apply { mkdirs() }
+            val f = File(dir, fileName).apply { writeText(text) }
+            ProcessBuilder("explorer.exe", "/select,", f.absolutePath).start()
+        }
+    }
     io.max.paperplay.ui.app.BackupFiles.pickDestination = { name, onPicked ->
         javax.swing.SwingUtilities.invokeLater {
             val picked = NativeDialogs.saveFile("Save backup", name)
