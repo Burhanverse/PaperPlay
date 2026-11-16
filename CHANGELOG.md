@@ -2,6 +2,22 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.1] - 2026-11-16
+
+### Other changes
+- Desktop player: shorter input buffer so a song starts sooner, and the log says codec, rate and start delay ([`89b7692`](https://github.com/maxcodl/ PaperPlay/commit/89b7692780baad9470fcfe994f486883a30a44a3))
+- Playback: a short fade on pause and on resume, none when a song starts fresh ([`b2a5b28`](https://github.com/maxcodl/ PaperPlay/commit/b2a5b28cd17bae5ce522a7ed09015de6a4449624))
+- Desktop: picking a music folder logs what it found, reports a read error, and answers on the window's own thread ([`9bd9756`](https://github.com/maxcodl/ PaperPlay/commit/9bd975635f79badf42696bd94add90dc77d4a0eb))
+- Missing songs: the add button says why it cannot add instead of doing nothing ([`ddb0566`](https://github.com/maxcodl/ PaperPlay/commit/ddb0566a1774dea0fc21f01ddc9469caba0929a4))
+- Log: a removed song names the code that removed it ([`4a69017`](https://github.com/maxcodl/ PaperPlay/commit/4a6901777495ee916cdd94c68e3bc85b45b944a3))
+- Devices: a screen with nothing playing follows the paired device that plays ([`1925fcc`](https://github.com/maxcodl/ PaperPlay/commit/1925fcc9c6594a9f485ca809660f01fedc78e337))
+- Playback: the song and the next two download in full, so seeking in them is instant ([`8db8e2b`](https://github.com/maxcodl/ PaperPlay/commit/8db8e2b3deb432190044af0225060c4a048ac586))
+- Desktop player: a stream end right after a seek is not the end of the song, the song reopens at the place asked for ([`e7190be`](https://github.com/maxcodl/ PaperPlay/commit/e7190be5314df6e800f341b177038c7159568646))
+- Desktop: Open in Telegram uses the t.me link, a browser cannot open tg:// ([`b2a8578`](https://github.com/maxcodl/ PaperPlay/commit/b2a85787ae98a8687e1f7a51aa11bb8e1e8998de))
+- Desktop: the Duplicates page is a lazy list and gets no scrolling column, which crashed with an infinite height ([`57cc3cc`](https://github.com/maxcodl/ PaperPlay/commit/57cc3ccde79270cd1efe82a30eb56794f01d2441))
+
+**Full changes:** [v1.8.0...v1.8.1](https://github.com/maxcodl/ PaperPlay/compare/v1.8.0...v1.8.1)
+
 ## [1.8.0] - 2026-11-16
 
 ### Added
