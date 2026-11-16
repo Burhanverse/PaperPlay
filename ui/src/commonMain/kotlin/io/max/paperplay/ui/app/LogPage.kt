@@ -67,6 +67,7 @@ internal fun LogPage(backend: CoreBackend) {
             else {
                 val name = "paperplay-log-${m.year}-${two(m.month)}-${two(m.day)}.txt"
                 val out = dataDir.trimEnd('/', '\\') + "/shared/" + name
+                Fs.mkdirs(dataDir.trimEnd('/', '\\') + "/shared")
                 backend.playLog.writeAll(out, header)
                 share(name, out)
                 note = "Shared the full log as a file (${Fs.size(out) / 1024} KB)"
@@ -135,7 +136,6 @@ internal fun LogBody(
         }
         if (onShare != null) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             androidx.compose.material3.FilledTonalButton({ onShare(true) }) { Text("Share full log as file") }
-            OutlinedButton({ onShare(false) }) { Text("Share as text") }
         }
         PillField(query, { query = it }, "Search the log", Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
