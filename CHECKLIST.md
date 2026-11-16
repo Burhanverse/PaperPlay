@@ -52,7 +52,7 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [x] Spotify-style player: now playing view, full-screen synced lyrics, mini always-on-top window,
       device picker (this PC only), keyboard shortcuts overlay (compiles, not tried)
 - [x] Sidebar: corner radius slider (`nav_radius`) and width (`sidebar_width`) are in `UiPrefs.kt` and Settings > Navigation bar (found in the 13 Nov audit; glass option and selection style not re-checked) (compiles, not tried)
-- [x] Sidebar Tools group (Sort General, Duplicates, Song info left)
+- [x] Sidebar Tools group (Sort General, Duplicates, Song info left): Tools is a row with a toolbox icon and a fold arrow, the open tool is highlighted, and a divider sets Settings apart below (16 Nov, compiles not checked, not tried)
 - [x] Mute button restores the previous volume (`DesktopShell.kt` remembers `lastVolume`; found in the 13 Nov audit)
 - [x] Settings back arrow goes back one page, leaves Settings only from a top-level page
 - [x] Media keys (`WindowsMedia.kt`)
