@@ -702,3 +702,8 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Songs deleted on one device are removed on the other at the next sync, unless the file was posted again later; the record expires after a year. Song info, lyrics and covers fill in between devices, hand-made data first.
 - [~] Standby: Lyrics shows 7 (landscape) or 5 lines with faded top and bottom, plain lyrics scroll, the instrumental notice means no lyrics ("No lyrics for this song"), the cover tile is grayscale.
 - [ ] Not tried on two devices at once.
+### PC parity (16 Nov)
+- [~] A playlist imported from Spotify keeps its link and its "not in your library yet" list on every linked device, so the refresh and the missing row show on the PC too; a device that already has its own link keeps it.
+- [~] Spotify import lists the logged-in account's own playlists with Import or Refresh (needs the Spotify connection; the paste box stays for other people's links).
+- [~] PC: right click on a song row opens its menu; Alt+Left goes back; sharing copies text to the clipboard or shows the file in Explorer; Spotify import is in the sidebar Tools; the keep-on-device pin shows on album, artist and Telegram lists too.
+- [ ] Not done: right-click menu on sidebar playlists, Go to album or artist in the song menu, Ctrl+F for search.
