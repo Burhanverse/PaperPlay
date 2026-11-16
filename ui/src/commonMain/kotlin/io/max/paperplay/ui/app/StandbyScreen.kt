@@ -39,7 +39,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
@@ -121,7 +123,7 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                     Text(clock.dateLabel + if (!p.hour24) (if (clock.hour < 12) "  AM" else "  PM") else "", color = tone.copy(alpha = 0.6f), style = MaterialTheme.typography.titleMedium)
                 }
                 if (p.shows(StandbyWidget.Song) && song != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (p.shows(StandbyWidget.Cover)) CoverImage(song.coverUri, song.id, Modifier.size(56.dp), size = 56.dp, radius = 10.dp)
+                    if (p.shows(StandbyWidget.Cover)) CoverImage(song.coverUri, song.id, Modifier.size(56.dp), size = 56.dp, radius = 10.dp, colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(0f) }))
                     Column(horizontalAlignment = if (p.shows(StandbyWidget.Cover)) Alignment.Start else Alignment.CenterHorizontally) {
                         Text(song.title, color = tone, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
                         Text(song.artist, color = tone.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
@@ -159,9 +161,15 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
             }
         }
         val visual: @Composable (Modifier) -> Unit = { m ->
-            val sideLines = if (p.style == StandbyStyle.Lyrics && song != null) rememberLrc(song.id, backend) else emptyList()
-            if (sideLines.isNotEmpty()) Box(m, contentAlignment = Alignment.Center) {
-                StandbyLyricScroll(sideLines, backend, tone, if (wide) 5 else 3, true, Modifier.fillMaxWidth())
+            val lyricsLoading = remember(song?.id) { mutableStateOf(true) }.also { l -> LaunchedEffect(song?.id) { kotlinx.coroutines.delay(4_000); l.value = false } }.value
+            val sideLines = if (p.style == StandbyStyle.Lyrics && song != null) rememberLrc(song.id, backend, state.durationMs) else emptyList()
+            if (p.style == StandbyStyle.Lyrics && song != null && sideLines.isEmpty()) Box(m, contentAlignment = Alignment.Center) {
+                Text(
+                    if (lyricsLoading) " " else "No lyrics for this song", color = tone.copy(alpha = 0.5f), textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            } else if (sideLines.isNotEmpty()) Box(m, contentAlignment = Alignment.Center) {
+                StandbyLyricScroll(sideLines, backend, tone, if (wide) 7 else 5, true, Modifier.fillMaxWidth())
             } else StandbyVisual(p.style, tone, state.playing, state.volume, song?.id.orEmpty(), m)
         }
         Box(Modifier.fillMaxSize().offset(shiftX, shiftY)) {
@@ -251,10 +259,26 @@ private fun StandbyLyric(id: String, backend: PlayerControls, tone: Color) {
 }
 
 @Composable
-private fun rememberLrc(id: String, backend: PlayerControls): List<io.max.paperplay.core.metadata.LrcLine> {
+private fun rememberLrc(id: String, backend: PlayerControls, durationMs: Long = 0): List<io.max.paperplay.core.metadata.LrcLine> {
     var text by remember(id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(id) { text = runCatching { backend.lyricsFor(id) }.getOrNull() }
-    return remember(text) { text?.let { io.max.paperplay.core.metadata.parseLrc(it) }.orEmpty() }
+    LaunchedEffect(id) {
+        text = runCatching { backend.lyricsFor(id) }.getOrNull()
+        if (text == null) { kotlinx.coroutines.delay(3_000); text = runCatching { backend.lyricsFor(id) }.getOrNull() }
+    }
+    return remember(text, durationMs / 1000) { lrcOrPlain(text, durationMs) }
+}
+
+/** Timed lyrics as they are; plain lyrics spread evenly over the song so they still scroll; a one line "pure music" notice is no lyrics. */
+internal fun lrcOrPlain(text: String?, durationMs: Long): List<io.max.paperplay.core.metadata.LrcLine> {
+    if (text.isNullOrBlank()) return emptyList()
+    val timed = io.max.paperplay.core.metadata.parseLrc(text)
+    val lines = if (timed.isNotEmpty()) timed else {
+        val plain = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val step = if (durationMs > 0 && plain.isNotEmpty()) durationMs / plain.size else 4_000L
+        plain.mapIndexed { i, t -> io.max.paperplay.core.metadata.LrcLine(i * step, t) }
+    }
+    val instrumental = lines.size == 1 && lines[0].text.let { it.contains("纯音乐") || it.contains("instrumental", ignoreCase = true) }
+    return if (instrumental) emptyList() else lines
 }
 
 /** [rows] lines with the current one in the middle: the list scrolls smoothly to each new line and the lines fade out with distance. */
@@ -266,7 +290,17 @@ private fun StandbyLyricScroll(lines: List<io.max.paperplay.core.metadata.LrcLin
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(current) { list.animateScrollToItem(current.coerceAtLeast(0)) }
     androidx.compose.foundation.lazy.LazyColumn(
-        modifier.height(itemH * rows), state = list, userScrollEnabled = false,
+        modifier.height(itemH * rows)
+            // The top and bottom lines fade out to nothing at the edges.
+            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 0.22f to Color.Black, 0.78f to Color.Black, 1f to Color.Transparent),
+                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                )
+            },
+        state = list, userScrollEnabled = false,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = itemH * (rows / 2)),
     ) {
         itemsIndexed(lines) { i, l ->
@@ -276,6 +310,7 @@ private fun StandbyLyricScroll(lines: List<io.max.paperplay.core.metadata.LrcLin
                 Text(
                     l.text.ifBlank { " " }, color = tone.copy(alpha = a), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
+                    fontWeight = if (d == 0) FontWeight.Bold else FontWeight.Normal,
                 )
             }
         }

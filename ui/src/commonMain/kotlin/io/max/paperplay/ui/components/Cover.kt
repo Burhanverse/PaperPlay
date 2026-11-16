@@ -43,6 +43,8 @@ fun CoverImage(
     size: Dp = 52.dp,
     radius: Dp = 8.dp,
     coverId: String = key,
+    /** Applied to the picture only (a grayscale cover, for example); the placeholder keeps its colours. */
+    colorFilter: androidx.compose.ui.graphics.ColorFilter? = null,
 ) {
     val loader = LocalCoverLoader.current
     val onMissing = LocalOnMissingCover.current
@@ -65,7 +67,7 @@ fun CoverImage(
             else CoverMosaic(key, Modifier.size(size))
         }
         if (painter != null) {
-            Image(painter, contentDescription = null, Modifier.size(size).graphicsLayer { alpha = fade.value }, contentScale = ContentScale.Crop)
+            Image(painter, contentDescription = null, Modifier.size(size).graphicsLayer { alpha = fade.value }, contentScale = ContentScale.Crop, colorFilter = colorFilter)
         }
     }
 }
