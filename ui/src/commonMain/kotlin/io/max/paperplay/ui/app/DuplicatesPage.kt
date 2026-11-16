@@ -107,7 +107,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
         }
         var found = find()
         // A post Telegram no longer has would be listed as a repeat forever; drop what is gone and list again.
-        if (found.isNotEmpty() && queue.dropGonePosts(found.flatMap { g -> postsOf(g).map { it.key } }) > 0) found = find()
+        if (!active && found.isNotEmpty() && queue.dropGonePosts(found.flatMap { g -> postsOf(g).map { it.key } }) > 0) found = find()
         groups = found
         // The extras are ticked at once: repeats in the same topic and clearly worse copies. The best copy of every song is never in it.
         ticked = keepOnePerGroup(found, found.filter { sectionOf(it) == DuplicateSection.Extras }
@@ -142,7 +142,14 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = bottomPadding + 96.dp)) {
             when {
-                found == null -> item { Text("Looking for repeats", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                found == null -> item {
+                    // A delete started earlier carries on while this page loads, so its progress shows at once.
+                    val done = jobs.count { it.status == DeleteStatus.Done }
+                    Text(
+                        if (jobs.isEmpty()) "Looking for repeats" else "Deleting: $done of ${jobs.size} done" + (if (active) "" else ". Looking for repeats") ,
+                        Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 found.isEmpty() -> item { Text("No repeated songs in your main chat.", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 else -> {
                     item {
