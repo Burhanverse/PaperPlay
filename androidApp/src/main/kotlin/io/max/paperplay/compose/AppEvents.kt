@@ -82,16 +82,15 @@ internal object AppEvents {
 
         runCatching {
             val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            fun kind(n: Network) = cm.getNetworkCapabilities(n)?.let { c ->
+            fun kind(c: NetworkCapabilities) =
                 listOf(NetworkCapabilities.TRANSPORT_WIFI to "wifi", NetworkCapabilities.TRANSPORT_CELLULAR to "mobile", NetworkCapabilities.TRANSPORT_ETHERNET to "ethernet", NetworkCapabilities.TRANSPORT_VPN to "vpn")
                     .filter { c.hasTransport(it.first) }.joinToString("+") { it.second } +
                     (if (c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) ", internet ok" else ", no internet") +
                     (if (c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) "" else ", metered")
-            } ?: "unknown"
             cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(n: Network) = PlayLog.log("network", "connected: ${kind(n)}")
+                override fun onAvailable(n: Network) = PlayLog.log("network", "connected")
                 override fun onLost(n: Network) = PlayLog.log("network", "lost")
-                override fun onCapabilitiesChanged(n: Network, c: NetworkCapabilities) = PlayLog.log("network", "changed: ${kind(n)}")
+                override fun onCapabilitiesChanged(n: Network, c: NetworkCapabilities) = PlayLog.log("network", "changed: ${kind(c)}")
             })
         }
 
