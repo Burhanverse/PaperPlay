@@ -62,7 +62,32 @@ class AppServices(
         private set
 
     fun enableLanSync(isDesktop: Boolean): io.max.paperplay.core.sync.LanSync = lanSync ?: io.max.paperplay.core.sync.createLanSync(
-        io.max.paperplay.core.sync.LanEnv(library, platform.secrets, scope, isDesktop, platform.deviceModel, { platform.secrets.get(Keys.BOT_TOKEN) }),
+        io.max.paperplay.core.sync.LanEnv(
+            library, platform.secrets, scope, isDesktop, platform.deviceModel, { platform.secrets.get(Keys.BOT_TOKEN) },
+            coverBytes = { uid ->
+                val song = library.songByUniqueId(uid)
+                val path = song?.cover_path
+                if (song == null || path == null) null
+                else fileLength(path).takeIf { it > 0 }?.let { n -> song.cover_at to readRange(path, 0, n.toInt()) }
+            },
+            saveCover = { uid, at, bytes ->
+                library.songByUniqueId(uid)?.let { song ->
+                    // A hand-chosen cover keeps the time it was chosen (so the devices stop offering it to each other); an automatic one only
+                    // fills a song that has none and is never marked as chosen by hand.
+                    if (at != 0L && at > song.cover_at) {
+                        enricher.setCoverBytes(listOf(song), bytes)
+                        driver.execute(null, "UPDATE songs SET cover_at = ? WHERE unique_id = ?", 2) { bindLong(0, at); bindString(1, uid) }
+                        library.invalidate()
+                    } else if (song.cover_path == null) {
+                        val dir = "${platform.dataDir.trimEnd('/')}/covers"
+                        io.max.paperplay.core.backup.Fs.mkdirs(dir)
+                        val path = "$dir/${uid.replace(Regex("[^A-Za-z0-9._-]"), "_")}_sync.jpg"
+                        io.max.paperplay.core.backup.Fs.write(path, bytes)
+                        library.replaceSong(song.copy(cover_path = path))
+                    }
+                }
+            },
+        ),
     ).also { lanSync = it; bindLan(it) }
 
     /** Which device plays: null is this one, else the id of a paired device the player controls. */

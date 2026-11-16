@@ -8,7 +8,16 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /** Tags that travel with an edited song, plus the pin. */
-data class SongExtra(val artist: String, val album: String, val genre: String?, val year: Long?, val pinned: Boolean)
+data class SongExtra(
+    val artist: String, val album: String, val genre: String?, val year: Long?, val pinned: Boolean,
+    val lyrics: String? = null, val releaseId: String? = null, val coverUrl: String? = null, val metadataSource: String? = null,
+    /** Song info was found (by a lookup or by hand). */
+    val enriched: Boolean = false,
+    /** When the cover was chosen by hand, 0 when it is an automatic one. The cover file itself travels in its own message. */
+    val coverAt: Long = 0,
+    /** This device has a cover file for the song (chosen by hand or found automatically). */
+    val hasCover: Boolean = false,
+)
 
 /**
  * The song related data of one device: [state] feeds [mergeLibrary], [extra] holds the tag fields of edited songs,
@@ -21,7 +30,7 @@ data class Snapshot(
 )
 
 /** What an apply changed. */
-data class ApplyResult(val songsChanged: Int, val playlistsChanged: Int)
+data class ApplyResult(val songsChanged: Int, val playlistsChanged: Int, val wantCovers: List<String> = emptyList())
 
 /** Wire form of a [Snapshot]. */
 object SnapshotCodec {
@@ -39,6 +48,11 @@ object SnapshotCodec {
                             if (e != null) {
                                 put("artist", JsonPrimitive(e.artist)); put("album", JsonPrimitive(e.album)); put("genre", e.genre.orNull())
                                 put("year", e.year.orNull()); put("pinned", JsonPrimitive(e.pinned))
+                                e.lyrics?.let { put("lyr", JsonPrimitive(it)) }; e.releaseId?.let { put("rel", JsonPrimitive(it)) }
+                                e.coverUrl?.let { put("curl", JsonPrimitive(it)) }; e.metadataSource?.let { put("msrc", JsonPrimitive(it)) }
+                                if (e.enriched) put("enr", JsonPrimitive(true))
+                                if (e.coverAt != 0L) put("cat", JsonPrimitive(e.coverAt))
+                                if (e.hasCover) put("hc", JsonPrimitive(true))
                             }
                         },
                     )
@@ -76,7 +90,10 @@ object SnapshotCodec {
                 j.reqLng("plays"), j.reqLng("skips"), j.lng("last"),
             )
             if (j.str("artist") != null) {
-                extra[id] = SongExtra(j.reqStr("artist"), j.str("album") ?: "", j.str("genre"), j.lng("year"), j.flag("pinned") ?: false)
+                extra[id] = SongExtra(
+                    j.reqStr("artist"), j.str("album") ?: "", j.str("genre"), j.lng("year"), j.flag("pinned") ?: false,
+                    j.str("lyr"), j.str("rel"), j.str("curl"), j.str("msrc"), j.flag("enr") ?: false, j.lng("cat") ?: 0L, j.flag("hc") ?: false,
+                )
             }
         }
         val gone = HashMap<String, Long>()
@@ -100,6 +117,8 @@ object SnapshotCodec {
 
 private fun ItemSync.live() = removedAt == null || removedAt <= addedAt
 
+private const val LYRICS_BUDGET = 8_000_000
+
 /** Builds a snapshot from the database and applies a merged one back. Songs this device does not have are skipped. */
 class SnapshotStore(private val library: LibraryRepository) {
     private val db get() = library.repo.db
@@ -111,11 +130,19 @@ class SnapshotStore(private val library: LibraryRepository) {
     fun build(onlyWithState: Boolean = true): Snapshot {
         val songs = HashMap<String, SongSync>()
         val extra = HashMap<String, SongExtra>()
+        var lyricsBudget = LYRICS_BUDGET
         for (s in db.songsQueries.allSongs().executeAsList()) {
             val has = s.favorite || s.plays > 0 || s.skips > 0 || s.last_played_at != null || s.user_edited || s.pinned
-            if (onlyWithState && !has) continue
+            // Everything that was looked up or chosen travels too, so a device that lacks it can fill it in.
+            val data = s.enrich_state == io.max.paperplay.core.library.EnrichState.DONE || !s.lyrics.isNullOrBlank() || s.cover_at != 0L || s.cover_path != null
+            if (onlyWithState && !has && !data) continue
             songs[s.unique_id] = SongSync(s.title, s.user_edited, s.tags_at, s.favorite, s.favorite_at, s.plays, s.skips, s.last_played_at)
-            extra[s.unique_id] = SongExtra(s.artist, s.album, s.genre, s.year, s.pinned)
+            // Lyrics are the bulky part, kept under a budget so a frame never grows past what a link takes.
+            val lyrics = if (onlyWithState) s.lyrics?.takeIf { it.isNotBlank() && it.length <= 20_000 && it.length <= lyricsBudget }?.also { lyricsBudget -= it.length } else null
+            extra[s.unique_id] = SongExtra(
+                s.artist, s.album, s.genre, s.year, s.pinned, lyrics, s.release_id, s.cover_url, s.metadata_source,
+                s.enrich_state == io.max.paperplay.core.library.EnrichState.DONE, s.cover_at, s.cover_path != null,
+            )
         }
         for (p in db.playlistsQueries.emptyUuidPlaylists().executeAsList()) {
             db.playlistsQueries.setPlaylistUuid(legacyPlaylistUuid(p.id, p.name), p.id)
@@ -139,6 +166,7 @@ class SnapshotStore(private val library: LibraryRepository) {
         val merged = mergeLibrary(local.state, remote.state)
         var songsChanged = 0
         var playlistsChanged = 0
+        val wantCovers = ArrayList<String>()
         library.batch(soft = false) {
             val rows = db.songsQueries.allSongs().executeAsList().associateBy { it.unique_id }
             val changed = ArrayList<io.max.paperplay.core.library.Song>()
@@ -152,10 +180,10 @@ class SnapshotStore(private val library: LibraryRepository) {
                 )
                 val re = remote.extra[id]
                 if (re != null) {
-                    if (l != null && r != null && remoteTagsWin(l, r)) {
-                        n = n.copy(artist = re.artist, album = re.album, genre = re.genre ?: row.genre, year = re.year ?: row.year)
-                    }
+                    if (l != null && r != null) n = mergeSongData(n, l, r, re)
                     if (re.pinned && !n.pinned) n = n.copy(pinned = true)
+                    // A cover the other device has and this one lacks, or a hand-chosen one that is newer: its file is asked for after the merge.
+                    if (re.coverAt > row.cover_at || (re.hasCover && row.cover_path == null)) wantCovers += id
                 }
                 if (n != row) changed += n
             }
@@ -198,7 +226,7 @@ class SnapshotStore(private val library: LibraryRepository) {
                 }
             }
         }
-        return ApplyResult(songsChanged, playlistsChanged)
+        return ApplyResult(songsChanged, playlistsChanged, wantCovers)
     }
 }
 

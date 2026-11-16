@@ -54,3 +54,38 @@ fun mergeLibrary(local: LibraryState, remote: LibraryState): LibraryState {
     }
     return LibraryState(songs, gone, lists)
 }
+
+private fun String?.blankOrUnknown() = isNullOrBlank() || this == "Unknown artist"
+
+/**
+ * Song data other than state: [remote] fills what [local] lacks, whichever of the two is manual or automatic. Where both have a
+ * value, tags the owner edited win over automatic ones ([remoteTagsWin]); with the same origin the later edit wins. Lyrics are only
+ * ever filled in. Pure; [local] comes back unchanged when there is nothing to take.
+ */
+fun mergeSongData(local: io.max.paperplay.core.library.Song, ls: SongSync, rs: SongSync, remote: SongExtra): io.max.paperplay.core.library.Song {
+    val remoteWins = remoteTagsWin(ls, rs)
+    fun text(l: String?, r: String?, emptyL: Boolean): String? = when {
+        r.blankOrUnknown() -> l
+        emptyL -> r
+        remoteWins -> r
+        else -> l
+    }
+    val artist = text(local.artist, remote.artist, local.artist.blankOrUnknown()) ?: local.artist
+    val album = text(local.album, remote.album, local.album.isBlank()) ?: local.album
+    val genre = text(local.genre, remote.genre, local.genre.isNullOrBlank())
+    val year = when {
+        remote.year == null -> local.year
+        local.year == null -> remote.year
+        remoteWins -> remote.year
+        else -> local.year
+    }
+    val release = text(local.release_id, remote.releaseId, local.release_id.isNullOrBlank())
+    val coverUrl = text(local.cover_url, remote.coverUrl, local.cover_url.isNullOrBlank())
+    val source = text(local.metadata_source, remote.metadataSource, local.metadata_source.isNullOrBlank())
+    val lyrics = if (local.lyrics.isNullOrBlank() && !remote.lyrics.isNullOrBlank()) remote.lyrics else local.lyrics
+    val state = if (remote.enriched && local.enrich_state != io.max.paperplay.core.library.EnrichState.DONE) io.max.paperplay.core.library.EnrichState.DONE else local.enrich_state
+    return local.copy(
+        artist = artist, album = album, genre = genre, year = year, release_id = release, cover_url = coverUrl,
+        metadata_source = source, lyrics = lyrics, enrich_state = state,
+    )
+}

@@ -227,6 +227,10 @@ class LanEnv(
     /** The bot token, only to prove it is the same one on both devices. Never sent. */
     val botToken: () -> String?,
     val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    /** The hand-chosen cover of a song, as (when it was chosen, image bytes); null when it has none to give. */
+    val coverBytes: (uniqueId: String) -> Pair<Long, ByteArray>? = { null },
+    /** Stores a hand-chosen cover another device sent, keeping the time it was chosen. */
+    val saveCover: (uniqueId: String, at: Long, bytes: ByteArray) -> Unit = { _, _, _ -> },
 )
 
 /** Builds the sockets, crypto and discovery (Android and desktop share one implementation). Does not start it. */

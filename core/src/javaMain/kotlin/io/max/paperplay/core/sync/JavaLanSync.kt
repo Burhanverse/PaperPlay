@@ -96,6 +96,8 @@ private fun randomDigits(n: Int): String {
     return buildString { repeat(n) { append(r.nextInt(10)) } }
 }
 
+private const val MAX_COVER = 4_000_000
+
 internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private val lib = env.library
     private val io = CoroutineScope(SupervisorJob(env.scope.coroutineContext.job) + Dispatchers.IO)
@@ -351,6 +353,14 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private fun register(p: Peer) {
         peers.put(p.info.id, p)?.close()
         publishConnected()
+        // A new link exchanges song data at once (what one device lacks, the other fills in), then now and then while it lasts.
+        io.launch {
+            delay(3_000)
+            while (peers[p.info.id] === p) {
+                runCatching { syncNow(p.info.id) }
+                delay(10 * 60_000L)
+            }
+        }
     }
 
     private fun publishConnected() {
@@ -382,6 +392,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 val rid = m.str("rid") ?: return
                 try {
                     val res = store.apply(SnapshotCodec.decode(m.obj("data") ?: throw IllegalArgumentException("no data")))
+                    askCovers(p, res)
                     p.send(
                         buildJsonObject {
                             put("t", "sync-reply"); put("rid", rid); put("changed", res.songsChanged + res.playlistsChanged)
@@ -393,6 +404,13 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 }
             }
             "sync-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }
+            "coverreq" -> serveCovers(p, m.arr("ids")?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty())
+            "cover" -> {
+                val id = m.str("id")
+                val at = (m["at"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+                val bytes = m.str("b64")?.let { runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull() }
+                if (id != null && at != null && bytes != null && bytes.size <= MAX_COVER) runCatching { env.saveCover(id, at, bytes) }
+            }
             "nowplaying" -> {
                 _remoteNow.update { it + (p.info.id to RemoteNow(
                     m.str("id"), m.str("title"), m.str("artist"), m.flag("playing") == true,
@@ -555,6 +573,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 val reply = withTimeoutOrNull(60_000) { waiter.await() }
                 if (reply == null || reply.flag("error") == true) { failure = failure ?: LanFailure.Protocol; continue }
                 val res = store.apply(SnapshotCodec.decode(reply.obj("data") ?: throw IllegalArgumentException("no data")))
+                askCovers(p, res)
                 songs += res.songsChanged; lists += res.playlistsChanged
                 other += (reply["changed"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 0
             } catch (e: IOException) {
@@ -566,6 +585,24 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             }
         }
         SyncResult(failure == null, failure, songs, lists, other)
+    }
+
+    /** Sends the hand-chosen covers [ids] asked for, one message each, skipping any that are missing or too big. */
+    private fun serveCovers(p: Peer, ids: List<String>) {
+        io.launch {
+            for (id in ids.take(200)) {
+                val (at, bytes) = runCatching { env.coverBytes(id) }.getOrNull() ?: continue
+                if (bytes.size > MAX_COVER) continue
+                runCatching { p.send(buildJsonObject { put("t", "cover"); put("id", id); put("at", at); put("b64", java.util.Base64.getEncoder().encodeToString(bytes)) }) }
+            }
+        }
+    }
+
+    /** Asks [p] for the covers [res] says it has and this device lacks (hand-chosen ones are in front), 200 songs to a request. */
+    private fun askCovers(p: Peer, res: ApplyResult) {
+        for (part in res.wantCovers.chunked(200)) {
+            runCatching { p.send(buildJsonObject { put("t", "coverreq"); put("ids", buildJsonArray { for (u in part) add(u) }) }) }
+        }
     }
 
     override suspend fun unpair(deviceId: String) {
