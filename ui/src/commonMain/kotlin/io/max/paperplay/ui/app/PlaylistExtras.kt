@@ -251,7 +251,7 @@ fun PlaylistsTab(
     onOpen: (Detail) -> Unit, onNewPlaylist: () -> Unit, onImportSpotify: () -> Unit,
 ) {
     val read = LocalTelegramLists.current
-    val telegramLists = androidx.compose.runtime.remember(playlists.size, favorites.size) { read() }
+    val telegramLists = androidx.compose.runtime.remember(read, playlists.size, favorites.size) { read() }
     LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(top = 4.dp, bottom = bottomPadding + 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { PlaylistActionRow(Icons.Rounded.Favorite, "Favorites") { onOpen(Detail.Songs("Favorites", favorites)) } }
         item { PlaylistActionRow(Icons.Rounded.History, "Recently played") { onOpen(Detail.Songs("Recently played", recents)) } }

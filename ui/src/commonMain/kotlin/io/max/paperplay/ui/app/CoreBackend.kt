@@ -1046,7 +1046,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val all = byId.values
         val out = ArrayList<TelegramList>()
         val topics = runCatching { repo.repo.db.miscQueries.topics().executeAsList() }.getOrDefault(emptyList())
-        for (t in io.max.paperplay.core.filing.topicChoices(topics, main, taste.value.topicNames)) {
+        // A topic Telegram never named still has songs filed in it, so it is listed too.
+        val named = io.max.paperplay.core.filing.topicChoices(topics, main, taste.value.topicNames)
+        val seen = named.map { it.id }.toSet()
+        val unnamed = if (named.isEmpty() && all.none { it.chat_id == main && it.topic_id != null && it.topic_id != io.max.paperplay.core.filing.GENERAL_TOPIC_ID }) emptyList()
+        else all.filter { it.chat_id == main }.mapNotNull { it.topic_id }.filter { it != io.max.paperplay.core.filing.GENERAL_TOPIC_ID && it !in seen }.distinct().sorted()
+            .map { io.max.paperplay.core.filing.TopicChoice(it, "Unnamed topic $it") }
+        val general = if (named.isEmpty() && unnamed.isNotEmpty()) listOf(io.max.paperplay.core.filing.TopicChoice(io.max.paperplay.core.filing.GENERAL_TOPIC_ID, "General")) else emptyList()
+        for (t in general + named + unnamed) {
             val songs = all.filter { it.chat_id == main && (it.topic_id ?: io.max.paperplay.core.filing.GENERAL_TOPIC_ID) == t.id }
             if (songs.isNotEmpty()) out += TelegramList("topic:$main:${t.id}", t.name, songs.sortedByDescending { it.date }.map { it.toUi() })
         }

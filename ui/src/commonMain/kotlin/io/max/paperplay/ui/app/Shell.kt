@@ -267,7 +267,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     var sawCoverQueue by remember { mutableStateOf(false) }
     LaunchedEffect(coversQueued) { if (coversQueued > 0) sawCoverQueue = true else if (sawCoverQueue) coversStarting = false }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(10_000); coversStarting = false }
-    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides backend::telegramLists, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides remember(lib) { { backend.telegramLists() } }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
