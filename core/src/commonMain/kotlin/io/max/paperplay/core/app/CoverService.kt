@@ -70,6 +70,8 @@ class CoverService(
     private val tdFor: (Song) -> TdClient? = { null },
     /** Your own account's client, which sees every post of the chat, so it can read a thumbnail whoever posted the song and while a scan keeps the bot busy. */
     private val accountClient: () -> TdClient? = { null },
+    /** True while playback streams this song; its file is then left alone (a second range request on the same file could cut the stream). */
+    private val isStreaming: (String) -> Boolean = { false },
 ) {
     private val queueMutex = Mutex()
     private val tdMutex = Mutex()
@@ -337,7 +339,9 @@ class CoverService(
         return if (rpm != null) 60_000L / rpm else backgroundPauseMs
     }
 
-    private enum class Outcome { Done, NeedsTd, RetryLater }
+    private enum class Outcome { Done, NeedsTd, RetryLater, Defer }
+
+    private var deferJob: Job? = null
 
     private suspend fun markDone(uid: String, outcome: Outcome, retryDelayMs: Long = 0L) {
         queueMutex.withLock {
@@ -348,6 +352,15 @@ class CoverService(
                     rateLimited.remove(uid)
                 }
                 Outcome.NeedsTd -> awaitingTd.add(uid)
+                Outcome.Defer -> {
+                    attempted.remove(uid)
+                    if (deferJob?.isActive != true) {
+                        deferJob = scope.launch {
+                            delay(6L * 60 * 60 * 1000 + 60_000L)
+                            kick()
+                        }
+                    }
+                }
                 Outcome.RetryLater -> {
                     rateLimited.add(uid)
                     val waitMs = retryDelayMs.coerceAtLeast(if (requestPauseMs > 0L) 1_000L else 40L)
@@ -466,10 +479,12 @@ class CoverService(
         // its first few megabytes. Only that start of the file is downloaded.
         val head = audioFile
         val headClient = audioClient
-        if (head != null && headClient != null) {
-            val bytes = embeddedCoverOf(headClient, head)
-            if (bytes != null) {
-                val outPath = writeCoverFile(uid, bytes)
+        if (head != null && headClient != null && !isStreaming(uid)) {
+            val inside = embeddedCoverOf(headClient, head)
+            if (inside.bytes != null) {
+                // A cover chosen by hand while the download ran stays.
+                val now = repo.songByUniqueId(uid)
+                val outPath = if (now != null && now.cover_at == 0L && now.cover_path == song.cover_path) writeCoverFile(uid, inside.bytes) else null
                 if (outPath != null) {
                     repo.updateCover(uniqueId = uid, coverPath = outPath, notify = false)
                     notifyWake.trySend(Unit)
@@ -477,8 +492,17 @@ class CoverService(
                     markDone(uid, Outcome.Done)
                     return
                 }
+                if (now == null || now.cover_at != 0L || now.cover_path != song.cover_path) {
+                    markDone(uid, Outcome.Done)
+                    return
+                }
             }
-            notes += "no cover inside the start of the file"
+            if (inside.failed) {
+                // Not knowing is not the same as having no cover: the song is asked about again later.
+                answered = false
+                if (inside.rateLimited) tdRateLimited = true
+                notes += "the start of the file could not be downloaded"
+            } else notes += "no cover inside the start of the file"
         }
 
         // 3. Search services, all asked at once: Deezer and iTunes (the stored sources were tried already).
@@ -504,7 +528,8 @@ class CoverService(
             !answered -> {
                 val gm = giveUpMap()
                 giveUpMutex.withLock { gm[uid] = clock() - GIVE_UP_MS + 6L * 60 * 60 * 1000; giveUpDirty++ }
-                markDone(uid, Outcome.Done)
+                // Not marked as attempted: the song is queued again once the six hours are over.
+                markDone(uid, Outcome.Defer)
             }
             else -> {
                 recordGiveUp(uid, found = false)
@@ -645,21 +670,30 @@ class CoverService(
     }
 
     /** The cover picture inside the first megabytes of an audio file, or null. Downloads only that start. */
-    private suspend fun embeddedCoverOf(client: TdClient, file: JsonObject): ByteArray? {
-        val fileId = file.long("id")?.toInt()?.takeIf { it != 0 } ?: return null
-        val res = withTimeoutOrNull(20.seconds) {
+    private class Embedded(val bytes: ByteArray? = null, val failed: Boolean = false, val rateLimited: Boolean = false)
+
+    private suspend fun embeddedCoverOf(client: TdClient, file: JsonObject): Embedded {
+        val fileId = file.long("id")?.toInt()?.takeIf { it != 0 } ?: return Embedded()
+        val tried = withTimeoutOrNull(20.seconds) {
             runCatchingCancellable {
                 client.call(request("downloadFile") {
                     put("file_id", fileId); put("priority", 8); put("offset", 0); put("limit", HEAD_BYTES); put("synchronous", true)
                 })
             }
-        }?.getOrNull() ?: return null
-        val local = res.obj("local") ?: return null
-        val path = local.str("path")?.takeIf { it.isNotEmpty() } ?: return null
+        } ?: return Embedded(failed = true)
+        val err = tried.exceptionOrNull()
+        if (err != null) {
+            if (err is TdError && err.code == 429) { recordTdRateLimit(err.message); return Embedded(failed = true, rateLimited = true) }
+            return Embedded(failed = true)
+        }
+        val res = tried.getOrNull() ?: return Embedded(failed = true)
+        val local = res.obj("local") ?: return Embedded(failed = true)
+        val path = local.str("path")?.takeIf { it.isNotEmpty() } ?: return Embedded(failed = true)
         val have = minOf(local.long("downloaded_prefix_size") ?: local.long("downloaded_size") ?: 0L, fileLength(path))
-        if (have <= 0L) return null
-        return runCatching { readEmbeddedTags(TagSource(have) { off, n -> readRange(path, off, n) })?.cover }.getOrNull()
+        if (have <= 0L) return Embedded(failed = true)
+        val cover = runCatching { readEmbeddedTags(TagSource(have) { off, n -> readRange(path, off, n) })?.cover }.getOrNull()
             ?.takeIf { looksLikeImage(it, null) }
+        return Embedded(bytes = cover)
     }
 
     private suspend fun reserveTdSlot(): Boolean {

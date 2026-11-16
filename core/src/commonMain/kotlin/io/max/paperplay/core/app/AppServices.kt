@@ -212,6 +212,7 @@ class AppServices(
         clock,
         tdFor = { s -> botOwnerOf(s.remote_id)?.let { botPool.clientOf(it) } },
         accountClient = { (account as? io.max.paperplay.core.account.UserSession)?.streamClient() },
+        isStreaming = { it in resolver.activeIds() },
     )
 
     /** Fills title, artist, album and cover from tags inside downloaded files. */
