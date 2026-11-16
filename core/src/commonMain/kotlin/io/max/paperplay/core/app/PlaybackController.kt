@@ -125,7 +125,10 @@ class PlaybackController(
                 val prev = q.getOrNull(idx - 1)
                 neighborJob?.cancel()
                 neighborJob = launch {
-                    val active = engine.state.value == PlayerState.Playing || engine.state.value == PlayerState.Loading
+                    // Engines apply play() asynchronously, so a skip from pause may not show as Playing yet; the intent counts.
+                    val intent = playIntent
+                    playIntent = false
+                    val active = intent || engine.state.value == PlayerState.Playing || engine.state.value == PlayerState.Loading
                     runCatching { resolver.window(song, next, playing = active, previous = prev) }
                     if (active) {
                         if (next != null) launch { runCatching { resolver.prefetch(next) } }
@@ -297,7 +300,10 @@ class PlaybackController(
         }
     }
 
+    @kotlin.concurrent.Volatile private var playIntent = false
+
     fun next() = command {
+        playIntent = true
         val m = meta.value
         if (m.repeat == Repeat.ALL && engine.currentIndex.value == m.queue.lastIndex) apply(m.queue, 0, 0)
         else engine.next()
@@ -305,7 +311,7 @@ class PlaybackController(
         engine.play()
     }
 
-    fun previous() = command { engine.previous(); engine.play() }
+    fun previous() = command { playIntent = true; engine.previous(); engine.play() }
 
     /** Reorders the rest of the queue around the song now playing, without restarting it. */
     fun setShuffle(on: Boolean) = command {
