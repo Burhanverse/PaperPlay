@@ -33,6 +33,9 @@ object BackupFiles {
     /** Opens the system share sheet with a text file, given its name and contents. Null where unsupported. */
     var shareFile: ((fileName: String, text: String) -> Unit)? = null
 
+    /** Shares the file already written at [path] (inside the app's `shared` folder) without reading it into memory. Null where unsupported. */
+    var shareFilePath: ((fileName: String, path: String) -> Unit)? = null
+
     /** Opens the system share sheet with plain text. Null where unsupported. */
     /** App version and device, put at the top of a shared log. Set by the entry point. */
     var deviceInfo: String = ""

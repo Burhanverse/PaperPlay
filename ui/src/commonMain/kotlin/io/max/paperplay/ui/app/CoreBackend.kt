@@ -550,9 +550,6 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         io.max.paperplay.core.app.MemoryProbe.start(scope) { "Jobs: ${tasks.running.value.size}" }
     }
 
-    /** The text to share: a short header, then the full playback and activity log from the first line on. */
-    fun fullLogText(header: String): String = header + "\n\n" + playLog.readAll()
-
     fun addLog(source: String, message: String, error: Boolean = false) {
         val clean = message.replace(Regex("\\b\\d{5,}:[A-Za-z0-9_-]{20,}\\b"), "<bot token>")
         io.max.paperplay.player.PlayLog.log("app/$source", clean + if (error) "  [error]" else "")

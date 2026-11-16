@@ -46,7 +46,13 @@ internal fun LogPage(backend: CoreBackend) {
     val dataDir = backend.services.platform.dataDir
     LogBody(
         lines, crash, note,
-        onSaveLog = { _ -> saveText(dataDir, "paperplay-log", backend.fullLogText(BackupFiles.deviceInfo)) { note = it } },
+        onSaveLog = { _ ->
+            val m = nowMoment()
+            fun two(n: Int) = n.toString().padStart(2, '0')
+            val tmp = dataDir.trimEnd('/', '\\') + "/log-tmp.txt"
+            backend.playLog.writeAll(tmp, BackupFiles.deviceInfo)
+            saveFromFile("paperplay-log-${m.year}-${two(m.month)}-${two(m.day)}.txt", tmp) { note = it }
+        },
         onSaveCrash = { crash?.let { text -> saveText(dataDir, "paperplay-crash", text) { note = it } } },
         onClearCrash = { env?.clearCrash?.invoke(); crash = null },
         onNote = { note = it },
@@ -55,15 +61,15 @@ internal fun LogPage(backend: CoreBackend) {
             val m = nowMoment()
             fun two(n: Int) = n.toString().padStart(2, '0')
             val header = "${BackupFiles.deviceInfo}\nShared ${m.year}-${two(m.month)}-${two(m.day)} ${localTimeLabel(m.epochMs)}"
-            val text = backend.fullLogText(header)
-            val share = BackupFiles.shareFile
-            val shareText = BackupFiles.shareText
-            when {
-                share == null && shareText == null -> note = "Sharing is not supported here. Use Save instead."
-                // A message body is limited in size; a long log always goes as a file so nothing is cut.
-                !asFile && shareText != null && text.length < 200_000 -> { shareText(text); note = "Shared the full log (${text.length / 1024} KB)" }
-                share != null -> { share("paperplay-log-${m.year}-${two(m.month)}-${two(m.day)}.txt", text); note = "Shared the full log as a file (${text.length / 1024} KB)${if (!asFile) ", too long for a message" else ""}" }
-                else -> note = "Sharing a file is not supported here."
+            // Always a file, copied in blocks from the log files: the log is never loaded into memory and nothing is cut.
+            val share = BackupFiles.shareFilePath
+            if (share == null) note = "Sharing is not supported here. Use Save instead."
+            else {
+                val name = "paperplay-log-${m.year}-${two(m.month)}-${two(m.day)}.txt"
+                val out = dataDir.trimEnd('/', '\\') + "/shared/" + name
+                backend.playLog.writeAll(out, header)
+                share(name, out)
+                note = "Shared the full log as a file (${Fs.size(out) / 1024} KB)"
             }
         },
     )
@@ -78,6 +84,13 @@ internal fun saveText(dataDir: String, name: String, text: String, done: (String
     val file = "$name-${m.year}-${two(m.month)}-${two(m.day)}.txt"
     val tmp = dataDir.trimEnd('/', '\\') + "/log-tmp.txt"
     Fs.write(tmp, text.encodeToByteArray())
+    saveFromFile(file, tmp, done)
+}
+
+/** Asks where to save, copies the already written file at [tmp] there and removes it. */
+internal fun saveFromFile(file: String, tmp: String, done: (String) -> Unit) {
+    val pick = BackupFiles.pickDestination
+    if (pick == null) { Fs.deleteRecursively(tmp); done("Saving a file is not supported here"); return }
     pick(file) { dest ->
         val ok = dest?.save(tmp)
         Fs.deleteRecursively(tmp)

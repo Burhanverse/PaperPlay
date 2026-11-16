@@ -287,6 +287,14 @@ class MainActivity : ComponentActivity() {
                         startActivity(Intent.createChooser(send, "Share log").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
                     }
                 }
+                io.max.paperplay.ui.app.BackupFiles.shareFilePath = { name, path ->
+                    runCatching {
+                        val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.share", File(path))
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                            .putExtra(Intent.EXTRA_SUBJECT, name).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        startActivity(Intent.createChooser(send, "Share log").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    }
+                }
                 io.max.paperplay.ui.app.BackupFiles.deviceInfo =
                     "PaperPlay ${packageManager.getPackageInfo(packageName, 0).versionName}, ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.SUPPORTED_ABIS.joinToString()}"
                 io.max.paperplay.ui.app.BackupFiles.shareText = { text ->
@@ -297,6 +305,7 @@ class MainActivity : ComponentActivity() {
                 onDispose {
                     io.max.paperplay.ui.app.BackupFiles.pickDestination = null
                     io.max.paperplay.ui.app.BackupFiles.shareFile = null
+                    io.max.paperplay.ui.app.BackupFiles.shareFilePath = null
                     io.max.paperplay.ui.app.BackupFiles.shareText = null
                 }
             }

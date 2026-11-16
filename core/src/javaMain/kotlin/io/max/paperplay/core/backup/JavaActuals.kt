@@ -28,6 +28,21 @@ actual object Fs {
     actual fun rename(from: String, to: String) {
         require(File(from).renameTo(File(to))) { "Could not move a file into place." }
     }
+    actual fun concat(out: String, header: String, parts: List<Pair<String, Long>>) {
+        val target = File(out).apply { parentFile?.mkdirs() }
+        target.outputStream().buffered().use { o ->
+            o.write(header.toByteArray())
+            val block = ByteArray(64 * 1024)
+            for ((path, tail) in parts) {
+                val f = File(path).takeIf { it.exists() && it.length() > 0 } ?: continue
+                o.write("\n".toByteArray())
+                java.io.RandomAccessFile(f, "r").use { r ->
+                    if (f.length() > tail) r.seek(f.length() - tail)
+                    while (true) { val n = r.read(block); if (n < 0) break; o.write(block, 0, n) }
+                }
+            }
+        }
+    }
 }
 
 private const val KDF_ITERATIONS = 200_000

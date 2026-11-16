@@ -38,11 +38,18 @@ class PlayLogFile(dataDir: String, scope: CoroutineScope, private val stamp: (Lo
         queue.trySend("${stamp(at)}  $tag  ${message.replace(token, "<bot token>")}\n")
     }
 
-    /** The whole log, oldest first. */
-    fun readAll(): String {
-        val system = (Fs.readText("$dir/logcat-older.txt") + Fs.readText("$dir/logcat.txt")).let { if (it.length > MAX_SYSTEM_CHARS) it.takeLast(MAX_SYSTEM_CHARS) else it }
-        return Fs.readText(older) + Fs.readText(path) +
-            if (system.isEmpty()) "" else "\n\n===== Android system log for this app (logcat, every tag and level; the newest ${system.length / 1024} KB) =====\n" + system
+    /**
+     * The whole log as one file at [out], oldest first, built by copying the files in small blocks: the log never sits in memory,
+     * however large it has grown.
+     */
+    fun writeAll(out: String, header: String) {
+        Fs.concat(
+            out, header,
+            listOf(
+                older to Long.MAX_VALUE, path to Long.MAX_VALUE,
+                "$dir/logcat-older.txt" to MAX_SYSTEM_BYTES, "$dir/logcat.txt" to MAX_SYSTEM_BYTES,
+            ),
+        )
     }
 
     fun clear() {
@@ -52,6 +59,6 @@ class PlayLogFile(dataDir: String, scope: CoroutineScope, private val stamp: (Lo
 
     private companion object {
         const val MAX_BYTES = 20L * 1024 * 1024
-        const val MAX_SYSTEM_CHARS = 6_000_000
+        const val MAX_SYSTEM_BYTES = 8L * 1024 * 1024
     }
 }

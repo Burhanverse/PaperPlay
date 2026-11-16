@@ -11,6 +11,8 @@ expect object Fs {
     fun deleteRecursively(path: String)
     /** Renames [from] to [to]; [to] must not exist. */
     fun rename(from: String, to: String)
+    /** Writes [header], then each file in [parts] (path to the most bytes taken from its end) to [out], copied in small blocks so memory stays flat. Missing files are skipped. */
+    fun concat(out: String, header: String, parts: List<Pair<String, Long>>)
 }
 
 /**
