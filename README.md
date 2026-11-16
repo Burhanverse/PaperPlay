@@ -30,6 +30,9 @@ Built with Kotlin and Compose Multiplatform.
 - Queue editing, play next, shuffle and repeat, sleep timer, speed, a 10-band equalizer with presets, loudness
   levelling, and restore of your last session.
 - Synced lyrics (tap a line to jump) and plain lyrics that scroll along; format badge and an output-info dialog.
+- Rewind restarts the song; a second press within 2.5 seconds goes to the song before it, and on the first song it only restarts.
+- Lyrics can be switched per song (translate button in the lyrics view: original, romanized, translation, other records) and the
+  choice follows you to your other devices.
 - Artists in a credit like "A, B & C" are separate: each is its own tap target in the player, the song menu has "Go to" for
   every artist and the album, and an artist page lists every song they are credited on.
 - Android: media notification, **standby mode** (a dark clock screen with the song, a grayscale cover tile and a Lyrics
@@ -44,6 +47,8 @@ Built with Kotlin and Compose Multiplatform.
   playlists for one-tap import or refresh). Songs you do not have are listed greyed
   out in the playlist's order, tap one to open it in Spotify, and a menu copies its real page on Spotify, Apple Music, Deezer,
   Tidal, Amazon Music and YouTube Music.
+- Songs on a hits compilation ("Bravo Hits", "Top 100") do not get that album's generic cover; Settings > Library > Fix compilation
+  covers resets songs that already have one.
 - Covers, song info and uploads show their progress in the Tasks page and in a notification.
 
 **Several devices**
