@@ -261,6 +261,12 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val channel = -s.chat_id - 1_000_000_000_000L
         val post = s.message_id shr 20
         if (post <= 0) return null
+        // The phone hands tg:// to the Telegram app. A PC browser cannot open it and shows an empty tab, so there it is the web link,
+        // which opens the post in Telegram (or on the web); a post in a forum topic names its topic.
+        if (!io.max.paperplay.ui.isPhone) {
+            val topic = s.topic_id?.takeIf { it != io.max.paperplay.core.filing.GENERAL_TOPIC_ID }?.shr(20)?.takeIf { it > 1 }
+            return "https://t.me/c/$channel/$post" + (if (topic != null) "?thread=$topic" else "")
+        }
         return "tg://privatepost?channel=$channel&post=$post"
     }
 
