@@ -123,6 +123,8 @@ class CoverSources(
 
     /** Cover Art Archive for the release (largest size first), and the link already stored. */
     private fun stored(q: CoverQuery): List<CoverCandidate> = buildList {
+        // A song filed under a compilation ("Bravo Hits 95") would get that generic cover; look for its own album's instead.
+        if (isCompilationAlbum(q.album)) return@buildList
         val rid = q.releaseId?.takeIf { it.isNotBlank() }
         if (rid != null) {
             add(
@@ -145,7 +147,7 @@ class CoverSources(
         val out = ArrayList<CoverCandidate>()
         if (res.status == 200) {
             val items = parse(res)?.objs("data") ?: emptyList()
-            val picked = pickExternal(items.map { ExternalMatch.fromDeezer(it) }, q.title, q.artist, q.durationSec)
+            val picked = pickExternal(items.map { ExternalMatch.fromDeezer(it) }, q.title, q.artist, q.durationSec, q.album, allowCompilation = false)
             picked?.coverUrl?.takeIf { it.isNotBlank() }?.let { out += candidate("Deezer", it, picked) }
         }
         if (out.isEmpty() && album && q.album.isNotBlank()) {
@@ -183,7 +185,7 @@ class CoverSources(
             if (res.status == 403 || res.status == 429) { itunesBlockedUntil = clock() + 30_000L; return emptyList() }
             if (res.status != 200) continue
             val items = parse(res)?.objs("results") ?: continue
-            val picked = pickExternal(items.map { ExternalMatch.fromItunes(it) }, q.title, q.artist, q.durationSec)
+            val picked = pickExternal(items.map { ExternalMatch.fromItunes(it) }, q.title, q.artist, q.durationSec, q.album, allowCompilation = false)
             picked?.coverUrl?.takeIf { it.isNotBlank() }?.let { return listOf(candidate("iTunes", it, picked)) }
         }
         if (album && q.album.isNotBlank() && !itunesBlocked) {

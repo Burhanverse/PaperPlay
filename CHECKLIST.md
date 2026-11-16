@@ -719,3 +719,7 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Lyrics pane (phone and PC): the translate button lists the versions the sources have (LRCLIB records with their script, NetEase original, romanized and translation) and keeps the picked one for the song; Automatic forgets the pick.
 - [ ] No global default language yet (only a per-song pick); QQ and Kugou variants are not read.
 - [x] `UserSessionTest.deleterBatchesAndReportsRefused` fixed (the fake answered the existence check with no message list).
+### Touch-through and generic covers (16 Nov)
+- [~] Nothing underneath is pressed through the player sheet or the mini player and navigation bars (`blockTouchesBehind`); to check on the phone: open the player, tap empty areas, the list behind must not play. Other overlays (dialogs, sheets) already have their own scrim.
+- [~] Covers: a match on a compilation ("Bravo Hits 95", "Top 100", "Now That's What I Call...") comes after the song's own album; a cover is never taken from a compilation; MusicBrainz releases that are compilations sort last. Settings > Library > "Fix compilation covers" clears album, cover and info of songs that already got one (hand-edited ones and file-tag albums stay), then Scan library looks them up again.
+- [~] Artist pages list every song an artist is credited on (a phone on an older build showed one song for "Dhee"); check after the install.

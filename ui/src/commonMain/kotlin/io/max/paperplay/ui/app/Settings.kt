@@ -320,6 +320,11 @@ internal fun SettingsPage(
             NavRow("Find duplicates", "Repeated songs in your main chat, and deleting them", Icons.Rounded.ContentCopy) { stack.add("dupes") }
             NavRow("Sort General", "Suggests topics for songs in General. Nothing moves till you confirm", Icons.Rounded.DriveFileMove) { stack.add("sort") }
             SettingsRow(
+                "Fix compilation covers", icon = Icons.Rounded.Album,
+                subtitle = "Songs filed under a hits compilation (Bravo Hits, Top 100) get that album's generic cover. This clears their album and cover so the next scan finds the real ones. Songs you edited stay",
+                onClick = { notice.value = "Reset ${backend.resetCompilationInfo()} songs. Run Scan library to look them up again" },
+            )
+            SettingsRow(
                 "Clear the deletion record", icon = Icons.Rounded.DeleteSweep,
                 subtitle = "Songs you deleted are remembered so other devices remove them too. Clear it if a song was removed by mistake; no song is deleted by clearing",
                 onClick = { notice.value = "Cleared ${backend.clearDeletionRecord()} entries" },

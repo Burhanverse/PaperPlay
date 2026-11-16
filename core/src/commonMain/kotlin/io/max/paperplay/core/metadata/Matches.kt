@@ -24,7 +24,12 @@ class MbMatch(
 ) {
     companion object {
         fun fromJson(r: JsonObject): MbMatch {
-            val releases = r.objs("releases")
+            val all = r.objs("releases")
+            // A recording is on its own album and on compilations; the album, not the generic compilation, is the one wanted.
+            val releases = all.sortedBy { rel ->
+                val types = ((rel.obj("release-group")?.get("secondary-types")) as? kotlinx.serialization.json.JsonArray)?.map { it.toString() }.orEmpty()
+                if (types.any { it.contains("Compilation", ignoreCase = true) } || isCompilationAlbum(rel.str("title") ?: "")) 1 else 0
+            }
             val credits = r.objs("artist-credit")
             return MbMatch(
                 score = r.int("score") ?: 0,
@@ -80,18 +85,39 @@ class ExternalMatch(
  * First result that's safely the same recording: the title and artist agree, and the length is
  * within 5 seconds. A file with no length is matched on title and a known artist alone.
  */
-fun pickExternal(results: List<ExternalMatch>, title: String, artist: String, durationSec: Int): ExternalMatch? {
+/**
+ * Albums that collect many artists' hits ("Bravo Hits 95", "Top 100", "Now That's What I Call Music", "Various Artists"). A song is on one
+ * of them as well as on its own album, and their cover is a generic one, so they come last (or not at all for a cover).
+ */
+fun isCompilationAlbum(album: String): Boolean = compilationWords.containsMatchIn(album)
+
+private val compilationWords = Regex(
+    "\\bhits?\\s*(of\\s*)?(19|20)?\\d{2}\\b|\\btop\\s*\\d+\\b|\\bbravo\\b|\\bnow\\s+that'?s\\s+what\\b|\\bvarious\\b|\\bcompilation\\b|" +
+        "\\bkuschelrock\\b|\\bministry of sound\\b|\\bbest\\s+(of\\s+)?(19|20)\\d\\d\\b|\\bsummer\\s+(hits|party)\\b|\\bworkout\\b|\\bplaylist\\b|" +
+        "\\b\\d{2,3}\\s+(best|hits|greatest)\\b|\\bchart\\s*(hits|show|attack)\\b",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * The result that is this song. One that is not on a compilation comes first, and one on the album the song is known to be on before
+ * the others. With [allowCompilation] false a compilation is never returned (a cover must not be the generic one).
+ */
+fun pickExternal(results: List<ExternalMatch>, title: String, artist: String, durationSec: Int, wantAlbum: String = "", allowCompilation: Boolean = true): ExternalMatch? {
     val wantTitle = comparableText(searchTitle(cleanTitle(title, artist)))
     val wantArtist = if (artist == "Unknown artist") "" else comparableText(firstArtist(artist))
     if (wantTitle.isEmpty()) return null
     if (durationSec <= 0 && wantArtist.isEmpty()) return null
-    for (r in results) {
-        if (durationSec > 0 && kotlin.math.abs(r.lengthSec - durationSec) > 5) continue
-        if (comparableText(searchTitle(r.title)) != wantTitle) continue
-        if (wantArtist.isEmpty() || comparableText(r.artist).contains(wantArtist)) return r
+    val fits = results.filter { r ->
+        (durationSec <= 0 || kotlin.math.abs(r.lengthSec - durationSec) <= 5) &&
+            comparableText(searchTitle(r.title)) == wantTitle && (wantArtist.isEmpty() || comparableText(r.artist).contains(wantArtist))
     }
-    return null
+    val album = comparableText(wantAlbum)
+    return fits.firstOrNull { album.isNotEmpty() && comparableText(r0(it)) == album && !isCompilationAlbum(it.album) }
+        ?: fits.firstOrNull { !isCompilationAlbum(it.album) }
+        ?: fits.firstOrNull().takeIf { allowCompilation }
 }
+
+private fun r0(m: ExternalMatch) = m.album
 
 /**
  * For a song with no artist: the closest result when its title is the same up to a small typo and its length is within 8 seconds.

@@ -1132,6 +1132,20 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun mainChatId(): Long? = parseMainChat(repo.pref(MAIN_CHAT_KEY))
 
+    /**
+     * Songs whose album was found online as a compilation ("Bravo Hits 95", "Top 100") get their album, cover and info cleared so the next
+     * scan looks them up again; songs edited by hand, with a hand-picked cover or an album from the file's own tags stay as they are.
+     * Returns how many were reset.
+     */
+    fun resetCompilationInfo(): Int {
+        val list = repo.repo.db.songsQueries.allSongs().executeAsList()
+            .filter { !it.user_edited && it.cover_at == 0L && it.metadata_source != "File tags" && io.max.paperplay.core.metadata.isCompilationAlbum(it.album) }
+        repo.replaceSongs(
+            list.map { it.copy(album = "", release_id = null, cover_url = null, cover_path = null, metadata_source = null, enrich_state = io.max.paperplay.core.library.EnrichState.PENDING) },
+        )
+        return list.size
+    }
+
     /** Forgets which songs were deleted, so they are no longer removed from or kept out of the other devices. Returns how many entries went. */
     fun clearDeletionRecord(): Int {
         val n = runCatching { (kotlinx.serialization.json.Json.parseToJsonElement(repo.pref(io.max.paperplay.core.filing.GONE_KEY) ?: "{}") as kotlinx.serialization.json.JsonObject).size }.getOrDefault(0)
