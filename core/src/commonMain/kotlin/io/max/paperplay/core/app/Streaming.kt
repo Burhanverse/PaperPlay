@@ -202,7 +202,12 @@ class TdStreamSource(
             block = null
             return null
         }
-        if (bytes.isEmpty()) return null
+        if (bytes.isEmpty()) {
+            // An empty read of a file that should hold these bytes: the file was replaced or cut; ask TDLib for the current path.
+            path = ""
+            block = null
+            return null
+        }
         block = Block(offset, bytes)
         return if (bytes.size <= want) bytes else bytes.copyOf(want)
     }
