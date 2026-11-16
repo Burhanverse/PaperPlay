@@ -324,12 +324,15 @@ private fun PlayerBody(
                     var showSpeed by remember { mutableStateOf(false) }
                     val speed by backend.speed.collectAsState()
                     var more by remember { mutableStateOf(false) }
+                    var showEq by remember { mutableStateOf(false) }
+                    val eqOn by backend.eqOn.collectAsState()
                     Box {
                         IconButton({ more = true }) {
-                            AppIcon(Icons.Rounded.Tune, "More controls", tint = if (sleepAt != null || speed != 1f) scheme.primary else scheme.onSurface)
+                            AppIcon(Icons.Rounded.Tune, "More controls", tint = if (sleepAt != null || speed != 1f || eqOn) scheme.primary else scheme.onSurface)
                         }
                         androidx.compose.material3.DropdownMenu(more, { more = false }) {
                             androidx.compose.material3.DropdownMenuItem({ Text(if (sleepAt != null) "Sleep timer (on)" else "Sleep timer") }, { more = false; showSleep = true })
+                            androidx.compose.material3.DropdownMenuItem({ Text(if (eqOn) "Equalizer (on)" else "Equalizer") }, { more = false; showEq = true })
                             androidx.compose.material3.DropdownMenuItem({ Text("Speed (${speedLabel(speed)})") }, { more = false; showSpeed = true })
                             if (onStandby != null) androidx.compose.material3.DropdownMenuItem({ Text("Standby mode") }, { more = false; onStandby() })
                             if (onDevices != null) androidx.compose.material3.DropdownMenuItem({ Text("Devices") }, { more = false; devicesOpen = true })
@@ -337,6 +340,7 @@ private fun PlayerBody(
                     }
                     if (showSleep) SleepTimerDialog(backend) { showSleep = false }
                     if (showSpeed) SpeedDialog(backend) { showSpeed = false }
+                    if (showEq) EqualizerDialog(backend) { showEq = false }
                 }
             }
         }
@@ -603,6 +607,24 @@ internal fun SpeedDialog(backend: PlayerControls, onClose: () -> Unit) {
     )
 }
 
+/** The equalizer from Settings > Listening, opened from the player so a curve can be tried while a song plays. */
+@Composable
+internal fun EqualizerDialog(backend: PlayerControls, onClose: () -> Unit) {
+    val on by backend.eqOn.collectAsState()
+    val gains by backend.eqGains.collectAsState()
+    val bass by backend.eqBass.collectAsState()
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Equalizer") },
+        text = {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (io.max.paperplay.ui.isPhone) { v: Float -> backend.setEqBass(v) } else null)
+            }
+        },
+        confirmButton = { TextButton(onClose) { Text("Close") } },
+    )
+}
+
 /** Pauses playback after a chosen time. */
 @Composable
 internal fun SleepTimerDialog(backend: PlayerControls, onClose: () -> Unit) {
@@ -694,9 +716,9 @@ internal fun OutputInfoDialog(song: SongUi, backend: PlayerControls, onDismiss: 
         info?.channels?.let { "Channels" to if (it == 2) "Stereo" else if (it == 1) "Mono" else "$it" },
         info?.bitrateKbps?.let { "Bitrate" to "$it kbps" },
         info?.device?.let { "Output" to it },
-        info?.outputRateHz?.let { "Output rate" to khz(it) },
+        info?.outputRateHz?.let { "Mixer rate" to khz(it) },
         "Effects" to (info?.effects?.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "None"),
-    )
+    ) + (info?.details ?: emptyList())
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Output info") },

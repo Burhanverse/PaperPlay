@@ -92,6 +92,13 @@ interface PlayerControls {
     /** Playback speed, 1 is normal. */
     val speed: StateFlow<Float>
     fun setSpeed(speed: Float)
+    /** Equalizer switch and its ten band gains in dB. */
+    val eqOn: StateFlow<Boolean> get() = MutableStateFlow(false)
+    val eqGains: StateFlow<List<Float>> get() = MutableStateFlow(List(10) { 0f })
+    fun setEqualizer(on: Boolean = eqOn.value, gains: List<Float> = eqGains.value) {}
+    /** Extra bass in dB, 0 to 12, on top of the equalizer. */
+    val eqBass: StateFlow<Float> get() = MutableStateFlow(0f)
+    fun setEqBass(db: Float) {}
     fun removeFromQueue(index: Int)
     fun moveInQueue(from: Int, to: Int)
     fun togglePlay()
@@ -529,19 +536,30 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
 
     // Equalizer: ten bands in dB, saved as a list like the Flutter app does. Older five-band saves are stretched to ten.
-    val eqOn = MutableStateFlow(repo.pref("eq_on") == "true")
-    val eqGains = MutableStateFlow(
+    override val eqOn = MutableStateFlow(repo.pref("eq_on") == "true")
+    override val eqGains = MutableStateFlow(
         io.max.paperplay.player.migrateEqGains(repo.pref("eq_gains")?.trim('[', ']', ' ')?.split(',')?.mapNotNull { it.trim().toFloatOrNull() }),
     )
     private val _outputInfo = MutableStateFlow<io.max.paperplay.player.OutputInfo?>(null)
     override val outputInfo: StateFlow<io.max.paperplay.player.OutputInfo?> = _outputInfo
 
-    fun setEqualizer(on: Boolean = eqOn.value, gains: List<Float> = eqGains.value) {
+    override val eqBass = MutableStateFlow(repo.pref("eq_bass")?.toFloatOrNull() ?: 0f)
+
+    override fun setEqBass(db: Float) {
+        eqBass.value = db
+        repo.setPref("eq_bass", "$db")
+        pushBass()
+    }
+
+    private fun pushBass() { if (playerStarted.value) player.setBass(if (eqOn.value) eqBass.value else 0f) }
+
+    override fun setEqualizer(on: Boolean, gains: List<Float>) {
         eqOn.value = on
         eqGains.value = gains
         repo.setPref("eq_on", "$on")
         repo.setPref("eq_gains", gains.joinToString(",", "[", "]"))
         if (playerStarted.value) player.setEqualizer(if (on) gains else null)
+        pushBass()
     }
 
     // ListenBrainz: the token lives in the secret store, never in a plain preference.
@@ -777,7 +795,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     private val playerLazy = lazy {
         services.playback.also { p ->
             scope.launch { p.outputInfo.collect { _outputInfo.value = it } }
-            if (eqOn.value) p.setEqualizer(eqGains.value)
+            if (eqOn.value) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)
             if (speed.value != 1f) p.setSpeed(speed.value)
             if (normalizeOn.value) p.setNormalize(true)
