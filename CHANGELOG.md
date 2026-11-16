@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.3] - 2026-11-16
+
+### Fixed
+- Remove the stray space from the repository URLs after the rename ([`c91d9cf`](https://github.com/maxcodl/PaperPlay/commit/c91d9cf52f105fa696427d113d23eb34f7a0434c))
+
+**Full changes:** [v1.8.2...v1.8.3](https://github.com/maxcodl/PaperPlay/compare/v1.8.2...v1.8.3)
+
 ## [1.8.2] - 2026-11-16
 
 ### Other changes
