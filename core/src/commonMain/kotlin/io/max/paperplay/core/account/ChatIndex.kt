@@ -124,6 +124,8 @@ class ChatIndex(
         val ids = HashSet<Long>()
         var newest = 0L
         _progress.value = IndexProgress(chatId, title, 0, true)
+        // A new full read replaces the old snapshot; if it is stopped or fails, no snapshot remains and nothing is reconciled.
+        if (after == 0L) fullRead = fullRead - chatId
         val gen = stopGen
         try {
             kotlinx.coroutines.coroutineScope {
@@ -240,12 +242,16 @@ class ChatIndex(
         val chat = mainChat() ?: return -1
         val seen = fullRead[chat] ?: return -1
         val rows = library.songsInChat(chat)
-        val gone = rows.filter { it.message_id !in seen }
-        // A read that saw only a part of the chat must not wipe the library.
-        if (gone.size > rows.size / 2) return -2
+        val copies = library.repo.db.filingQueries.allPostCopies().executeAsList().filter { it.chat_id == chat }
+        // Posts newer than the newest one the read saw may have arrived after it; they are not judged.
+        val newest = seen.maxOrNull() ?: return -1
+        val gone = rows.filter { it.message_id !in seen && it.message_id <= newest }
+        val goneCopies = copies.filter { it.message_id !in seen && it.message_id <= newest }
+        // A read that saw only a part of the chat must not wipe the library (listed posts and repeats counted together).
+        if (gone.size + goneCopies.size > (rows.size + copies.size) / 2) return -2
+        // Missing repeats go first, so a missing listed post is never replaced by a repeat that is missing too.
+        for (c in goneCopies) library.removePost(c.chat_id, c.message_id)
         for (s in gone) library.removePost(s.chat_id, s.message_id)
-        val db = library.repo.db
-        for (c in db.filingQueries.allPostCopies().executeAsList()) if (c.chat_id == chat && c.message_id !in seen) library.removePost(c.chat_id, c.message_id)
         return gone.size
     }
 
