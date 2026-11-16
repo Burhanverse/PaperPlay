@@ -183,6 +183,7 @@ class AppServices(
             // also when nothing plays, so the other device never keeps showing a song that stopped.
             var sent = emptyMap<String, List<Any?>>()
             var sentAt = emptyMap<String, Long>()
+            var followTicks = 0
             while (true) {
                 kotlinx.coroutines.delay(500)
                 val started = playbackStarted
@@ -191,6 +192,11 @@ class AppServices(
                 val playing = np?.isPlaying == true
                 // Playing here again ends control of another device.
                 if (playing && _activeOutput.value != null) _activeOutput.value = null
+                // Nothing plays here (stopped or paused) and a paired device plays: this screen switches to what that device plays,
+                // after a moment so a quick pause is not taken for it.
+                val leader = if (playing || _activeOutput.value != null) null
+                else lan.connected.value.firstOrNull { it.paired && lan.remoteNow.value[it.id]?.playingNow(System.currentTimeMillis()) == true }
+                if (leader != null) { followTicks++; if (followTicks >= 3) { _activeOutput.value = leader.id; followTicks = 0 } } else followTicks = 0
                 val out = outputInfo()
                 val state = listOf(uid, playing, out?.first)
                 val linked = lan.connected.value
