@@ -1,6 +1,9 @@
 package io.max.paperplay.core.sync
 
 import io.max.paperplay.core.app.LibraryRepository
+import io.max.paperplay.core.filing.GONE_KEY
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import io.max.paperplay.core.library.legacyPlaylistUuid
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -118,6 +121,7 @@ object SnapshotCodec {
 private fun ItemSync.live() = removedAt == null || removedAt <= addedAt
 
 private const val LYRICS_BUDGET = 8_000_000
+private const val GONE_KEEP_MS = 365L * 24 * 3600 * 1000
 
 /** Builds a snapshot from the database and applies a merged one back. Songs this device does not have are skipped. */
 class SnapshotStore(private val library: LibraryRepository) {
@@ -157,7 +161,14 @@ class SnapshotStore(private val library: LibraryRepository) {
             )
             order[p.uuid] = es.filter { it.removed_at == null }.sortedWith(compareBy({ it.position }, { it.added_at })).map { it.unique_id }
         }
-        return Snapshot(LibraryState(songs, emptyMap(), lists), extra, order)
+        return Snapshot(LibraryState(songs, goneRecord(), lists), extra, order)
+    }
+
+    /** The deletion record kept by the delete queue: song unique ids and content keys, with when they were deleted. Old entries expire. */
+    private fun goneRecord(): Map<String, Long> {
+        val cutoff = System.currentTimeMillis() - GONE_KEEP_MS
+        val o = runCatching { Json.parseToJsonElement(library.pref(GONE_KEY) ?: "{}").jsonObject }.getOrNull() ?: return emptyMap()
+        return o.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.toLongOrNull()?.takeIf { it > cutoff }?.let { k to it } }.toMap()
     }
 
     /** Merges [remote] into the database (one transaction) and returns what changed. */
@@ -189,6 +200,20 @@ class SnapshotStore(private val library: LibraryRepository) {
             }
             library.replaceSongs(changed)
             songsChanged = changed.size
+
+            // Songs deleted on the other device go here too, unless the file was posted again after the deletion. Content keys
+            // ("song:...") only stop a song coming back; they would also match the copy that was kept, so they remove nothing.
+            val removed = HashSet<String>()
+            for ((key, at) in merged.gone) {
+                if (key.startsWith("song:")) continue
+                val row = rows[key] ?: continue
+                if (row.date * 1000 > at) continue
+                for (c in db.miscQueries.postCopiesOf(row.unique_id).executeAsList()) library.repo.removePost(c.chat_id, c.message_id)
+                library.repo.removePost(row.chat_id, row.message_id)
+                removed += key
+            }
+            songsChanged += removed.size
+            if (merged.gone != local.state.gone) library.setPref(GONE_KEY, JsonObject(merged.gone.mapValues { JsonPrimitive(it.value) }).toString())
 
             val have = db.lanQueries.allPlaylistsWithUuid().executeAsList().associateBy { it.uuid }
             val localEntries = db.lanQueries.allEntries().executeAsList()
