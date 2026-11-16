@@ -454,7 +454,10 @@ private fun SearchResults(
     val artists = remember(results) { results.filter { it.artist.isNotBlank() }.distinctBy { it.artist }.take(6) }
     // Like a video search: an artist whose own name matches what was typed comes first, above the songs.
     val q = remember(query) { io.max.paperplay.core.metadata.SearchQuery(query) }
-    val topArtists = remember(artists, q) { artists.filter { io.max.paperplay.core.metadata.songSearchScore(q, it.artist, "", "", null, null) > 0 }.take(3) }
+    val topArtists = remember(results, q) {
+        results.filter { it.artist.isNotBlank() }.distinctBy { it.artist }
+            .filter { io.max.paperplay.core.metadata.songSearchScore(q, it.artist, "", "", null, null) > 0 }.take(3)
+    }
     val otherArtists = remember(artists, topArtists) { artists.filter { a -> topArtists.none { it.artist == a.artist } } }
     if (results.isEmpty()) {
         Text("No songs match \"${query.trim()}\".", modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
