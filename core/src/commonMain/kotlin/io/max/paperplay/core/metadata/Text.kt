@@ -8,6 +8,9 @@ private val artistSplit = Regex("\\s*(?:,|&|;|\\s/\\s|\\bfeat\\.?\\s|\\bft\\.?\\
 /** First name in `A, B & C`, since multi-artist strings rarely match exactly. */
 fun firstArtist(artist: String): String = artist.split(artistSplit).first().trim()
 
+/** Each artist of a credit like "A, B & C feat. D", in order, without empty names. */
+fun splitArtists(artist: String): List<String> = artist.split(artistSplit).map { it.trim() }.filter { it.isNotEmpty() }
+
 private val trackPrefix = Regex("^\\s*\\d+\\s*[|/]\\s*\\d+\\s*-\\s*")
 private val qualityTag = Regex(
     "\\s*[\\[(](?:flac|mp3|m4a|aac|wav|alac|hi-?res|lossless|\\d+\\s*kbps)[\\])]",

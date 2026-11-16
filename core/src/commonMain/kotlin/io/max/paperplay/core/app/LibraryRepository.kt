@@ -117,7 +117,12 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         }.executeAsList()
     }
     fun album(name: String): Flow<List<Song>> = watch { songs.albumRows(name).executeAsList().sortedBy { it.title } }
-    fun artist(name: String): Flow<List<Song>> = watch { songs.artistRows(name).executeAsList() }
+    /** Every song [name] is credited on, alone or with others ("A, B" counts for A and for B). */
+    fun artist(name: String): Flow<List<Song>> = watch {
+        songs.allSongs().executeAsList()
+            .filter { s -> s.artist == name || io.max.paperplay.core.metadata.splitArtists(s.artist).any { it.equals(name, ignoreCase = true) } }
+            .sortedWith(compareBy({ it.album }, { it.title }))
+    }
     fun playlistSongs(id: Long): Flow<List<Song>> = watch { lists.playlistSongs(id).executeAsList() }
     fun playlists(): Flow<List<Playlist>> = watch { lists.livePlaylists().executeAsList() }
     fun chats(): Flow<List<LibraryChat>> = watch { misc.chats().executeAsList() }
