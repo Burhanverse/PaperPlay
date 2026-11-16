@@ -243,7 +243,7 @@ class AutoFiler(
                 put("chat_id", mainChat)
                 topicField(topicId, newApi)
                 put("options", buildJsonObject { put("@type", "messageSendOptions"); put("disable_notification", true) })
-                put("input_message_content", audioContent(buildJsonObject { put("@type", "inputFileLocal"); put("path", path) }, newApi, s.title, s.artist.takeIf { it != "Unknown artist" }.orEmpty(), s.duration_sec))
+                put("input_message_content", audioContent(buildJsonObject { put("@type", "inputFileLocal"); put("path", path) }, newApi, s.title, s.artist.takeIf { it != "Unknown artist" }.orEmpty(), s.duration_sec.toInt()))
             }, 2.minutes)
         }
     }
