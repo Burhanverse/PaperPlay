@@ -683,3 +683,15 @@ elease` must say Java 25 and the setup exe must start.
 - [x] The friend's memory-leak and performance commit `fd71732` is in `main`: all 479 added lines still present (checked 16 Nov); his repo has no newer commits. Memory over runs of 1 to 7 h is flat (7 h run: PSS 352 > 384 MB).
 ### Repository
 - [ ] Nothing since `c2cf455` is pushed. Pull with `git pull --rebase --autostash origin main` first. The release build (`d009d44`) is on the phone; a release build cannot be read with `adb run-as`, install a debug build to read the logs.
+
+## Update 2026-11-16 (event log, sharing the log as a file, standby Lyrics style). Key as above: [x] seen working, [~] built and installed but not tried, [ ] open
+### Event log (none built or installed yet)
+- [ ] `AppEvents.kt` writes to the shared log: activity lifecycle, memory trim and low-memory, configuration changes, screen on/off and unlock, charger, battery low and level (every 5 points), headphones plugged or noisy, airplane, time zone, locale, power saving, doze, network (connected, changed, lost, with wifi or mobile and metered), and a main-thread watchdog (stack of the main thread after 4 s without an answer).
+- [ ] Every screen change in `Shell.kt` logs a `nav` line; every setting change (`LibraryRepo.setPref`) logs a `pref` line (value cut at 80 characters, names with token, secret, password, hash, key or auth show `<hidden>`).
+- [ ] `PlayLog` holds up to 300 lines written before the log file exists and hands them over when the sink is set (start-up lines used to be dropped).
+- [ ] Crash records were already there (`CrashLog`: Java crash, native crash, ANR with trace, memory kill, previous exit reasons, full logcat copy).
+### Sharing the log
+- [ ] Share and Save no longer build the log as one string (up to about 40 MB of playback log plus system log, copied several times). `PlayLogFile.writeAll` copies the files into one file in 64 KB blocks (`Fs.concat`) and the share sheet gets that file (`BackupFiles.shareFilePath`); Save copies the same file to the chosen place. Always a file, nothing cut. Last 8 MB of each logcat file are included. `readAll` and `fullLogText` are removed.
+- [ ] Not checked on the phone: a share of a large log, and that the file opens on the receiving side.
+### Standby
+- [~] Lyrics animation style (12th style): scrolling synced lyrics in the animation area, 5 rows in landscape and 3 in portrait, bars when the song has no synced lyrics. The "Lyrics line" widget is back to a single line; "Lyrics, three lines scrolling" is its own widget. The side-lyrics widget is removed. The user reported a problem with "the lyrics one" but did not say which; open.
