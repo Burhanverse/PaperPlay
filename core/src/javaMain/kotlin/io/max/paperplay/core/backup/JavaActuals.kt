@@ -35,10 +35,20 @@ actual object Fs {
             val block = ByteArray(64 * 1024)
             for ((path, tail) in parts) {
                 val f = File(path).takeIf { it.exists() && it.length() > 0 } ?: continue
+                if (!runCatching { java.io.RandomAccessFile(f, "r").close() }.isSuccess) continue
                 o.write("\n".toByteArray())
                 java.io.RandomAccessFile(f, "r").use { r ->
-                    if (f.length() > tail) r.seek(f.length() - tail)
-                    while (true) { val n = r.read(block); if (n < 0) break; o.write(block, 0, n) }
+                    // The length is read once, so lines appended while copying are not part of this copy.
+                    val len = r.length()
+                    val start = if (len > tail) len - tail else 0L
+                    var left = len - start
+                    r.seek(start)
+                    while (left > 0) {
+                        val n = r.read(block, 0, minOf(block.size.toLong(), left).toInt())
+                        if (n < 0) break
+                        o.write(block, 0, n)
+                        left -= n
+                    }
                 }
             }
         }

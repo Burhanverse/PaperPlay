@@ -16,6 +16,7 @@ class PlayLogFile(dataDir: String, scope: CoroutineScope, private val stamp: (Lo
     val path = "$dir/playback-log.txt"
     private val older = "$dir/playback-log-older.txt"
     private val queue = Channel<String>(Channel.UNLIMITED)
+    private val lock = Any()
     private val token = Regex("\\b\\d{5,}:[A-Za-z0-9_-]{20,}\\b")
 
     init {
@@ -23,11 +24,13 @@ class PlayLogFile(dataDir: String, scope: CoroutineScope, private val stamp: (Lo
             for (first in queue) {
                 val sb = StringBuilder(first)
                 while (true) sb.append(queue.tryReceive().getOrNull() ?: break)
-                runCatching {
-                    Fs.append(path, sb.toString())
-                    if (Fs.size(path) > MAX_BYTES) {
-                        Fs.deleteRecursively(older)
-                        Fs.rename(path, older)
+                synchronized(lock) {
+                    runCatching {
+                        Fs.append(path, sb.toString())
+                        if (Fs.size(path) > MAX_BYTES) {
+                            Fs.deleteRecursively(older)
+                            Fs.rename(path, older)
+                        }
                     }
                 }
             }
@@ -43,13 +46,16 @@ class PlayLogFile(dataDir: String, scope: CoroutineScope, private val stamp: (Lo
      * however large it has grown.
      */
     fun writeAll(out: String, header: String) {
-        Fs.concat(
-            out, header,
-            listOf(
-                older to Long.MAX_VALUE, path to Long.MAX_VALUE,
-                "$dir/logcat-older.txt" to MAX_SYSTEM_BYTES, "$dir/logcat.txt" to MAX_SYSTEM_BYTES,
-            ),
-        )
+        // Held while copying, so a rotation cannot move the log between the files being read.
+        synchronized(lock) {
+            Fs.concat(
+                out, header,
+                listOf(
+                    older to Long.MAX_VALUE, path to Long.MAX_VALUE,
+                    "$dir/logcat-older.txt" to MAX_SYSTEM_BYTES, "$dir/logcat.txt" to MAX_SYSTEM_BYTES,
+                ),
+            )
+        }
     }
 
     fun clear() {
