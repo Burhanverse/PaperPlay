@@ -223,7 +223,15 @@ class DeleteQueue(
         for ((chat, chunks) in byChat(posts)) for (ids in chunks) {
             val found = idsExist(chat, ids) ?: continue
             if (found.size != ids.size) continue
-            for (k in ids.indices) if (found[k] is JsonNull) gone += chat to ids[k]
+            val missing = ids.indices.filter { found[it] is JsonNull }.map { ids[it] }
+            if (missing.isEmpty()) continue
+            // The bot cannot see another bot's posts, so only your account can say a post is really gone.
+            if (account.isLoggedIn) {
+                val seen = account.existing(chat, missing) ?: continue
+                for (id in missing) if (id !in seen) gone += chat to id
+            } else {
+                for (id in missing) gone += chat to id
+            }
         }
         return gone
     }
@@ -272,6 +280,15 @@ class DeleteQueue(
                 true -> alive += k
                 null -> unsure += k
                 false -> {}
+            }
+        }
+        // The bot cannot see posts another bot made, so "not there" from it proves nothing. Your account sees every post: ask it before
+        // calling a keeper gone (this wrongly dropped keepers from the library and refused the deletes of their worse copies).
+        if (account.isLoggedIn) {
+            for ((chat, group) in keepers.filter { it !in alive }.groupBy({ it.first }, { it.second })) {
+                val seen = account.existing(chat, group)
+                if (seen == null) unsure += group.map { chat to it } else alive += seen.map { chat to it }
+                if (seen != null) unsure.removeAll(group.map { chat to it }.toSet())
             }
         }
         val ok = mutableListOf<Pending>()
