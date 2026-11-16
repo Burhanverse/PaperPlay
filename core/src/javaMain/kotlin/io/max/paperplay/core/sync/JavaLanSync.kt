@@ -416,7 +416,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                     m.str("id"), m.str("title"), m.str("artist"), m.flag("playing") == true,
                     (m["pos"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
                     (m["dur"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
-                    System.currentTimeMillis(),
+                    System.currentTimeMillis(), m.str("out"), m.str("kind"),
                 )) }
                 _messages.tryEmit(LanMessage(p.info.id, "nowplaying", m.toString()))
             }
@@ -838,13 +838,13 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         }
     }
 
-    override suspend fun sendNowPlaying(deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String?, artist: String?, durationMs: Long): Boolean =
+    override suspend fun sendNowPlaying(deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String?, artist: String?, durationMs: Long, outName: String?, outKind: String?): Boolean =
         withContext(Dispatchers.IO) {
             val p = peers[deviceId] ?: return@withContext false
             runCatching {
                 p.send(
                     buildJsonObject {
-                        put("t", "nowplaying"); put("id", uniqueId); put("pos", positionMs); put("dur", durationMs); put("playing", playing); put("title", title); put("artist", artist)
+                        put("t", "nowplaying"); put("id", uniqueId); put("pos", positionMs); put("dur", durationMs); put("playing", playing); put("title", title); put("artist", artist); put("out", outName); put("kind", outKind)
                     },
                 )
             }.isSuccess

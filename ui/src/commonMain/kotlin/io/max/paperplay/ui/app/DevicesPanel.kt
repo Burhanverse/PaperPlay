@@ -105,9 +105,21 @@ fun LanDevicesSection(modifier: Modifier = Modifier) {
                 AppIcon(if (d.desktop) Icons.Rounded.Computer else Icons.Rounded.PhoneAndroid, null, Modifier.size(28.dp), tint = scheme.onSurfaceVariant)
                 Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                     Text(d.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val nowMs = System.currentTimeMillis()
+                    val live = n != null && n.fresh(nowMs) && n.uniqueId != null
+                    val song = n?.title?.let { t -> if (n.artist.isNullOrBlank()) t else "$t - ${n.artist}" }
                     Text(
-                        (if (isActive) "Playing here: " else "") + (n?.title?.let { t -> if (n.artist.isNullOrBlank()) t else "$t - ${n.artist}" } ?: (if (d.paired && output != null) "Tap to play on this device" else "Connected")),
-                        style = muted, color = if (isActive) scheme.primary else scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        when {
+                            live && song != null -> (if (n!!.playing) "Playing: " else "Paused: ") + song
+                            d.paired && output != null -> "Nothing playing. Tap to play on ${d.name}"
+                            else -> "Connected"
+                        },
+                        style = muted, color = if (live && n!!.playing) scheme.primary else scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    val via = n?.outName?.takeIf { live }
+                    if (via != null || isActive) Text(
+                        listOfNotNull(if (isActive) "Controlled from here" else null, via?.let { "via $it" }).joinToString(" · "),
+                        style = muted, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
                 if (d.paired) {

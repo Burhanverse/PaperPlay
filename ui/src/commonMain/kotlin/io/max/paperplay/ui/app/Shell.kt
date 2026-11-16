@@ -158,6 +158,13 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     val pageBackdrop = rememberLayerBackdrop()
 
     val tagDialogs = remember { TagDialogState() }
+    // The sound output goes to linked devices with the playing state, so each one can say where the music is heard.
+    run {
+        val out = io.max.paperplay.ui.rememberOutputDevice()
+        androidx.compose.runtime.SideEffect {
+            backend.services.outputInfo = { out.name to (if (out.external) "headphones" else if (isPhone) "phone" else "speakers") }
+        }
+    }
     val actions = remember(backend) {
         ListActions(
             play = backend::play,

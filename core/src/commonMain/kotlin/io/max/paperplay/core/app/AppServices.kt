@@ -90,9 +90,13 @@ class AppServices(
         ),
     ).also { lanSync = it; bindLan(it) }
 
-    /** Which device plays: null is this one, else the id of a paired device the player controls. */
+    /** The device this one controls from its player: null is none (this device plays), else a paired device's id. */
     private val _activeOutput = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     val activeOutput: kotlinx.coroutines.flow.StateFlow<String?> = _activeOutput
+
+    /** This device's sound output, (name, kind), filled in by the screen layer: headphones, speakers or phone. */
+    @kotlin.concurrent.Volatile
+    var outputInfo: () -> Pair<String, String>? = { null }
 
     /** Plays [uniqueId] here from [positionMs]; false when this device's library does not have the song. */
     private fun playHere(uniqueId: String, positionMs: Long): Boolean {
@@ -112,8 +116,9 @@ class AppServices(
     }
 
     /**
-     * Moves playback to [deviceId] (null: back to this device). The screen changes at once; the other device's next
-     * state message confirms it. Returns false, leaving everything as it was, when the song cannot be handed over.
+     * Hands playback to [deviceId], or back here when null. Nothing changes until the other side has answered: this device keeps
+     * playing and keeps its screen until [deviceId] reports the song, and only then pauses and shows the other device.
+     * False (nothing changed) when the other device did not answer in time or cannot play that song.
      */
     suspend fun switchOutput(deviceId: String?): Boolean {
         val lan = lanSync ?: return false
@@ -122,10 +127,22 @@ class AppServices(
         if (deviceId != null) {
             val np = if (playbackStarted) playback.nowPlaying.value else null
             val uid = np?.song?.unique_id
-            if (from == null && uid != null) {
-                if (!lan.sendControl(deviceId, "play:$uid:${np.positionMs}")) return false
-                playback.pause()
+            if (uid == null) {
+                // Nothing plays here: just control that device.
+                _activeOutput.value = deviceId
+                return true
             }
+            if (!lan.sendControl(deviceId, "play:$uid:${np.positionMs}")) return false
+            val answered = kotlinx.coroutines.withTimeoutOrNull(6_000) {
+                while (true) {
+                    val n = lan.remoteNow.value[deviceId]
+                    if (n != null && n.uniqueId == uid && n.fresh(System.currentTimeMillis())) return@withTimeoutOrNull true
+                    kotlinx.coroutines.delay(100)
+                }
+                @Suppress("UNREACHABLE_CODE") false
+            } == true
+            if (!answered) { lan.sendControl(deviceId, "pause"); return false }
+            playback.pause()
             _activeOutput.value = deviceId
             return true
         }
@@ -138,7 +155,7 @@ class AppServices(
         return true
     }
 
-    /** Lets a paired device drive playback here, and tells linked devices what is playing. */
+    /** Lets a paired device drive playback here, and tells linked devices what is playing and where the sound goes. */
     private fun bindLan(lan: io.max.paperplay.core.sync.LanSync) {
         scope.launch {
             lan.messages.collect { m ->
@@ -152,7 +169,7 @@ class AppServices(
                     is io.max.paperplay.core.sync.RemoteAction.Seek -> playback.seek(a.positionMs)
                     is io.max.paperplay.core.sync.RemoteAction.PlaySong -> {
                         playHere(a.uniqueId, a.positionMs)
-                        // This device now plays, so it is not driving another one.
+                        // This device plays now, so it no longer controls another one.
                         _activeOutput.value = null
                     }
                     null -> Unit
@@ -160,21 +177,29 @@ class AppServices(
             }
         }
         scope.launch {
-            // A state is sent when the song or play state changes (checked twice a second) and every 5 s so the other side's position stays close.
-            var sent = emptyMap<String, Triple<String?, Boolean, Long>>()
+            // The state goes out when the song, the play state or the output changes (checked twice a second) and every 5 s otherwise,
+            // also when nothing plays, so the other device never keeps showing a song that stopped.
+            var sent = emptyMap<String, List<Any?>>()
+            var sentAt = emptyMap<String, Long>()
             while (true) {
                 kotlinx.coroutines.delay(500)
-                if (!playbackStarted) continue
-                val np = playback.nowPlayingStatic.value
-                val state = np.song?.unique_id to np.isPlaying
+                val started = playbackStarted
+                val np = if (started) playback.nowPlayingStatic.value else null
+                val uid = np?.song?.unique_id
+                val playing = np?.isPlaying == true
+                // Playing here again ends control of another device.
+                if (playing && _activeOutput.value != null) _activeOutput.value = null
+                val out = outputInfo()
+                val state = listOf(uid, playing, out?.first)
                 val linked = lan.connected.value
                 val now = System.currentTimeMillis()
                 for (d in linked) {
-                    val last = sent[d.id]
-                    if (last != null && last.first == state.first && last.second == state.second && now - last.third < 5_000) continue
-                    val live = playback.nowPlaying.value
-                    runCatching { lan.sendNowPlaying(d.id, state.first, live.positionMs, np.isPlaying, np.song?.title, np.song?.artist, live.durationMs) }
-                    sent = sent + (d.id to Triple(state.first, state.second, now))
+                    if (sent[d.id] == state && now - (sentAt[d.id] ?: 0L) < 5_000) continue
+                    val live = if (started) playback.nowPlaying.value else null
+                    runCatching {
+                        lan.sendNowPlaying(d.id, uid, live?.positionMs ?: 0, playing, np?.song?.title, np?.song?.artist, live?.durationMs ?: 0, out?.first, out?.second)
+                    }
+                    sent = sent + (d.id to state); sentAt = sentAt + (d.id to now)
                 }
                 sent = sent.filterKeys { id -> linked.any { it.id == id } }
             }

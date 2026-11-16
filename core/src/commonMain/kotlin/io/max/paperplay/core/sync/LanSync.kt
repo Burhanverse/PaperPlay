@@ -165,7 +165,10 @@ interface LanSync {
     /** Stub: sends this device's queue (song unique ids and the playing index) to a linked device. */
     suspend fun sendQueue(deviceId: String, uniqueIds: List<String>, index: Int): Boolean
     /** Stub: sends the playing song and position to a linked device. */
-    suspend fun sendNowPlaying(deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String? = null, artist: String? = null, durationMs: Long = 0): Boolean
+    suspend fun sendNowPlaying(
+        deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String? = null, artist: String? = null,
+        durationMs: Long = 0, outName: String? = null, outKind: String? = null,
+    ): Boolean
 
     /** Names of the paired devices this one is dialling right now, for a short "Connecting to ..." notice. */
     val connecting: StateFlow<List<String>> get() = kotlinx.coroutines.flow.MutableStateFlow(emptyList())
@@ -180,7 +183,15 @@ data class RemoteNow(
     val uniqueId: String?, val title: String?, val artist: String?, val playing: Boolean,
     /** Position and length when the message came, and when it came ([at], epoch ms), so the position can be carried forward without polling. */
     val positionMs: Long = 0, val durationMs: Long = 0, val at: Long = 0,
+    /** Where that device's sound goes: its name ("realme Buds Air8 Pro", "Speakers (Realtek)") and kind: headphones, speakers or phone. */
+    val outName: String? = null, val outKind: String? = null,
 ) {
+    /** Heard from within the last 12 s; the sender repeats its state every 5 s, so an older one means the device went quiet. */
+    fun fresh(now: Long): Boolean = at > 0 && now - at < 12_000
+
+    /** True while the device really plays a song. */
+    fun playingNow(now: Long): Boolean = playing && uniqueId != null && fresh(now)
+
     /** Where the song is now: the reported position moved on by the time since, while it plays. */
     fun positionAt(now: Long): Long {
         val moved = if (playing && at > 0) positionMs + (now - at).coerceAtLeast(0) else positionMs

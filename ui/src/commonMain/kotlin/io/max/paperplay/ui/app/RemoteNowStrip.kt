@@ -40,7 +40,8 @@ fun RemoteNowStrip(backend: CoreBackend, modifier: Modifier = Modifier) {
     val active by backend.activeOutput.collectAsState()
     val scope = rememberCoroutineScope()
     if (active != null) return
-    val d = connected.firstOrNull { now[it.id]?.playing == true && now[it.id]?.title != null } ?: return
+    val nowMs = System.currentTimeMillis()
+    val d = connected.firstOrNull { now[it.id]?.playingNow(nowMs) == true && now[it.id]?.title != null } ?: return
     val n = now[d.id] ?: return
     val cover = n.uniqueId?.let { backend.songCover(it) }
     val scheme = MaterialTheme.colorScheme
@@ -53,7 +54,7 @@ fun RemoteNowStrip(backend: CoreBackend, modifier: Modifier = Modifier) {
             Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AppIcon(if (d.desktop) Icons.Rounded.Computer else Icons.Rounded.PhoneAndroid, null, Modifier.size(14.dp), tint = scheme.onSecondaryContainer)
-                    Text("Playing on ${d.name}", Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelSmall, color = scheme.onSecondaryContainer, maxLines = 1)
+                    Text("Playing on ${d.name}" + (n.outName?.let { " via $it" } ?: ""), Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelSmall, color = scheme.onSecondaryContainer, maxLines = 1)
                 }
                 Text(
                     n.title.orEmpty() + (n.artist?.takeIf { it.isNotBlank() }?.let { " - $it" } ?: ""),

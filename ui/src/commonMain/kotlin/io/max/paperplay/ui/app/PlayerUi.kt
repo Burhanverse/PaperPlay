@@ -299,10 +299,11 @@ private fun PlayerBody(
                                 else -> Icons.Rounded.PhoneAndroid
                             }, null, Modifier.size(20.dp),
                         )
-                        Text(if (remoteDevice != null) "Playing on ${remoteDevice.name}" else out.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, modifier = Modifier.widthIn(max = 200.dp))
+                        Text(
+                            if (remoteDevice != null) "Playing on ${remoteDevice.name}" + (LocalLanSync.current?.remoteNow?.collectAsState()?.value?.get(remoteDevice.id)?.outName?.let { " via $it" } ?: "") else out.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, modifier = Modifier.widthIn(max = 200.dp))
                     }
                 }
-                if (devicesOpen && onDevices != null) PhoneDevicesDialog(onDevices, switchOutput, song) { devicesOpen = false }
+                if (devicesOpen && onDevices != null) PhoneDevicesDialog(onDevices, switchOutput, if (remoteDevice == null) song else null) { devicesOpen = false }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     var showLyrics by remember { mutableStateOf(false) }
                     IconButton({ showLyrics = true }, enabled = state.current != null) { AppIcon(Icons.Outlined.Lyrics, "Lyrics") }

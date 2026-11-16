@@ -24,3 +24,12 @@ class RemoteNowTest {
         assertNull(RemoteAction.parse(null))
     }
 }
+
+class RemoteNowFreshTest {
+    @Test fun anOldStateCountsAsQuiet() {
+        val n = RemoteNow("u", "t", "a", true, 0, 0, at = 1_000)
+        assertEquals(true, n.playingNow(5_000))
+        assertEquals(false, n.playingNow(20_000))
+        assertEquals(false, RemoteNow(null, null, null, true, at = 1_000).playingNow(2_000))
+    }
+}

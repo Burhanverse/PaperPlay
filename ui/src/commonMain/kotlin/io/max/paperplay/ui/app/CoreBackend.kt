@@ -795,16 +795,16 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     private val remoteGuess = MutableStateFlow<Pair<String, io.max.paperplay.core.sync.RemoteNow>?>(null)
 
     /** The linked device's playing state as a [NowPlaying], moved on every half second while it plays so the seek bar runs without polling. */
-    private fun remoteNowPlaying(id: String): Flow<NowPlaying> = flow {
+    private fun remoteNowPlaying(id: String): Flow<NowPlaying?> = flow {
         val lan = services.lanSync
-        if (lan == null) { emit(NowPlaying()); return@flow }
+        if (lan == null) { emit(null); return@flow }
         while (true) {
             val reported = lan.remoteNow.value[id]
             val guess = remoteGuess.value?.takeIf { it.first == id }?.second
             val now = if (guess != null && (reported == null || guess.at >= reported.at)) guess else reported
             val song = now?.uniqueId?.let { byId[it] ?: repo.songByUniqueId(it) }
             emit(
-                if (now == null || song == null) NowPlaying()
+                if (now == null || song == null || !now.fresh(System.currentTimeMillis())) null
                 else NowPlaying(song, now.positionAt(System.currentTimeMillis()), now.durationMs, now.playing, 0, listOf(song)),
             )
             kotlinx.coroutines.delay(500)
