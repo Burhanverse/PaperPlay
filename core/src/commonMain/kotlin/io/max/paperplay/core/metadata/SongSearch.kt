@@ -13,6 +13,8 @@ private val FOLD: Map<Char, Char> = buildMap { for (g in FOLD_GROUPS) for (c in 
 fun foldSearchText(text: String): String {
     val sb = StringBuilder(text.length)
     for (ch in text.lowercase()) {
+        // A combining accent after a plain Latin letter ("e" + U+0301) is dropped; marks of other scripts stay.
+        if (ch in '̀'..'ͯ' && sb.isNotEmpty() && sb.last() in 'a'..'z') continue
         when (ch) {
             'ß' -> sb.append("ss")
             'æ' -> sb.append("ae")
@@ -62,6 +64,14 @@ internal fun slips(a: String, b: String, limit: Int): Int {
     return prev[b.length]
 }
 
+/** True when [q] is within [limit] slips of some start of [t]; the start may be a few letters shorter or longer than [q]. */
+private fun prefixSlips(q: String, t: String, limit: Int): Boolean {
+    for (len in (q.length - limit).coerceAtLeast(1)..minOf(t.length, q.length + limit)) {
+        if (slips(q, t.substring(0, len), limit) <= limit) return true
+    }
+    return false
+}
+
 /** 0 when [q] matches no word of [tokens]; else exact 100, word start 80, inside a word 50, a typo of a word or of a word's start 35. */
 internal fun wordStrength(q: String, tokens: List<String>): Int {
     var best = 0
@@ -73,7 +83,7 @@ internal fun wordStrength(q: String, tokens: List<String>): Int {
             q.length >= 3 && t.contains(q) -> 50
             // A typo is only believed when the first letter is right, which keeps "weeknd" away from unrelated words.
             limit > 0 && t.isNotEmpty() && t[0] == q[0] &&
-                (slips(q, t, limit) <= limit || (t.length > q.length && slips(q, t.substring(0, q.length), limit) <= limit)) -> 35
+                (slips(q, t, limit) <= limit || (t.length > q.length && prefixSlips(q, t, limit))) -> 35
             else -> 0
         }
         if (s > best) best = s
@@ -113,5 +123,6 @@ fun songSearchScore(
     if (titleText == query.whole) total += 2000
     else if (titleText.startsWith(query.whole)) total += 800
     if (inTitle == words.size) total += 300
-    return total + minOf(plays, 50) + if (favorite) 20 else 0
+    // Relevance first; plays and favorites (at most 70) only order songs of equal relevance.
+    return total * 1000 + minOf(plays, 50) + if (favorite) 20 else 0
 }
