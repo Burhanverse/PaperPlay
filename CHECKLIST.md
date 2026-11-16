@@ -695,3 +695,10 @@ elease` must say Java 25 and the setup exe must start.
 - [ ] Not checked on the phone: a share of a large log, and that the file opens on the receiving side.
 ### Standby
 - [~] Lyrics animation style (12th style): scrolling synced lyrics in the animation area, 5 rows in landscape and 3 in portrait, bars when the song has no synced lyrics. The "Lyrics line" widget is back to a single line; "Lyrics, three lines scrolling" is its own widget. The side-lyrics widget is removed. The user reported a problem with "the lyrics one" but did not say which; open.
+### Devices, sync and Standby (16 Nov)
+- [~] Every linked device sends what it plays and where the sound goes (name and kind: headphones, speakers, phone) with each state, also when nothing plays; a state older than 12 s counts as quiet. "Playing on <device> via <output>" shows in the player pill, the device sheet, the PC devices button and the strip.
+- [~] Switching the source waits for the other device to report the song before this one pauses; if it does not answer in 6 s nothing changes. Playing here again ends control of another device.
+- [~] The PC names its real output through Windows Core Audio (checked here: "Headphones (realme Buds Air8 Pro)").
+- [~] Songs deleted on one device are removed on the other at the next sync, unless the file was posted again later; the record expires after a year. Song info, lyrics and covers fill in between devices, hand-made data first.
+- [~] Standby: Lyrics shows 7 (landscape) or 5 lines with faded top and bottom, plain lyrics scroll, the instrumental notice means no lyrics ("No lyrics for this song"), the cover tile is grayscale.
+- [ ] Not tried on two devices at once.
