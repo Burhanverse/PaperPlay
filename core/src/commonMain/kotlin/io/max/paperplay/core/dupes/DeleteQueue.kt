@@ -366,7 +366,18 @@ class DeleteQueue(
      * Deletes as many of [ids] as it can, in calls of up to 100 at each step, and returns the ones
      * nobody could remove. Bot first, then the Bot API, then the owner's account. A 429 from the bot is thrown.
      */
-    private suspend fun deletePostsBest(chat: Long, ids: List<Long>, onGone: suspend (Long) -> Unit = {}): List<Long> {
+    private suspend fun deletePostsBest(chat: Long, allIds: List<Long>, onGone: suspend (Long) -> Unit = {}): List<Long> {
+        // Your account sees every post and may delete any age, in one call per 100 and checked afterwards. Asking the bot first meant
+        // one web request per post, all refused for old posts, with nothing shown as done meanwhile.
+        var ids = allIds
+        if (account.isLoggedIn) {
+            val rest = account.deleteBatch(chat, ids)
+            val restSet = rest.toSet()
+            for (id in ids) if (id !in restSet) onGone(id)
+            log("Your account removed ${ids.size - rest.size} of ${ids.size}" + (if (rest.isNotEmpty()) account.lastError?.let { ": $it" }.orEmpty() else ""))
+            if (rest.isEmpty()) return emptyList()
+            ids = rest
+        }
         try {
             td.call(
                 request("deleteMessages") {
