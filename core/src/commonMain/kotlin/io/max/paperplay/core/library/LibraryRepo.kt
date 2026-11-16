@@ -104,7 +104,7 @@ class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
         val copy = copies.firstOrNull { it.chat_id == preferChat } ?: copies.firstOrNull()
         if (copy == null) {
             // Logged with its caller so a song that vanishes from the library can be traced.
-            io.max.paperplay.player.PlayLog.log("library", "song removed: ${row.title} ($chatId/$messageId) by " + Throwable().stackTraceToString().lines().drop(2).take(3).joinToString(" < ") { it.trim().removePrefix("at ") })
+            io.max.paperplay.player.PlayLog.log("library", "song removed: ${row.title} ($chatId/$messageId) by " + Throwable().stackTraceToString().lines().map { it.trim().removePrefix("at ") }.filter { it.startsWith("io.max.paperplay") && !it.contains("LibraryRepo.removePost") && !it.contains("\$") }.take(4).joinToString(" < "))
             songs.deleteSong(chatId, messageId)
             return@transaction
         }
