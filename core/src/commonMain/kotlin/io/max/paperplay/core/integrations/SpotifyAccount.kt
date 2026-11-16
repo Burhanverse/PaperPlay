@@ -12,6 +12,9 @@ import kotlin.time.Instant
 
 class SpotifyLoginError(message: String) : Exception(message)
 
+/** One of the account's playlists, as the list shows it. */
+data class SpotifyListing(val id: String, val name: String, val total: Int?, val owner: String?)
+
 /**
  * The owner's own Spotify login, with a client id they made and PKCE (no client secret).
  * It lets a playlist import read every track through the Web API instead of the first 100
@@ -101,6 +104,26 @@ class SpotifyAccount(private val secrets: SecretStore, private val http: HttpFet
      * Reads the whole playlist [id] through the API. Null when not logged in, or when Spotify won't
      * show this playlist to the account (not owned or shared), so the caller can fall back.
      */
+    /** The playlists of the logged-in account (its own and followed ones), or null when not logged in or Spotify did not answer. */
+    suspend fun userPlaylists(): List<SpotifyListing>? {
+        if (!connected) return null
+        val out = ArrayList<SpotifyListing>()
+        var next: String? = "https://api.spotify.com/v1/me/playlists?limit=50"
+        while (next != null && out.size < 500) {
+            val res = get(next) ?: return null
+            if (res.status != 200) return null
+            val page = runCatching { Json.parseToJsonElement(res.text) as? JsonObject }.getOrNull() ?: return null
+            for (e in page["items"] as? JsonArray ?: JsonArray(emptyList())) {
+                val o = e as? JsonObject ?: continue
+                val id = o.str("id") ?: continue
+                val total = ((o["tracks"] as? JsonObject)?.get("total") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+                out += SpotifyListing(id, o.str("name") ?: "Playlist", total, (o["owner"] as? JsonObject)?.str("display_name"))
+            }
+            next = page.str("next")
+        }
+        return out
+    }
+
     suspend fun fetchPlaylist(id: String): FetchedPlaylist? {
         if (!connected) return null
         val about = get("https://api.spotify.com/v1/playlists/$id?fields=name") ?: return null

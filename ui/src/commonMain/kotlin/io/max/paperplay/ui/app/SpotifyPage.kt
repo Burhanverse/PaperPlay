@@ -67,6 +67,36 @@ internal fun SpotifyPage(backend: CoreBackend) {
 
     SpotifyAccountSection(backend)
 
+    // The account's own playlists, one tap to import or refresh (the paste box below stays for links of other people's playlists).
+    val account = backend.services.spotify
+    var mine by remember { mutableStateOf<List<io.max.paperplay.core.integrations.SpotifyListing>?>(null) }
+    var loadingMine by remember { mutableStateOf(false) }
+    @Suppress("UNUSED_EXPRESSION") version
+    val importedNow = remember(version) { store.livePlaylists().associateBy { "${it.source_url}" } }
+    LaunchedEffect(account.connected) {
+        if (account.connected) {
+            loadingMine = true
+            mine = withContext(Dispatchers.Default) { runCatching { account.userPlaylists() }.getOrNull() }
+            loadingMine = false
+        } else mine = null
+    }
+    if (account.connected) {
+        SectionLabel("Your Spotify playlists")
+        when {
+            loadingMine -> Text("Loading your playlists", Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            mine == null -> Text("Could not read your playlists. Check the connection above and reopen this page.", Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            mine!!.isEmpty() -> Text("No playlists on this account.", Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> for (l in mine!!) {
+                val url = "$SPOTIFY/playlist/${l.id}"
+                val have = importedNow[url]
+                SettingsRow(
+                    l.name, icon = Icons.Rounded.QueueMusic,
+                    subtitle = listOfNotNull(l.total?.let { "$it tracks" }, l.owner, if (have != null) "In your app" else null).joinToString(" · "),
+                ) { OutlinedButton({ run(url) }, enabled = !busy) { Text(if (have != null) "Refresh" else "Import") } }
+            }
+        }
+    }
+
     Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             "Paste a Spotify playlist link. Songs you already have join a new playlist. The rest wait there and join when they show up in your library.",
