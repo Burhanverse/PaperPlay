@@ -32,6 +32,15 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Do not delete or overwrite user data: library rows, Telegram posts, phone files. Deleting posts is irreversible; a post counts as gone only when the owner's account confirms it.
 - Bots cannot see posts made by other bots. "Not found" from a bot proves nothing.
 
+## Audio engine
+- Own clean-room code only. Never copy, port or bundle code, binaries or assets from another app's APK; reading one to learn a technique is fine, the code is written from the technique.
+- Third-party code only under MIT, Apache-2.0 or BSD. No GPL; LGPL only dynamically linked and only after asking.
+- The Rust DSP core lives in `engine/` (tracked). `native/` is gitignored (TDLib), so do not put it there. Built `.so` files are not committed.
+- Build with `cargo ndk -t arm64-v8a`, before Gradle and never at the same time as it.
+- No allocation, locks or panics in the audio path; no panic across the FFI line. If the library fails to load, fall back to the Media3 pipeline and log it.
+- Sound changes are judged by ear on the phone, level matched, against the previous build; mark `[~]` in `CHECKLIST.md` until heard working.
+- Plan and status live in the local `ENGINE_PLAN.md` (ignored); keep `CHECKLIST.md` in step.
+
 ## UI
 - Match the neighbours first: copy the row, header, spacing and icon style of the nearest existing screen or list instead of inventing a new one. Reuse the shared composables and theme tokens (`MaterialTheme.colorScheme`, `AppIcon`, `LocalUiPrefs`); no hard-coded colours.
 - Every navigation row, setting and tool has an icon from the Material rounded set, and the same icon means the same thing everywhere.

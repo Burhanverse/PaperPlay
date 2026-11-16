@@ -311,6 +311,11 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [x] Equalizer: 10 bands, 13 presets, draggable response curve that glides between presets; old 5 band saves are stretched to 10
 - [x] Desktop audio: WASAPI (`--aout=mmdevice`), soxr resampler, EQ preamp against clipping, EQ re-applied for each track, normalise ceiling 1.0, 500 ms buffering. The cause of the "weird noise" is not confirmed
 - [x] Output info dialog (opens from the format badge and the player three-dot menu) on both platforms: source, rate, depth, output, effects, bit-perfect or not
+- [x] Android audio engine (Rust, `engine/`, JNI in `EngineNative.kt`, sink wrapper `EngineAudioSink` in `TapProcessor.kt`): the equalizer runs in float with the filters fitted to the drawn curve, plus a Bass control (shelf below 100 Hz, lift near 45 Hz, 22 Hz subsonic cut). The signal is split at 180 Hz after the equalizer, each half has its own level trim and look-ahead limiter, so bass peaks do not duck the mids and highs. Heard working on a Nothing A015 (KZ C04 DAC) and a Redmi Note 8 Pro; not tried over Bluetooth. If the library cannot load the phone equalizer is used. Tests: `cargo test` in `engine/`
+- [x] Equalizer shortcut in the player Tune menu (opens the same equalizer in a dialog) and a Bass slider in both places (Android only; the PC player has no engine, so the slider is hidden there)
+- [x] Output info shows the engine real format, curve peak, level trim per half and limiter reduction per half while the engine is on, and the mixer rate of a connected USB DAC
+- [~] Equalizer presets for earphones: Moondrop Chu 2 (AutoEq correction, sampled at the ten bands), KZ ZSN Pro 2 (mild treble cut from reviews, not measured), Deep bass (not heard on every model)
+- [ ] PC: swap the VLC player for mpv through MediaMP `MPVHandle` (exclusive WASAPI, equalizer filter), keep VLC as the default until it is tried
 - [x] Android: Devices button in the player tools row (Network play, Connect devices, Audio output) and the device pill opens the system output switcher
 - [x] Channels page: songs, topics, size, duration, lossless, offline, pinned, favourites and copied counts per channel
 - [x] `scripts/release.ps1`: Android release build and install, then the desktop installer to Downloads (`-SkipAndroid`, `-SkipDesktop`)
