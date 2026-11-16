@@ -12,10 +12,10 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private const val REPO = "https://github.com/maxcodl/ PaperPlay/releases/download"
+private const val REPO = "https://github.com/maxcodl/PaperPlay/releases/download"
 
 private fun release(tag: String, pre: Boolean, draft: Boolean = false, assets: String = "") =
-    """{"tag_name":"$tag","draft":$draft,"prerelease":$pre,"body":"notes of $tag","html_url":"https://github.com/maxcodl/ PaperPlay/releases/tag/$tag","assets":[$assets]}"""
+    """{"tag_name":"$tag","draft":$draft,"prerelease":$pre,"body":"notes of $tag","html_url":"https://github.com/maxcodl/PaperPlay/releases/tag/$tag","assets":[$assets]}"""
 
 private fun asset(name: String, tag: String, size: Int = 10) = """{"name":"$name","size":$size,"browser_download_url":"$REPO/$tag/$name"}"""
 
@@ -95,7 +95,7 @@ class ReleaseFeedTest {
         assertTrue(ReleaseFeed.isTrusted("$REPO/v1.3.0/x.apk"))
         assertTrue(ReleaseFeed.isTrusted("https://objects.githubusercontent.com/abc"))
         assertFalse(ReleaseFeed.isTrusted("https://github.com/someone/else/releases/download/v1/x.apk"))
-        assertFalse(ReleaseFeed.isTrusted("http://github.com/maxcodl/ PaperPlay/x"))
+        assertFalse(ReleaseFeed.isTrusted("http://github.com/maxcodl/PaperPlay/x"))
     }
 }
 

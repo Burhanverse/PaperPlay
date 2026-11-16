@@ -139,7 +139,7 @@ class UpdateService(
     }
 
     private companion object {
-        const val FEED_URL = "https://api.github.com/repos/maxcodl/ PaperPlay/releases?per_page=30"
+        const val FEED_URL = "https://api.github.com/repos/maxcodl/PaperPlay/releases?per_page=30"
         const val DAY_MS = 24L * 60 * 60 * 1000
     }
 }
