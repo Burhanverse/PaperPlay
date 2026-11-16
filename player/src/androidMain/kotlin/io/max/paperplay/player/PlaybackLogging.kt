@@ -101,6 +101,12 @@ internal object PlaybackLogging {
             PlayLog.log("decoder", "audio decoder $decoderName ready in ${initializationDurationMs}ms")
         }
 
+        // What the sound card is really given: 16-bit here for a 24-bit file would mean the sink cut the depth.
+        override fun onAudioTrackInitialized(eventTime: AnalyticsListener.EventTime, audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig) {
+            val enc = when (audioTrackConfig.encoding) { 2 -> "PCM 16 bit"; 4 -> "PCM float"; 21 -> "PCM 24 bit"; 22 -> "PCM 32 bit"; else -> "encoding ${audioTrackConfig.encoding}" }
+            PlayLog.log("decoder", "audio output $enc, ${audioTrackConfig.sampleRate} Hz, channel mask ${audioTrackConfig.channelConfig}, buffer ${audioTrackConfig.bufferSize} bytes")
+        }
+
         override fun onAudioInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
             PlayLog.log("decoder", "input ${fmt(format)}")
         }

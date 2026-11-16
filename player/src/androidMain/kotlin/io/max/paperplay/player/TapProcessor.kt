@@ -49,7 +49,8 @@ internal class TapProcessor : BaseAudioProcessor() {
 internal class TapRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
     override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): AudioSink =
         DefaultAudioSink.Builder(context)
-            .setEnableFloatOutput(enableFloatOutput)
+            // 24-bit FLAC decodes to 24-bit PCM; without float output the sink cuts it to 16 bits with no dither, which sounds grainy.
+            .setEnableFloatOutput(true)
             .setEnableAudioTrackPlaybackParams(enableAudioOutputPlaybackParams)
             .setAudioProcessors(arrayOf(TapProcessor()))
             .build()
