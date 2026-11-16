@@ -126,7 +126,7 @@ compose.desktop {
             // The installers need plain MAJOR.MINOR.PATCH, so a beta number is dropped here and stays in the file name.
             packageVersion = (rootProject.extra["appVersion"] as String).substringBefore("-")
             // The packaged runtime only holds the modules named here: JDBC (the library database), naming and TLS.
-            modules("java.sql", "java.naming", "jdk.unsupported", "jdk.crypto.ec", "jdk.httpserver")
+            modules("java.sql", "java.management", "java.naming", "jdk.unsupported", "jdk.crypto.ec", "jdk.httpserver")
             windows {
                 iconFile.set(project.file("src/jvmMain/resources/app.ico"))
                 menu = true
