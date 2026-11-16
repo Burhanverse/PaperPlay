@@ -226,12 +226,9 @@ class DeleteQueue(
             val missing = ids.indices.filter { found[it] is JsonNull }.map { ids[it] }
             if (missing.isEmpty()) continue
             // The bot cannot see another bot's posts, so only your account can say a post is really gone.
-            if (account.isLoggedIn) {
-                val seen = account.existing(chat, missing) ?: continue
-                for (id in missing) if (id !in seen) gone += chat to id
-            } else {
-                for (id in missing) gone += chat to id
-            }
+            if (!account.isLoggedIn) continue
+            val seen = account.existing(chat, missing) ?: continue
+            for (id in missing) if (id !in seen) gone += chat to id
         }
         return gone
     }
@@ -374,7 +371,14 @@ class DeleteQueue(
         // one web request per post, all refused for old posts, with nothing shown as done meanwhile.
         var ids = allIds
         if (account.isLoggedIn) {
-            val rest = account.deleteBatch(chat, ids)
+            val rest = try {
+                account.deleteBatch(chat, ids)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("Your account could not be asked: ${e.message ?: e::class.simpleName}")
+                ids
+            }
             val restSet = rest.toSet()
             for (id in ids) if (id !in restSet) onGone(id)
             log("Your account removed ${ids.size - rest.size} of ${ids.size}" + (if (rest.isNotEmpty()) account.lastError?.let { ": $it" }.orEmpty() else ""))
