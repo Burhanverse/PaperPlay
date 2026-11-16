@@ -44,6 +44,8 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     @Volatile private var prematureRetries = 0
     @Volatile private var seekTarget = -1L
     @Volatile private var seekAt = 0L
+    @Volatile private var startedAt = 0L
+    @Volatile private var firstTick = false
 
     private val factory = run {
         val loaderArgs = VlcLoader.init()
@@ -67,11 +69,16 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
                 // The equalizer needs an audio output too, so it is applied again for each new track.
                 applyEqualizer(mp)
                 publishInfo(mp)
+                val i = _info.value
+                PlayLog.log("vlc", "playing after ${System.currentTimeMillis() - startedAt}ms codec=${i?.codec} rate=${i?.sampleRateHz}Hz ch=${i?.channels} bitrate=${i?.bitrateKbps}kbps device=${i?.device}")
             }
             override fun paused(mp: MediaPlayer) { _state.value = PlayerState.Paused }
             override fun error(mp: MediaPlayer) { _state.value = PlayerState.Error }
             override fun lengthChanged(mp: MediaPlayer, newLength: Long) { _durationMs.value = newLength }
-            override fun timeChanged(mp: MediaPlayer, newTime: Long) { _positionMs.value = newTime }
+            override fun timeChanged(mp: MediaPlayer, newTime: Long) {
+                _positionMs.value = newTime
+                if (!firstTick && startedAt > 0) { firstTick = true; PlayLog.log("vlc", "first position tick ${System.currentTimeMillis() - startedAt}ms after start, at ${newTime}ms") }
+            }
             override fun finished(mp: MediaPlayer) = cmd {
                 val now = System.currentTimeMillis()
                 val dur = _durationMs.value
@@ -94,11 +101,12 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
         val item = queue[index]
         if (!retry) { prematureRetries = 0; resumeAtMs = 0; seekTarget = -1 }
         _currentIndex.value = index
+        startedAt = System.currentTimeMillis(); firstTick = false
         _state.value = PlayerState.Loading
         if (!retry) { _positionMs.value = 0; _durationMs.value = 0 }
         val mrl = item.source?.let { http.value.register(item.uri, it) } ?: item.uri
         // The stream is a loopback server fed from disk, so libvlc's default one second of network buffering only delays the first sound.
-        val fast = arrayOf(":network-caching=500", ":file-caching=500")
+        val fast = arrayOf(":network-caching=150", ":file-caching=150")
         if (normalize) player.media().play(mrl, *fast, ":audio-filter=normvol", ":norm-max-level=1.0") else player.media().play(mrl, *fast)
     }
 
