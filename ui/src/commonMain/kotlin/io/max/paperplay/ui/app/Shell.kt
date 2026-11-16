@@ -271,7 +271,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     var sawCoverQueue by remember { mutableStateOf(false) }
     LaunchedEffect(coversQueued) { if (coversQueued > 0) sawCoverQueue = true else if (sawCoverQueue) coversStarting = false }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(10_000); coversStarting = false }
-    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides remember(lib) { { backend.telegramLists() } }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides remember(lib) { { backend.telegramLists() } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput) { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } } }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
@@ -337,6 +337,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 ) {
                     // Toasts sit above the mini player and the bar, where they cover the least; swipe one sideways to dismiss it.
                     AppSnackbarHost(snack, Modifier.fillMaxWidth().padding(bottom = 8.dp), tint)
+                    RemoteNowStrip(backend)
                     if (pb.current != null && !miniGone) {
                         val threshold = with(androidx.compose.ui.platform.LocalDensity.current) { 80.dp.toPx() }
                         MiniPlayer(pb, { showPlayer = true }, backend::togglePlay, backend::next, backend::previous, { pos.value.progress(pb.durationMs) },
@@ -481,6 +482,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                             }
                         }
                     }
+                    RemoteNowStrip(backend)
                     PlayerBar(pb, volume, backend, actions, { showPlayer = true },
                         onNowPlaying = { showNow = !showNow }, extras = { DevicePickerButton(onOpen = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } }); MiniPlayerToggle() })
                 }

@@ -31,6 +31,9 @@ import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.transformLatest
 import io.max.paperplay.ui.state.GroupUi
 import io.max.paperplay.ui.state.LibraryUi
@@ -377,7 +380,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         tasks.running.value.firstOrNull { it.id == lyricsTask }?.let { tasks.stop(it.id) }
     }
 
-    override fun seekToMs(ms: Long) { player.seek(ms) }
+    override fun seekToMs(ms: Long) { if (!remote("seek:$ms") { it.copy(positionMs = ms) }) player.seek(ms) }
 
     /** Listening totals for the last [days] days (0 for all time): per song and per day. */
     fun listenStats(days: Int): Pair<List<io.max.paperplay.core.library.ListenTotal>, Map<String, Long>> {
@@ -781,9 +784,60 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
-    private val nowPlayingFlow: Flow<NowPlaying> = playerStarted
+    private val localNowPlaying: Flow<NowPlaying> = playerStarted
         .transformLatest { started -> if (started) emitAll(playerLazy.value.nowPlaying) }
         .flowOn(Dispatchers.Default)
+
+    /** The device the player controls: null is this one, else the id of a linked device. */
+    val activeOutput: StateFlow<String?> get() = services.activeOutput
+
+    /** What a tap on a remote control just changed, shown until the other device's own state is newer. */
+    private val remoteGuess = MutableStateFlow<Pair<String, io.max.paperplay.core.sync.RemoteNow>?>(null)
+
+    /** The linked device's playing state as a [NowPlaying], moved on every half second while it plays so the seek bar runs without polling. */
+    private fun remoteNowPlaying(id: String): Flow<NowPlaying> = flow {
+        val lan = services.lanSync
+        if (lan == null) { emit(NowPlaying()); return@flow }
+        while (true) {
+            val reported = lan.remoteNow.value[id]
+            val guess = remoteGuess.value?.takeIf { it.first == id }?.second
+            val now = if (guess != null && (reported == null || guess.at >= reported.at)) guess else reported
+            val song = now?.uniqueId?.let { byId[it] ?: repo.songByUniqueId(it) }
+            emit(
+                if (now == null || song == null) NowPlaying()
+                else NowPlaying(song, now.positionAt(System.currentTimeMillis()), now.durationMs, now.playing, 0, listOf(song)),
+            )
+            kotlinx.coroutines.delay(500)
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val nowPlayingFlow: Flow<NowPlaying> = combine(
+        localNowPlaying.onStart { emit(NowPlaying()) },
+        services.activeOutput.flatMapLatest { id -> if (id == null) flowOf(null) else remoteNowPlaying(id) },
+    ) { local, remote -> remote ?: local }
+        .flowOn(Dispatchers.Default)
+
+    /** The cover file of a song by unique id, for another device's now playing. */
+    fun songCover(uniqueId: String): String? = (byId[uniqueId] ?: repo.songByUniqueId(uniqueId))?.cover_path
+
+    /** Moves playback to [deviceId] (null: this device). Tells the user when it cannot be done. */
+    fun switchOutput(deviceId: String?, notice: (String) -> Unit = {}) {
+        scope.launch {
+            if (!services.switchOutput(deviceId)) notice(if (deviceId == null) "Could not take playback back" else "Could not reach that device")
+        }
+    }
+
+    /** Sends [action] to the active remote device and shows its effect at once. False when playback is on this device. */
+    private fun remote(action: String, guess: (io.max.paperplay.core.sync.RemoteNow) -> io.max.paperplay.core.sync.RemoteNow): Boolean {
+        val id = services.activeOutput.value ?: return false
+        val lan = services.lanSync ?: return false
+        val now = System.currentTimeMillis()
+        val last = remoteGuess.value?.takeIf { it.first == id }?.second ?: lan.remoteNow.value[id]
+        if (last != null) remoteGuess.value = id to guess(last.copy(positionMs = last.positionAt(now), at = now))
+        scope.launch { lan.sendControl(id, action) }
+        return true
+    }
 
     /** Everything about playback except the position: it changes on a song, queue or button, not every tick. */
     val playbackMeta: StateFlow<PlaybackUiState> = combine(
@@ -892,10 +946,17 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         withPlayer { it.setQueue(list, 0) }
     }
 
-    override fun togglePlay() { if (playbackMeta.value.playing) player.pause() else player.play() }
-    override fun next() { player.next() }
-    override fun previous() { player.previous() }
-    override fun seekTo(fraction: Float) { player.seek((fraction * playbackMeta.value.durationMs).toLong()) }
+    override fun togglePlay() {
+        val playing = playbackMeta.value.playing
+        if (remote(if (playing) "pause" else "play") { it.copy(playing = !playing) }) return
+        if (playing) player.pause() else player.play()
+    }
+    override fun next() { if (!remote("next") { it }) player.next() }
+    override fun previous() { if (!remote("previous") { it }) player.previous() }
+    override fun seekTo(fraction: Float) {
+        val ms = (fraction * playbackMeta.value.durationMs).toLong()
+        if (!remote("seek:$ms") { it.copy(positionMs = ms) }) player.seek(ms)
+    }
     override fun setVolume(v: Float) {
         volume.value = v.coerceIn(0f, 1f)
         if (systemVolume) {

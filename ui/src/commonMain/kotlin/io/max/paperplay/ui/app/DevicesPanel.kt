@@ -57,6 +57,11 @@ fun rememberLanSync(backend: CoreBackend): LanSync? {
     return lan
 }
 
+/** Where the player's controls go, and the way to change it. [active] is null for this device, else a linked device's id. */
+class OutputSwitch(val active: kotlinx.coroutines.flow.StateFlow<String?>, val switchTo: (String?) -> Unit)
+
+val LocalOutputSwitch = compositionLocalOf<OutputSwitch?> { null }
+
 /**
  * Other PaperPlay devices for the player's device pickers (desktop popup, phone sheet): each linked device with what it plays
  * and its controls, and paired devices that are away with a Connect button. No addresses here; they live on the Connection page.
@@ -78,16 +83,31 @@ fun LanDevicesSection(modifier: Modifier = Modifier) {
     val now by lan.remoteNow.collectAsState()
     val scope = rememberCoroutineScope()
     var note by remember { mutableStateOf<String?>(null) }
+    val output = LocalOutputSwitch.current
+    val activeId = output?.active?.collectAsState()?.value
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Playing on another device: one tap brings playback back here.
+        if (output != null && activeId != null) Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { output.switchTo(null) }.padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(Icons.Rounded.Devices, null, Modifier.size(28.dp), tint = scheme.primary)
+            Text("Play on this device", Modifier.weight(1f).padding(horizontal = 14.dp), style = MaterialTheme.typography.titleMedium, color = scheme.primary)
+        }
         for (d in connected) {
             val n = now[d.id]
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            val isActive = activeId == d.id
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .then(if (d.paired && output != null) Modifier.clickable { output.switchTo(if (isActive) null else d.id) } else Modifier),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 AppIcon(if (d.desktop) Icons.Rounded.Computer else Icons.Rounded.PhoneAndroid, null, Modifier.size(28.dp), tint = scheme.onSurfaceVariant)
                 Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                     Text(d.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        n?.title?.let { t -> if (n.artist.isNullOrBlank()) t else "$t - ${n.artist}" } ?: "Connected",
-                        style = muted, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        (if (isActive) "Playing here: " else "") + (n?.title?.let { t -> if (n.artist.isNullOrBlank()) t else "$t - ${n.artist}" } ?: (if (d.paired && output != null) "Tap to play on this device" else "Connected")),
+                        style = muted, color = if (isActive) scheme.primary else scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
                 if (d.paired) {

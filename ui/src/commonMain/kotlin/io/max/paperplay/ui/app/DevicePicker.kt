@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,7 +41,7 @@ fun DevicePickerButton(devices: List<DeviceUi> = listOf(DeviceUi("this", "This P
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         IconButton({ open = !open }) {
-            AppIcon(Icons.Rounded.Devices, "Devices", Modifier.size(22.dp), tint = if (open) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            AppIcon(Icons.Rounded.Devices, "Devices", Modifier.size(22.dp), tint = if (open || LocalOutputSwitch.current?.active?.collectAsState()?.value != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (open) DevicePickerPopup(devices, onOpen) { open = false }
     }
