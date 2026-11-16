@@ -71,6 +71,7 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.MonitorHeart
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.Rule
@@ -165,7 +166,7 @@ fun Sidebar(
     val itemShape = RoundedCornerShape(((prefs?.selectionRadius ?: 40f) / 100f * 22f).dp)
     val barShape = RoundedCornerShape(((prefs?.barRadius ?: 60f) / 100f * 28f).dp)
     @Composable
-    fun item(id: String, label: String, icon: @Composable () -> Unit, selected: Boolean, onClick: () -> Unit) {
+    fun item(id: String, label: String, icon: @Composable () -> Unit, selected: Boolean, trailing: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
         val selectedFill = when {
             !selected -> Color.Transparent
             look == SelectionLook.Fill -> scheme.primaryContainer.copy(alpha = 0.9f)
@@ -191,7 +192,8 @@ fun Sidebar(
         ) {
             icon()
             if (expanded) {
-                Text(label, Modifier.padding(start = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge, fontWeight = if (selected) FontWeight.Bold else null)
+                Text(label, Modifier.padding(start = 12.dp).weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge, fontWeight = if (selected) FontWeight.Bold else null)
+                trailing?.invoke()
             }
         }
     }
@@ -215,18 +217,15 @@ fun Sidebar(
         items(mainPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
         item { label("Your library") }
         items(libraryPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
-        // Tools fold away like a drop-down; the arrow is the only thing shown when the sidebar is narrow.
+        // Tools is a row like the others: a toolbox icon, and an arrow that folds the list away.
         item {
-            Row(
-                Modifier.fillMaxWidth().clickable { toolsOpen = !toolsOpen }.padding(start = if (expanded) 20.dp else 0.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center,
-            ) {
-                if (expanded) Text("Tools", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+            item("tools", "Tools", { AppIcon(Icons.Rounded.Build, null, Modifier.size(22.dp)) }, false, {
                 AppIcon(if (toolsOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (toolsOpen) "Hide tools" else "Show tools", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
-            }
+            }) { toolsOpen = !toolsOpen }
         }
-        if (toolsOpen) items(toolPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, false) { onPage(p.id) } }
-        item { item("settings", "Settings", { AppIcon(Icons.Rounded.Settings, null, Modifier.size(22.dp)) }, false) { onPage("settings") } }
+        if (toolsOpen) items(toolPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
+        item { androidx.compose.material3.HorizontalDivider(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = scheme.onSurface.copy(alpha = 0.08f)) }
+        item { item("settings", "Settings", { AppIcon(Icons.Rounded.Settings, null, Modifier.size(22.dp)) }, page == "settings" && playlistId == null) { onPage("settings") } }
         item { label("Playlists") { IconButton(onNewPlaylist, Modifier.size(32.dp)) { AppIcon(Icons.Rounded.Add, "New playlist", Modifier.size(20.dp)) } } }
         items(playlists, key = { it.id }) { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
         // The main chat's topics (and starred channels) sit apart from the playlists you made.
