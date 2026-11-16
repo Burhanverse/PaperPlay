@@ -68,6 +68,10 @@ fun mergeLibrary(local: LibraryState, remote: LibraryState): LibraryState {
     return LibraryState(songs, gone, lists)
 }
 
+private fun tieKey(r: SongExtra) = tieKey(r.artist, r.album, r.genre, r.year, r.releaseId, r.coverUrl)
+private fun tieKey(artist: String?, album: String?, genre: String?, year: Long?, release: String?, coverUrl: String?) =
+    listOf(artist, album, genre, year, release, coverUrl).joinToString("|") { it?.toString().orEmpty() }
+
 private fun String?.blankOrUnknown() = isNullOrBlank() || this == "Unknown artist"
 
 /**
@@ -75,8 +79,13 @@ private fun String?.blankOrUnknown() = isNullOrBlank() || this == "Unknown artis
  * value, tags the owner edited win over automatic ones ([remoteTagsWin]); with the same origin the later edit wins. Lyrics are only
  * ever filled in. Pure; [local] comes back unchanged when there is nothing to take.
  */
-fun mergeSongData(local: io.max.paperplay.core.library.Song, ls: SongSync, rs: SongSync, remote: SongExtra): io.max.paperplay.core.library.Song {
-    val remoteWins = remoteTagsWin(ls, rs)
+fun mergeSongData(
+    local: io.max.paperplay.core.library.Song, ls: SongSync, rs: SongSync, remote: SongExtra, localLyrics: LyricsMeta = LyricsMeta(),
+): io.max.paperplay.core.library.Song {
+    // Two automatic versions of the same age must not each keep their own: both devices pick the same one (the larger text),
+    // so the devices end with the same album, artist and cover whichever way they compare.
+    val remoteWins = remoteTagsWin(ls, rs) ||
+        (ls.userEdited == rs.userEdited && ls.tagsAt == rs.tagsAt && tieKey(remote) > tieKey(local.artist, local.album, local.genre, local.year, local.release_id, local.cover_url))
     fun text(l: String?, r: String?, emptyL: Boolean): String? = when {
         r.blankOrUnknown() -> l
         emptyL -> r
@@ -95,10 +104,33 @@ fun mergeSongData(local: io.max.paperplay.core.library.Song, ls: SongSync, rs: S
     val release = text(local.release_id, remote.releaseId, local.release_id.isNullOrBlank())
     val coverUrl = text(local.cover_url, remote.coverUrl, local.cover_url.isNullOrBlank())
     val source = text(local.metadata_source, remote.metadataSource, local.metadata_source.isNullOrBlank())
-    val lyrics = if (local.lyrics.isNullOrBlank() && !remote.lyrics.isNullOrBlank()) remote.lyrics else local.lyrics
+    val lyrics = if (remoteLyricsWin(local.lyrics, localLyrics, remote.lyrics, LyricsMeta(remote.lyrManual, remote.lyrAt))) remote.lyrics else local.lyrics
     val state = if (remote.enriched && local.enrich_state != io.max.paperplay.core.library.EnrichState.DONE) io.max.paperplay.core.library.EnrichState.DONE else local.enrich_state
     return local.copy(
         artist = artist, album = album, genre = genre, year = year, release_id = release, cover_url = coverUrl,
         metadata_source = source, lyrics = lyrics, enrich_state = state,
     )
+}
+
+/** Whether the lyrics of a song were chosen by hand, and when the current text was set (0 when unknown). */
+data class LyricsMeta(val manual: Boolean = false, val at: Long = 0)
+
+private fun timedLyrics(t: String) = Regex("""\[\d+:\d+""").containsMatchIn(t)
+
+/**
+ * Which lyrics both devices keep: an empty side takes the other's; a text chosen by hand beats one found automatically; the later
+ * choice wins; and when nothing tells them apart both pick the same one (timed before plain, then longer, then the larger text),
+ * so two devices that found different versions end up with one. Pure.
+ */
+fun remoteLyricsWin(local: String?, lm: LyricsMeta, remote: String?, rm: LyricsMeta): Boolean {
+    if (remote.isNullOrBlank()) return false
+    if (local.isNullOrBlank()) return true
+    if (local == remote) return false
+    if (lm.manual != rm.manual) return rm.manual
+    if (lm.at != rm.at) return rm.at > lm.at
+    val lt = timedLyrics(local)
+    val rt = timedLyrics(remote)
+    if (lt != rt) return rt
+    if (local.length != remote.length) return remote.length > local.length
+    return remote > local
 }

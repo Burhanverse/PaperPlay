@@ -409,7 +409,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 val id = m.str("id")
                 val at = (m["at"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
                 val bytes = m.str("b64")?.let { runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull() }
-                if (id != null && at != null && bytes != null && bytes.size <= MAX_COVER) runCatching { env.saveCover(id, at, bytes) }
+                if (id != null && at != null && bytes != null && bytes.size <= MAX_COVER) runCatching { env.saveCover(id, at, bytes, m.str("curl")) }
             }
             "nowplaying" -> {
                 _remoteNow.update { it + (p.info.id to RemoteNow(
@@ -591,9 +591,16 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private fun serveCovers(p: Peer, ids: List<String>) {
         io.launch {
             for (id in ids.take(200)) {
-                val (at, bytes) = runCatching { env.coverBytes(id) }.getOrNull() ?: continue
-                if (bytes.size > MAX_COVER) continue
-                runCatching { p.send(buildJsonObject { put("t", "cover"); put("id", id); put("at", at); put("b64", java.util.Base64.getEncoder().encodeToString(bytes)) }) }
+                val cover = runCatching { env.coverBytes(id) }.getOrNull() ?: continue
+                if (cover.bytes.size > MAX_COVER) continue
+                runCatching {
+                    p.send(
+                        buildJsonObject {
+                            put("t", "cover"); put("id", id); put("at", cover.at); put("curl", cover.sourceUrl)
+                            put("b64", java.util.Base64.getEncoder().encodeToString(cover.bytes))
+                        },
+                    )
+                }
             }
         }
     }

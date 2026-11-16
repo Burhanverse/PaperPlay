@@ -68,9 +68,9 @@ class AppServices(
                 val song = library.songByUniqueId(uid)
                 val path = song?.cover_path
                 if (song == null || path == null) null
-                else fileLength(path).takeIf { it > 0 }?.let { n -> song.cover_at to readRange(path, 0, n.toInt()) }
+                else fileLength(path).takeIf { it > 0 }?.let { n -> io.max.paperplay.core.sync.CoverData(song.cover_at, readRange(path, 0, n.toInt()), song.cover_url) }
             },
-            saveCover = { uid, at, bytes ->
+            saveCover = { uid, at, bytes, sourceUrl ->
                 library.songByUniqueId(uid)?.let { song ->
                     // A hand-chosen cover keeps the time it was chosen (so the devices stop offering it to each other); an automatic one only
                     // fills a song that has none and is never marked as chosen by hand.
@@ -78,12 +78,14 @@ class AppServices(
                         enricher.setCoverBytes(listOf(song), bytes)
                         driver.execute(null, "UPDATE songs SET cover_at = ? WHERE unique_id = ?", 2) { bindLong(0, at); bindString(1, uid) }
                         library.invalidate()
-                    } else if (song.cover_path == null) {
+                    } else if (song.cover_path == null || (at == 0L && song.cover_at == 0L && sourceUrl != null && song.cover_url == sourceUrl)) {
+                        // An automatic cover fills a song that has none, or replaces ours when both devices now point at the same source.
                         val dir = "${platform.dataDir.trimEnd('/')}/covers"
                         io.max.paperplay.core.backup.Fs.mkdirs(dir)
                         val path = "$dir/${uid.replace(Regex("[^A-Za-z0-9._-]"), "_")}_sync.jpg"
                         io.max.paperplay.core.backup.Fs.write(path, bytes)
                         library.replaceSong(song.copy(cover_path = path))
+                        library.invalidate()
                     }
                 }
             },
