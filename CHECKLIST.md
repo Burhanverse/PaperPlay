@@ -712,3 +712,10 @@ elease` must say Java 25 and the setup exe must start.
 - Built and installed (phone release, PC installer) but not seen working on two devices at once: shared player and source switch, output names, sync of song data, covers, Spotify links and deleted songs, the PC right-click menu, Alt+Left, tappable artists and albums, the Spotify account list.
 - Open: `UserSessionTest.deleterBatchesAndReportsRefused` fails (account-delete test, not from the sync work); right-click menu on sidebar playlists; Ctrl+F for search; topic names do not sync between devices; why the first duplicate deletes were refused is still unknown; the 3603 vs 3588 count.
 - Nothing from 16 Nov is pushed.
+### Audio, lyrics and covers on two devices (16 Nov, evening)
+- [~] Audio: the Android sink now outputs float, so 24-bit FLAC is not cut to 16 bits without dither (the likely cause of the grain; the playback log now has an "audio output ..." line with the real format). Not heard yet: play a 24-bit file and compare.
+- [~] Both devices pick the same album tags and cover when each found its own; a text or cover chosen by hand wins.
+- [~] Lyrics: the two devices converge on one text (timed before plain, then longer); a lyrics choice made by hand wins and its time travels; the choice lives in the `lyrics_meta` preference (no table change).
+- [~] Lyrics pane (phone and PC): the translate button lists the versions the sources have (LRCLIB records with their script, NetEase original, romanized and translation) and keeps the picked one for the song; Automatic forgets the pick.
+- [ ] No global default language yet (only a per-song pick); QQ and Kugou variants are not read.
+- [x] `UserSessionTest.deleterBatchesAndReportsRefused` fixed (the fake answered the existence check with no message list).
