@@ -21,7 +21,9 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - One Gradle at a time. Do not build in a tree another person or agent is editing; use a separate worktree.
 - Run `git status` before a build or release: a build copies every changed file, so another editor's unsaved work would be in it.
 - `scripts\release.ps1` builds the Android release (installed on the phone when one is connected) and the Windows installer.
-- Known failing test, not caused by recent work: `UserSessionTest.deleterBatchesAndReportsRefused`.
+- All core tests pass (`:core:jvmTest`). Run only the tests asked for when told not to build.
+- Do not stop Gradle or Java processes you did not start; another agent may be building.
+- Before trusting a release script run, check `adb devices`: with no phone connected the script skips the phone install and says so.
 
 ## Code
 - Previews use `org.jetbrains.compose.ui.tooling.preview.Preview`; never add androidx `ui-tooling` to `commonMain`.
@@ -40,6 +42,13 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Lay out for both phone and desktop widths; nothing may clip, overlap or need a horizontal scroll.
 - Buttons and actions say what they do in plain words; no emojis, and a long action is confirmed or can be undone.
 - UI changes: update `CHECKLIST.md` in the same change, and mark `[~]` until seen working.
+
+## Behaviour that must hold
+- No touch goes through anything: a sheet, bar or overlay takes the touches that land on it (`Modifier.blockTouchesBehind()` in `ui/.../app/BlockTouches.kt`); a list behind the player must never react.
+- A song in a credit "A, B & C" is several artists; use `splitArtists` (core `metadata/Text.kt`) wherever artists are listed, linked or matched.
+- A cover or album match is never taken from a compilation ("Bravo Hits", "Top 100"): use `isCompilationAlbum` and `pickExternal(..., allowCompilation = false)` for covers.
+- Data that two devices both have is merged by one pure rule that gives the same answer on both sides (`remoteTagsWin`, `remoteLyricsWin`, `mergeSongData`); what was made by hand wins over what was found.
+- Rewind: one press restarts the song, a second within 2.5 s goes back, the first song only restarts.
 
 ## Git
 - Short plain commit messages. No tool or AI mentions, no trailers.
