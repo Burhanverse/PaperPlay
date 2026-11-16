@@ -284,7 +284,11 @@ class Scanner(
                 if (stopGen != gen) return false
                 _progress.value = ScanProgress("${tag()}Checking saved songs in ${chat.title}: ${minOf((c + 1) * batch, unseen.size)} of ${unseen.size}", (c + 1).toDouble() / chunks.size)
                 if (c > 0) delay(effectiveMinPause())
-                val page = retrying { client.call(request("getMessages") { put("chat_id", chat.id); put("message_ids", JsonArray(chunk.map { JsonPrimitive(it.message_id) })) }) }
+                val page = try {
+                    retrying { client.call(request("getMessages") { put("chat_id", chat.id); put("message_ids", JsonArray(chunk.map { JsonPrimitive(it.message_id) })) }) }
+                } catch (_: TdError) {
+                    return false // This reader cannot ask about the posts; the next reader or the account may.
+                }
                 val byId = (page["messages"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>().mapNotNull { m -> songFromMessage(m)?.let { it.message_id to it } }.toMap()
                 for (s in chunk) byId[s.message_id]?.let { repo.upsertBotSong(it) } ?: run { doubtful += s }
             }
