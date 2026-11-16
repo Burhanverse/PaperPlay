@@ -65,32 +65,93 @@ class AppServices(
         io.max.paperplay.core.sync.LanEnv(library, platform.secrets, scope, isDesktop, platform.deviceModel, { platform.secrets.get(Keys.BOT_TOKEN) }),
     ).also { lanSync = it; bindLan(it) }
 
+    /** Which device plays: null is this one, else the id of a paired device the player controls. */
+    private val _activeOutput = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val activeOutput: kotlinx.coroutines.flow.StateFlow<String?> = _activeOutput
+
+    /** Plays [uniqueId] here from [positionMs]; false when this device's library does not have the song. */
+    private fun playHere(uniqueId: String, positionMs: Long): Boolean {
+        val song = library.songByUniqueId(uniqueId) ?: return false
+        playback.setQueue(listOf(song), 0)
+        scope.launch {
+            // The engine takes a moment to load the song; the seek lands once it can.
+            repeat(40) {
+                if (playback.nowPlayingStatic.value.song?.unique_id == uniqueId && playback.nowPlayingStatic.value.durationMs > 0) {
+                    playback.seek(positionMs); return@launch
+                }
+                kotlinx.coroutines.delay(100)
+            }
+            playback.seek(positionMs)
+        }
+        return true
+    }
+
+    /**
+     * Moves playback to [deviceId] (null: back to this device). The screen changes at once; the other device's next
+     * state message confirms it. Returns false, leaving everything as it was, when the song cannot be handed over.
+     */
+    suspend fun switchOutput(deviceId: String?): Boolean {
+        val lan = lanSync ?: return false
+        val from = _activeOutput.value
+        if (deviceId == from) return true
+        if (deviceId != null) {
+            val np = if (playbackStarted) playback.nowPlaying.value else null
+            val uid = np?.song?.unique_id
+            if (from == null && uid != null) {
+                if (!lan.sendControl(deviceId, "play:$uid:${np.positionMs}")) return false
+                playback.pause()
+            }
+            _activeOutput.value = deviceId
+            return true
+        }
+        // Back here: take over the song and position the other device reports, then silence it.
+        val now = lan.remoteNow.value[from]
+        val uid = now?.uniqueId
+        if (uid != null && !playHere(uid, now.positionAt(System.currentTimeMillis()))) return false
+        if (from != null) lan.sendControl(from, "pause")
+        _activeOutput.value = null
+        return true
+    }
+
     /** Lets a paired device drive playback here, and tells linked devices what is playing. */
     private fun bindLan(lan: io.max.paperplay.core.sync.LanSync) {
         scope.launch {
             lan.messages.collect { m ->
                 if (m.type != "control") return@collect
                 val action = runCatching { (kotlinx.serialization.json.Json.parseToJsonElement(m.body) as kotlinx.serialization.json.JsonObject)["action"]?.let { (it as kotlinx.serialization.json.JsonPrimitive).content } }.getOrNull()
-                when (action) {
-                    "play" -> playback.play()
-                    "pause" -> playback.pause()
-                    "next" -> playback.next()
-                    "previous" -> playback.previous()
+                when (val a = io.max.paperplay.core.sync.RemoteAction.parse(action)) {
+                    io.max.paperplay.core.sync.RemoteAction.Play -> playback.play()
+                    io.max.paperplay.core.sync.RemoteAction.Pause -> playback.pause()
+                    io.max.paperplay.core.sync.RemoteAction.Next -> playback.next()
+                    io.max.paperplay.core.sync.RemoteAction.Previous -> playback.previous()
+                    is io.max.paperplay.core.sync.RemoteAction.Seek -> playback.seek(a.positionMs)
+                    is io.max.paperplay.core.sync.RemoteAction.PlaySong -> {
+                        playHere(a.uniqueId, a.positionMs)
+                        // This device now plays, so it is not driving another one.
+                        _activeOutput.value = null
+                    }
+                    null -> Unit
                 }
             }
         }
         scope.launch {
-            var sent = emptyMap<String, Pair<String?, Boolean>>()
+            // A state is sent when the song or play state changes (checked twice a second) and every 5 s so the other side's position stays close.
+            var sent = emptyMap<String, Triple<String?, Boolean, Long>>()
             while (true) {
-                kotlinx.coroutines.delay(1_500)
+                kotlinx.coroutines.delay(500)
                 if (!playbackStarted) continue
                 val np = playback.nowPlayingStatic.value
                 val state = np.song?.unique_id to np.isPlaying
                 val linked = lan.connected.value
-                for (d in linked) if (sent[d.id] != state) {
-                    runCatching { lan.sendNowPlaying(d.id, state.first, playback.nowPlaying.value.positionMs, np.isPlaying, np.song?.title, np.song?.artist) }
+                val now = System.currentTimeMillis()
+                for (d in linked) {
+                    val last = sent[d.id]
+                    if (last != null && last.first == state.first && last.second == state.second && now - last.third < 5_000) continue
+                    val live = playback.nowPlaying.value
+                    runCatching { lan.sendNowPlaying(d.id, state.first, live.positionMs, np.isPlaying, np.song?.title, np.song?.artist, live.durationMs) }
+                    sent = sent + (d.id to Triple(state.first, state.second, now))
                 }
-                sent = linked.associate { it.id to state }
+                sent = sent.filterKeys { id -> linked.any { it.id == id } }
             }
         }
     }

@@ -394,7 +394,12 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             }
             "sync-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }
             "nowplaying" -> {
-                _remoteNow.update { it + (p.info.id to RemoteNow(m.str("id"), m.str("title"), m.str("artist"), m.flag("playing") == true)) }
+                _remoteNow.update { it + (p.info.id to RemoteNow(
+                    m.str("id"), m.str("title"), m.str("artist"), m.flag("playing") == true,
+                    (m["pos"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
+                    (m["dur"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
+                    System.currentTimeMillis(),
+                )) }
                 _messages.tryEmit(LanMessage(p.info.id, "nowplaying", m.toString()))
             }
             "queue" -> _messages.tryEmit(LanMessage(p.info.id, "queue", m.toString()))
@@ -796,13 +801,13 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         }
     }
 
-    override suspend fun sendNowPlaying(deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String?, artist: String?): Boolean =
+    override suspend fun sendNowPlaying(deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String?, artist: String?, durationMs: Long): Boolean =
         withContext(Dispatchers.IO) {
             val p = peers[deviceId] ?: return@withContext false
             runCatching {
                 p.send(
                     buildJsonObject {
-                        put("t", "nowplaying"); put("id", uniqueId); put("pos", positionMs); put("playing", playing); put("title", title); put("artist", artist)
+                        put("t", "nowplaying"); put("id", uniqueId); put("pos", positionMs); put("dur", durationMs); put("playing", playing); put("title", title); put("artist", artist)
                     },
                 )
             }.isSuccess

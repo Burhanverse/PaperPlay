@@ -165,18 +165,55 @@ interface LanSync {
     /** Stub: sends this device's queue (song unique ids and the playing index) to a linked device. */
     suspend fun sendQueue(deviceId: String, uniqueIds: List<String>, index: Int): Boolean
     /** Stub: sends the playing song and position to a linked device. */
-    suspend fun sendNowPlaying(deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String? = null, artist: String? = null): Boolean
+    suspend fun sendNowPlaying(deviceId: String, uniqueId: String?, positionMs: Long, playing: Boolean, title: String? = null, artist: String? = null, durationMs: Long = 0): Boolean
 
     /** Names of the paired devices this one is dialling right now, for a short "Connecting to ..." notice. */
     val connecting: StateFlow<List<String>> get() = kotlinx.coroutines.flow.MutableStateFlow(emptyList())
     /** What each linked device says it is playing, by device id. */
     val remoteNow: StateFlow<Map<String, RemoteNow>> get() = kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
-    /** Asks a linked device to "play", "pause", "next" or "previous". False when it is not linked. */
+    /** Asks a linked device to "play", "pause", "next", "previous", "seek:<ms>" or "play:<uniqueId>:<ms>" (play that song from there). False when it is not linked. */
     suspend fun sendControl(deviceId: String, action: String): Boolean = false
 }
 
 /** The song a linked device is playing. */
-data class RemoteNow(val uniqueId: String?, val title: String?, val artist: String?, val playing: Boolean)
+data class RemoteNow(
+    val uniqueId: String?, val title: String?, val artist: String?, val playing: Boolean,
+    /** Position and length when the message came, and when it came ([at], epoch ms), so the position can be carried forward without polling. */
+    val positionMs: Long = 0, val durationMs: Long = 0, val at: Long = 0,
+) {
+    /** Where the song is now: the reported position moved on by the time since, while it plays. */
+    fun positionAt(now: Long): Long {
+        val moved = if (playing && at > 0) positionMs + (now - at).coerceAtLeast(0) else positionMs
+        return if (durationMs > 0) moved.coerceAtMost(durationMs) else moved
+    }
+}
+
+/** A control action from another device: "play:<uniqueId>:<ms>" and "seek:<ms>" carry a value, the rest are plain. */
+sealed interface RemoteAction {
+    data object Play : RemoteAction
+    data object Pause : RemoteAction
+    data object Next : RemoteAction
+    data object Previous : RemoteAction
+    data class Seek(val positionMs: Long) : RemoteAction
+    data class PlaySong(val uniqueId: String, val positionMs: Long) : RemoteAction
+
+    companion object {
+        fun parse(action: String?): RemoteAction? = when {
+            action == null -> null
+            action == "play" -> Play
+            action == "pause" -> Pause
+            action == "next" -> Next
+            action == "previous" -> Previous
+            action.startsWith("seek:") -> action.removePrefix("seek:").toLongOrNull()?.let { Seek(it.coerceAtLeast(0)) }
+            action.startsWith("play:") -> {
+                val rest = action.removePrefix("play:")
+                val cut = rest.lastIndexOf(':')
+                if (cut <= 0) null else rest.substring(cut + 1).toLongOrNull()?.let { PlaySong(rest.substring(0, cut), it.coerceAtLeast(0)) }
+            }
+            else -> null
+        }
+    }
+}
 
 /** What [createLanSync] needs. */
 class LanEnv(
