@@ -17,7 +17,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
-REPO_URL = "https://github.com/maxcodl/PaperPlay-compose"
+REPO_URL = "https://github.com/maxcodl/ PaperPlay"
 FIRST_VERSION = (1, 3, 0)  # the first release is exactly this, whatever the commits are
 FIRST_SINCE = "e7a6417"  # until a stable tag exists, notes start after this commit
 IGNORED = ("8e9b526",)  # commits that never appear in the notes or decide a version

@@ -74,5 +74,5 @@ object ReleaseFeed {
 
     /** Downloads may only come from this repository's releases. */
     fun isTrusted(url: String) =
-        url.startsWith("https://github.com/maxcodl/PaperPlay-compose/") || url.startsWith("https://objects.githubusercontent.com/")
+        url.startsWith("https://github.com/maxcodl/ PaperPlay/") || url.startsWith("https://objects.githubusercontent.com/")
 }

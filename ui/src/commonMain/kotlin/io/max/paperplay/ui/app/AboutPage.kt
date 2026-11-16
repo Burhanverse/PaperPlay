@@ -35,7 +35,7 @@ import io.max.paperplay.core.update.UpdateState
 import io.max.paperplay.ui.StaticLogo
 import kotlinx.coroutines.launch
 
-private const val REPO = "https://github.com/maxcodl/PaperPlay-compose"
+private const val REPO = "https://github.com/maxcodl/ PaperPlay"
 
 /** Settings > About: the app and its update status with one button, three update choices, and the project links. */
 @Composable
@@ -55,7 +55,7 @@ internal fun AboutPage(backend: CoreBackend) {
     var auto by remember { mutableStateOf(updates.prefs.auto) }
     SwitchRow("Check automatically", auto, { updates.prefs.auto = it; auto = it }, subtitle = "At most once a day, when the app starts")
     SectionLabel("Project")
-    SettingsRow("Source code", icon = Icons.Rounded.Code, subtitle = "github.com/maxcodl/PaperPlay-compose", onClick = { uri.openUri(REPO) })
+    SettingsRow("Source code", icon = Icons.Rounded.Code, subtitle = "github.com/maxcodl/ PaperPlay", onClick = { uri.openUri(REPO) })
     SettingsRow("Releases", icon = Icons.Rounded.SystemUpdate, onClick = { uri.openUri("$REPO/releases") })
     SettingsRow("Change log", icon = Icons.Rounded.History, onClick = { uri.openUri("$REPO/blob/main/CHANGELOG.md") })
     MadeBy()
