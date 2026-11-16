@@ -19,6 +19,9 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Tests: `./gradlew :core:jvmTest --no-daemon -q`. They must pass before a commit.
 - Desktop run needs JDK 25.
 - One Gradle at a time. Do not build in a tree another person or agent is editing; use a separate worktree.
+- Run `git status` before a build or release: a build copies every changed file, so another editor's unsaved work would be in it.
+- `scripts\release.ps1` builds the Android release (installed on the phone when one is connected) and the Windows installer.
+- Known failing test, not caused by recent work: `UserSessionTest.deleterBatchesAndReportsRefused`.
 
 ## Code
 - Previews use `org.jetbrains.compose.ui.tooling.preview.Preview`; never add androidx `ui-tooling` to `commonMain`.
