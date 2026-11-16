@@ -260,6 +260,11 @@ class UserSessionTest {
             if (req.type == "deleteMessages") {
                 val ids = req["message_ids"]!!.jsonArray.map { it.jsonPrimitive.content.toLong() }
                 if (-1L in ids) listOf(failure(req, 400, "MESSAGE_DELETE_FORBIDDEN")) else { deleted += ids; listOf(answer(req)) }
+            } else if (req.type == "getMessages") {
+                // After the deletes the account is asked what is still there: only the refused post (-1) is.
+                val ids = req["message_ids"]!!.jsonArray.map { it.jsonPrimitive.content.toLong() }
+                val msgs = ids.joinToString(",") { if (it == -1L) """{"@type":"message","id":-1}""" else "null" }
+                listOf(answer(req, """{"@type":"messages","total_count":${ids.size},"messages":[$msgs]}"""))
             } else listOf(answer(req, """{"@type":"chat","id":-100}"""))
         }
         val d: AccountDeleter = UserAccountDeleter(session(fake, loggedIn = true))
