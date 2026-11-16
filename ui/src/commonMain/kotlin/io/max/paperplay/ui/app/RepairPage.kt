@@ -202,7 +202,7 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
     val main = backend.mainChatId() ?: run { log("Your account: no main chat is set"); return }
     log("Reading the main chat with your account")
     val watch = services.scope.launch {
-        backend.chatIndex.progress.collect { p -> services.scanner.announce(p?.let { "Your account: reading ${it.chatTitle}, ${it.found} posts (repeats included)" }) }
+        backend.chatIndex.progress.collect { p -> services.scanner.announce(p?.let { "Your account: reading ${it.chatTitle}, ${it.found} posts found so far (songs are added to the library when the read ends)" }) }
     }
     runCatching {
         backend.chatIndex.indexChat(io.max.paperplay.core.account.ChatInfo(main, services.library.chat(main)?.title ?: "Main chat", true))
