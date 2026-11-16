@@ -73,6 +73,17 @@ object SnapshotCodec {
                                     JsonObject(mapOf("id" to JsonPrimitive(id), "addedAt" to JsonPrimitive(i.addedAt), "removedAt" to i.removedAt.orNull()))
                                 },
                             ),
+                            "src" to p.sourceUrl.orNull(),
+                            "miss" to JsonArray(
+                                p.missing.map { m ->
+                                    JsonObject(
+                                        mapOf(
+                                            "k" to JsonPrimitive(m.key), "t" to JsonPrimitive(m.title), "a" to JsonPrimitive(m.artist),
+                                            "d" to JsonPrimitive(m.durationSec), "p" to JsonPrimitive(m.position), "at" to m.sourceAddedAt.orNull(),
+                                        ),
+                                    )
+                                },
+                            ),
                             "order" to JsonArray((s.order[uuid] ?: emptyList()).map { JsonPrimitive(it) }),
                         ),
                     )
@@ -111,7 +122,12 @@ object SnapshotCodec {
                 val ij = it as? JsonObject ?: throw IllegalArgumentException("bad item")
                 items[ij.reqStr("id")] = ItemSync(ij.reqLng("addedAt"), ij.lng("removedAt"))
             }
-            lists[uuid] = PlaylistSync(j.reqStr("name"), j.reqLng("modifiedAt"), j.lng("deletedAt"), items)
+            val missing = j.arr("miss")?.mapNotNull { e ->
+                val m = e as? JsonObject ?: return@mapNotNull null
+                val k = m.str("k") ?: return@mapNotNull null
+                MissingSync(k, m.str("t") ?: "", m.str("a") ?: "", m.lng("d") ?: 0L, m.lng("p") ?: 0L, m.lng("at"))
+            }.orEmpty()
+            lists[uuid] = PlaylistSync(j.reqStr("name"), j.reqLng("modifiedAt"), j.lng("deletedAt"), items, j.str("src"), missing)
             order[uuid] = j.arr("order")?.map { it.stringAt() } ?: emptyList()
         }
         return Snapshot(LibraryState(songs, gone, lists), extra, order)
@@ -154,10 +170,12 @@ class SnapshotStore(private val library: LibraryRepository) {
         val entries = db.lanQueries.allEntries().executeAsList().groupBy { it.playlist_id }
         val lists = HashMap<String, PlaylistSync>()
         val order = HashMap<String, List<String>>()
+        val waiting = db.syncQueries.allMissing().executeAsList().groupBy { it.playlist_id }
         for (p in db.lanQueries.allPlaylistsWithUuid().executeAsList()) {
             val es = entries[p.id].orEmpty()
             lists[p.uuid] = PlaylistSync(
                 p.name, p.modified_at, p.deleted_at, es.associate { it.unique_id to ItemSync(it.added_at, it.removed_at) },
+                p.source_url, waiting[p.id].orEmpty().map { MissingSync(it.track_key, it.title, it.artist, it.duration_sec, it.position, it.source_added_at) },
             )
             order[p.uuid] = es.filter { it.removed_at == null }.sortedWith(compareBy({ it.position }, { it.added_at })).map { it.unique_id }
         }
@@ -227,7 +245,7 @@ class SnapshotStore(private val library: LibraryRepository) {
                 val pid: Long
                 if (lp == null) {
                     if (mp.deletedAt != null) continue
-                    db.playlistsQueries.insertPlaylist(mp.name, uuid, mp.modifiedAt, null)
+                    db.playlistsQueries.insertPlaylist(mp.name, uuid, mp.modifiedAt, mp.sourceUrl)
                     pid = db.playlistsQueries.lastInsertRowId().executeAsOne()
                     playlistsChanged++
                 } else {
@@ -236,6 +254,15 @@ class SnapshotStore(private val library: LibraryRepository) {
                         db.lanQueries.setPlaylistMeta(mp.name, mp.modifiedAt, mp.deletedAt, pid)
                         playlistsChanged++
                     }
+                }
+                if (lp != null && lp.source_url == null && mp.sourceUrl != null) { db.lanQueries.setPlaylistSource(mp.sourceUrl, pid); playlistsChanged++ }
+                if (mp.missing.isNotEmpty() && db.playlistsQueries.missingTracks(pid).executeAsList().isEmpty()) {
+                    for (m in mp.missing) {
+                        db.playlistsQueries.insertMissingTrack(
+                            io.max.paperplay.core.library.MissingTrack(pid, m.key, m.title, m.artist, m.durationSec, m.position, m.sourceAddedAt),
+                        )
+                    }
+                    playlistsChanged++
                 }
                 val localOrder = local.order[uuid].orEmpty()
                 val remoteWins = lp == null || (remote.state.playlists[uuid]?.modifiedAt ?: 0L) > lp.modified_at

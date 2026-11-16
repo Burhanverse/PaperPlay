@@ -14,7 +14,14 @@ data class ItemSync(val addedAt: Long, val removedAt: Long?) {
     val lastChange: Long get() = if (removedAt != null && removedAt > addedAt) removedAt else addedAt
 }
 
-data class PlaylistSync(val name: String, val modifiedAt: Long, val deletedAt: Long?, val items: Map<String, ItemSync>)
+/** A track a playlist imported from a link still waits for. */
+data class MissingSync(val key: String, val title: String, val artist: String, val durationSec: Long, val position: Long, val sourceAddedAt: Long?)
+
+/** [sourceUrl] is the link the playlist was imported from (so it can be refreshed on any device), [missing] what is not in the library yet. */
+data class PlaylistSync(
+    val name: String, val modifiedAt: Long, val deletedAt: Long?, val items: Map<String, ItemSync>,
+    val sourceUrl: String? = null, val missing: List<MissingSync> = emptyList(),
+)
 
 data class LibraryState(
     val songs: Map<String, SongSync> = emptyMap(),
@@ -50,7 +57,13 @@ fun mergeLibrary(local: LibraryState, remote: LibraryState): LibraryState {
         val base = if (l == null || r.modifiedAt > l.modifiedAt) r.copy(items = l?.items ?: emptyMap()) else l
         val items = HashMap(base.items)
         for ((key, ri) in r.items) { val li = items[key]; if (li == null || ri.lastChange > li.lastChange) items[key] = ri }
-        lists[u] = base.copy(items = items)
+        // The link and the waiting list only fill in what this device does not have; each device keeps its own once it has them.
+        val other = if (base === l) r else l
+        lists[u] = base.copy(
+            items = items,
+            sourceUrl = base.sourceUrl ?: other?.sourceUrl,
+            missing = base.missing.ifEmpty { other?.missing.orEmpty() },
+        )
     }
     return LibraryState(songs, gone, lists)
 }

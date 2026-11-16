@@ -6,6 +6,9 @@ SELECT * FROM playlists WHERE uuid != '';
 playlistByUuid:
 SELECT * FROM playlists WHERE uuid = :uuid;
 
+setPlaylistSource:
+UPDATE playlists SET source_url = :sourceUrl WHERE id = :id;
+
 setPlaylistMeta:
 UPDATE playlists SET name = :name, modified_at = :modifiedAt, deleted_at = :deletedAt WHERE id = :id;
 
