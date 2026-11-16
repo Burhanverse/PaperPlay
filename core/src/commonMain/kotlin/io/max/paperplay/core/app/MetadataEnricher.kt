@@ -418,8 +418,9 @@ class MetadataEnricher(
     /** Covers from Deezer and iTunes for a search. A failed service gives none. */
     suspend fun coverOptions(term: String): List<CoverOption> {
         val all = coroutineScope {
-            val a = async { runCatching { deezerRaw(term).map { it.match } }.getOrDefault(emptyList()) }
-            val b = async { runCatching { itunes(term) }.getOrDefault(emptyList()) }
+            // A search the owner typed does not wait in the background workers' queue for each service, and a slow service is dropped after 8 s.
+            val a = async { runCatching { withTimeout(8_000) { deezerRaw(term, queued = false).map { it.match } } }.getOrDefault(emptyList()) }
+            val b = async { runCatching { withTimeout(8_000) { itunes(term, queued = false) } }.getOrDefault(emptyList()) }
             a.await() + b.await()
         }
         val seen = HashSet<String>()
@@ -480,8 +481,8 @@ class MetadataEnricher(
 
     // Services
 
-    private suspend fun deezerRaw(term: String): List<Dz> {
-        deezerGate.pass()
+    private suspend fun deezerRaw(term: String, queued: Boolean = true): List<Dz> {
+        if (queued) deezerGate.pass()
         val res = get(httpsUrl("api.deezer.com", "/search", mapOf("q" to term, "limit" to "8")))
         if (res.status != 200) return emptyList()
         return objects(parse(res), "data").map { o ->
@@ -534,8 +535,8 @@ class MetadataEnricher(
         }
     }
 
-    private suspend fun itunes(term: String, country: String? = null): List<ExternalMatch> {
-        itunesGate.pass()
+    private suspend fun itunes(term: String, country: String? = null, queued: Boolean = true): List<ExternalMatch> {
+        if (queued) itunesGate.pass()
         val res = get(httpsUrl("itunes.apple.com", "/search", mapOf("term" to term, "media" to "music", "entity" to "song", "limit" to "8", "country" to country)))
         if (res.status != 200) return emptyList()
         return objects(parse(res), "results").map { ExternalMatch.fromItunes(it) }
