@@ -27,6 +27,17 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Do not delete or overwrite user data: library rows, Telegram posts, phone files. Deleting posts is irreversible; a post counts as gone only when the owner's account confirms it.
 - Bots cannot see posts made by other bots. "Not found" from a bot proves nothing.
 
+## UI
+- Match the neighbours first: copy the row, header, spacing and icon style of the nearest existing screen or list instead of inventing a new one. Reuse the shared composables and theme tokens (`MaterialTheme.colorScheme`, `AppIcon`, `LocalUiPrefs`); no hard-coded colours.
+- Every navigation row, setting and tool has an icon from the Material rounded set, and the same icon means the same thing everywhere.
+- A collapsible group is a normal row with an icon and a fold arrow, not a bare title. It must still show and work when the sidebar is narrow.
+- Separate groups with a divider or a section label, never by position alone. Settings and About sit apart from content and tools.
+- Highlight the open page in every list that can open pages.
+- Sidebar and settings headings follow the same groups; a new page names its group.
+- Lay out for both phone and desktop widths; nothing may clip, overlap or need a horizontal scroll.
+- Buttons and actions say what they do in plain words; no emojis, and a long action is confirmed or can be undone.
+- UI changes: update `CHECKLIST.md` in the same change, and mark `[~]` until seen working.
+
 ## Git
 - Short plain commit messages. No tool or AI mentions, no trailers.
 - Do not push unless told. Pull with `git pull --rebase --autostash origin main` first. Never bump the version by hand; the release bot does.
