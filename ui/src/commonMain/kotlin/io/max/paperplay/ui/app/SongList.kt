@@ -301,7 +301,7 @@ fun SongList(
                 val before = ghosts.groupBy { it.after.coerceIn(0, shown.size) }
                 for (i in 0..shown.size) {
                     before[i]?.forEach { g -> item(key = "ghost:${g.key}") { GhostRow(g, Modifier.padding(horizontal = 16.dp, vertical = 3.dp)) } }
-                    if (i < shown.size) { val song = shown[i]; item(key = song.id) { songRow(song, i) } }
+                    if (i < shown.size) { val song = shown[i]; item(key = song.copyKey ?: song.id) { songRow(song, i) } }
                 }
             } else {
                 itemsIndexed(shown, key = { _, s -> s.copyKey ?: s.id }) { i, song -> songRow(song, i) }
