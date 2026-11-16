@@ -70,7 +70,8 @@ private class FakePlayerEngine : PlayerEngine {
         mutablePositionMs.value = positionMs
     }
 
-    override fun setVolume(volume: Float) = Unit
+    val volumes = java.util.concurrent.CopyOnWriteArrayList<Float>()
+    override fun setVolume(volume: Float) { volumes.add(volume) }
 
     override fun setEqualizer(gainsDb: List<Float>?) {
         lastEqualizer = gainsDb
@@ -82,6 +83,42 @@ private class FakePlayerEngine : PlayerEngine {
 }
 
 class PlaybackControllerTest {
+    @Test
+    fun pauseAndPlayFadeButAFreshStartDoesNot() = runBlocking {
+        var now = 1_000L
+        val db = LibraryDatabase(libraryDriver())
+        val repo = LibraryRepository(LibraryRepo(db) { ++now }) { ++now }
+        val songs = (1L..2L).map { song(it) }
+        songs.forEach { db.songsQueries.insertSong(it) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = FakePlayerEngine()
+        val controller = PlaybackController(engine, TrackResolver { null }, repo, scope)
+        try {
+            controller.setVolume(0.8f)
+            controller.setQueue(songs, startIndex = 0)
+            await { engine.lastQueue.size == 2 && engine.mutableState.value == PlayerState.Playing }
+            // A song starting fresh is not faded: nothing but the set volume went to the engine.
+            assertTrue(engine.volumes.all { it == 0.8f })
+
+            engine.volumes.clear()
+            controller.pause()
+            await { engine.mutableState.value == PlayerState.Paused }
+            // Faded down to silence before it paused, then the volume is back.
+            assertTrue(engine.volumes.size >= 5)
+            assertTrue(engine.volumes.any { it < 0.1f })
+            await { engine.volumes.lastOrNull() == 0.8f }
+
+            engine.volumes.clear()
+            controller.play()
+            await { engine.volumes.lastOrNull() == 0.8f && engine.volumes.size >= 5 }
+            assertEquals(0f, engine.volumes.first())
+            assertTrue(engine.volumes.zipWithNext().all { (a, b) -> b >= a })
+        } finally {
+            controller.release()
+            scope.cancel()
+        }
+    }
+
     @Test
     fun rewindRestartsTheSongAndAGoesBackOnlyOnASecondQuickPress() = runBlocking {
         var clock = 10_000L

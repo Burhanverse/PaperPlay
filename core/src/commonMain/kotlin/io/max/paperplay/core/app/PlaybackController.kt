@@ -34,6 +34,9 @@ private const val MAX_LISTEN_STEP_MS = 5_000L
 /** A second rewind press within this long goes to the song before; one press only plays the song again from the start. */
 const val PREVIOUS_AGAIN_MS = 2_500L
 
+private const val FADE_MS = 200L
+private const val FADE_STEPS = 10
+
 /** What the player UI shows. [index] is into [queue], which is in play order (shuffled when [shuffle]). */
 data class NowPlaying(
     val song: Song? = null,
@@ -230,13 +233,48 @@ class PlaybackController(
         apply(order, if (meta.value.shuffle) 0 else start, 0)
     }
 
-    fun play() = engine.play()
+    // The volume the listener set; a fade moves the player's volume between 0 and this.
+    @kotlin.concurrent.Volatile private var baseVolume = 1f
+    private var fadeJob: Job? = null
+
+    private fun fade(to: Float, from: Float, then: () -> Unit = {}) {
+        fadeJob?.cancel()
+        fadeJob = scope.launch {
+            for (i in 1..FADE_STEPS) {
+                engine.setVolume(from + (to - from) * i / FADE_STEPS)
+                delay(FADE_MS / FADE_STEPS)
+            }
+            then()
+        }
+    }
+
+    /** Resuming a paused song fades in over a fifth of a second; a song starting fresh does not. */
+    fun play() {
+        if (engine.state.value == PlayerState.Paused && baseVolume > 0f) {
+            fadeJob?.cancel()
+            engine.setVolume(0f)
+            engine.play()
+            fade(baseVolume, 0f)
+        } else {
+            fadeJob?.cancel()
+            engine.setVolume(baseVolume)
+            engine.play()
+        }
+    }
+
+    /** Pausing a playing song fades out over a fifth of a second, then pauses. */
     fun pause() {
-        engine.pause()
+        if (engine.state.value == PlayerState.Playing && baseVolume > 0f) {
+            fade(0f, baseVolume) { engine.pause(); engine.setVolume(baseVolume) }
+        } else {
+            fadeJob?.cancel()
+            engine.pause()
+            engine.setVolume(baseVolume)
+        }
         scope.launch { runCatching { resolver.pauseAll() } }
     }
     fun seek(positionMs: Long) = engine.seek(positionMs)
-    fun setVolume(volume: Float) = engine.setVolume(volume)
+    fun setVolume(volume: Float) { baseVolume = volume; if (fadeJob?.isActive != true) engine.setVolume(volume) }
     val outputInfo get() = engine.outputInfo
     fun setEqualizer(gainsDb: List<Float>?) = engine.setEqualizer(gainsDb)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)
