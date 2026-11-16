@@ -561,7 +561,15 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     init {
         services.activityLog = { source, line -> addLog(source, line) }
         scope.launch { services.auth.collect { if (it.isNotEmpty()) addLog("Telegram", it.removePrefix("authorizationState")) } }
-        scope.launch { services.scanner.report.collect { if (it != null) addLog("Scan", it) } }
+        scope.launch {
+            services.scanner.report.collect {
+                if (it != null) {
+                    addLog("Scan", it)
+                    // New songs from other chats are filed into the main chat's topics when the owner switched that on.
+                    if (services.autoFiler.enabled()) services.autoFiler.start()
+                }
+            }
+        }
         scope.launch { services.error.collect { if (it != null) addLog("Telegram", it, error = true) } }
         scope.launch {
             services.scanner.progress.collect { p ->

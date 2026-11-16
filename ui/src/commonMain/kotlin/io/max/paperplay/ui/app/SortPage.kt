@@ -99,6 +99,29 @@ internal fun SortPage(backend: CoreBackend) {
         data = loaded
     }
 
+    // Songs in other chats: copied by the main bot when it can see them, else downloaded by any bot and uploaded by the main bot.
+    val filer = backend.services.autoFiler
+    val filing by filer.state.collectAsState()
+    var autoOn by remember { mutableStateOf(filer.enabled()) }
+    SectionLabel("Songs in other chats")
+    SettingsRow(
+        "File them into topics by themselves", icon = Icons.Rounded.DriveFileMove,
+        subtitle = "After each scan, songs from other chats go to the main chat's topic when the match is confident. The main bot copies the post, or a bot downloads it and the main bot uploads it. The original is deleted only after the same song is confirmed in the main chat. Every step is in the Activity log.",
+        trailing = { androidx.compose.material3.Switch(autoOn, { autoOn = it; filer.setEnabled(it) }) },
+    )
+    SettingsRow(
+        if (filing.running) "Filing ${filing.done} of ${filing.total}" else "File confident songs now",
+        subtitle = filing.note ?: "Starts the same work by hand",
+        trailing = {
+            if (filing.running) OutlinedButton({ filer.cancel() }) { Text("Stop") }
+            else Button({ filer.start() }) { Text("File now") }
+        },
+    )
+    if (filing.running) LinearProgressIndicator(
+        progress = { if (filing.total == 0) 0f else filing.done.toFloat() / filing.total },
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+    )
+
     val d = data
     if (d == null) {
         Text("Looking at General", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)

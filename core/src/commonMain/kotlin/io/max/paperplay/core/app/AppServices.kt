@@ -261,6 +261,14 @@ class AppServices(
         )
     }
 
+    /** Files songs from other chats into the main chat's topics: copy when the main bot can see them, else download and upload. */
+    val autoFiler: io.max.paperplay.core.filing.AutoFiler by lazy {
+        io.max.paperplay.core.filing.AutoFiler(
+            scope, { client }, { id -> botPool.clientOf(id) }, { botPool.readyBots().map { it.second } }, library.repo,
+            { line -> activityLog("Filing", line) },
+        )
+    }
+
     /** Created on first use, so a screen that never plays does not load the audio stack. */
     private val playbackLazy = lazy { PlaybackController(platform.createPlayer(), resolver, library, scope) }
     val playback: PlaybackController get() = playbackLazy.value
