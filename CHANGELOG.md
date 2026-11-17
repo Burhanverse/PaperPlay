@@ -2,6 +2,16 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.9] - 2026-11-17
+
+### Other changes
+- Ui: the PC bar leaves out transport while Now playing is open, bit-perfect gets its own icon ([`9714674`](https://github.com/maxcodl/PaperPlay/commit/97146740f261690f83fe66e31927724d258f359f))
+- Sync: a playlist change reaches linked devices within seconds ([`3ff3d8b`](https://github.com/maxcodl/PaperPlay/commit/3ff3d8b3ff0294b5468df21699ec23456712d1a9))
+- Installer: end the app without its child processes so the in-app updater's setup survives ([`066a423`](https://github.com/maxcodl/PaperPlay/commit/066a42325f81ed45d63d2f00a36aedf1e127ede5))
+- Ui: smaller playlist cards on Home so more show in the sideways row ([`6635ff0`](https://github.com/maxcodl/PaperPlay/commit/6635ff0f50ddfe7398d73c5aee2ca24a07a2d639))
+
+**Full changes:** [v1.8.8...v1.8.9](https://github.com/maxcodl/PaperPlay/compare/v1.8.8...v1.8.9)
+
 ## [1.8.8] - 2026-11-17
 
 ### Other changes
