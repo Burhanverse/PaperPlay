@@ -13,12 +13,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -325,7 +329,8 @@ private val rimColor = Color.White.copy(alpha = 0.18f)
 /**
  * A card, bar or overlay surface. Glass: the page background layer blurred behind a tint (real blur where a layer
  * and Android 12+ or desktop exist), else a tint with enough opacity to keep text readable. Material: solid tonal colour.
- * Blur and tint come from the Glass settings page and apply to every glass part.
+ * Every setting on the Glass page applies: blur and tint, colour saturation, the edge line (width, brightness, reflection),
+ * the outer shadow and the inner glow. Without a blur layer the surface is the tint with the same edge, shadow and glow.
  */
 @Composable
 fun Modifier.partSurface(group: LookGroup, color: Color, shape: Shape): Modifier {
@@ -335,21 +340,38 @@ fun Modifier.partSurface(group: LookGroup, color: Color, shape: Shape): Modifier
     val reduced = io.max.paperplay.ui.theme.LocalReducedTransparency.current
     val alpha = surfaceAlpha(prefs.glassTint)
     val blurDp = prefs.glassBlur.dp
+    val g = prefs.glass
     return if (backdrop != null && !reduced && (io.max.paperplay.ui.isPhone || prefs.desktopBlur)) {
+        val edge = when (g.edgeStyle) { 1 -> com.kyant.backdrop.highlight.Highlight.Ambient; 2 -> com.kyant.backdrop.highlight.Highlight.Plain; else -> com.kyant.backdrop.highlight.Highlight.Default }
         clip(shape)
             .drawBackdrop(
                 backdrop = backdrop,
                 shape = { shape },
-                effects = { vibrancy(); blur(blurDp.toPx()) },
+                effects = { if (g.saturation != 1f) colorControls(saturation = g.saturation) else vibrancy(); blur(blurDp.toPx()) },
+                highlight = if (g.edgeWidth > 0f) ({ edge.copy(width = g.edgeWidth.dp, blurRadius = (g.edgeWidth / 2f).dp, alpha = g.edgeAlpha) }) else null,
+                shadow = if (g.shadowRadius > 0f && g.shadowAlpha > 0f) ({ com.kyant.backdrop.shadow.Shadow(radius = g.shadowRadius.dp, color = Color.Black.copy(alpha = g.shadowAlpha)) }) else null,
+                innerShadow = if (g.innerAlpha > 0f) ({ com.kyant.backdrop.shadow.InnerShadow(radius = g.innerRadius.dp, color = Color.White.copy(alpha = g.innerAlpha)) }) else null,
                 onDrawSurface = { drawRect(color.copy(alpha = alpha)) },
             )
-            .border(1.dp, rimColor, shape)
     } else {
-        clip(shape).background(color.copy(alpha = if (reduced) 0.92f else maxOf(alpha, 0.6f))).border(1.dp, rimColor, shape)
+        val white = Color.White
+        val edgeBrush: Brush = when (g.edgeStyle) {
+            0 -> Brush.linearGradient(listOf(white.copy(alpha = g.edgeAlpha * 0.9f), white.copy(alpha = g.edgeAlpha * 0.08f), white.copy(alpha = g.edgeAlpha * 0.45f)))
+            1 -> androidx.compose.ui.graphics.SolidColor(white.copy(alpha = g.edgeAlpha * 0.4f))
+            else -> androidx.compose.ui.graphics.SolidColor(white.copy(alpha = g.edgeAlpha * 0.6f))
+        }
+        val fill = color.copy(alpha = if (reduced) 0.92f else maxOf(alpha, 0.6f))
+        (if (g.shadowRadius > 0f && g.shadowAlpha > 0f) shadow((g.shadowRadius / 2f).dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = g.shadowAlpha), spotColor = Color.Black.copy(alpha = g.shadowAlpha)) else this)
+            .clip(shape)
+            .background(fill)
+            // The inner glow: a soft light along the top edge, g.innerRadius deep.
+            .drawBehind {
+                if (g.innerAlpha > 0f && g.innerRadius > 0f) drawRect(Brush.verticalGradient(listOf(white.copy(alpha = g.innerAlpha), Color.Transparent), endY = g.innerRadius.dp.toPx()))
+            }
+            .then(if (g.edgeWidth > 0f) Modifier.border(g.edgeWidth.dp, edgeBrush, shape) else Modifier)
     }
 }
 
-/** Tint 0..1 mapped so even the lowest setting keeps text readable on cards and bars. */
 private fun surfaceAlpha(tint: Float): Float = 0.25f + tint.coerceIn(0f, 1f) * 0.7f
 
 /** Dialog and menu colour for the Overlays part. Dialogs live in their own window, so they use the tint without a blur layer. */
