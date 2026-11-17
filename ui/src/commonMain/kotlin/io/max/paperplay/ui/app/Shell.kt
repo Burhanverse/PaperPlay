@@ -105,6 +105,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     var showPlayer by remember { mutableStateOf(false) }
     // How far the full player has slid up; it follows a drag and the back swipe.
     val sheet = remember { PlayerSheetState() }
+    // While the full player has covered the screen, the page under it is not composed, so it holds no lists, covers or animations. It returns the moment the sheet starts to close.
+    val covered by remember { androidx.compose.runtime.derivedStateOf { showPlayer && sheet.progress.value >= 1f } }
     // Where the phone came from, so Back returns there instead of jumping to Home or Settings.
     val history = remember { mutableStateListOf<NavSnapshot>() }
     fun snapshot() = NavSnapshot(tab, libraryTab, profilePage, detail, settings, settingsStack.toList(), settingsDeep, page)
@@ -299,7 +301,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
                     // A tab remembers where its list was scrolled to while you are on another page.
                     val tabStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-                    AnimatedContent(
+                    if (!covered) AnimatedContent(
                         targetState = PageKey(settings, detail, tab, tab == 3 && profilePage == "tasks"),
                         modifier = Modifier.fillMaxSize(),
                         transitionSpec = { pageTransition(navMove(initialState.level, targetState.level), reduceMotion) },
@@ -513,7 +515,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         })
                         shell()
                     }
-                } else shell()
+                } else if (!covered) shell()
                 PlayerSheetHost(showPlayer, sheet) { FullPlayer(pb, pbError, backend, actions, { showPlayer = false }) }
                 AppSnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp), tint)
                 ShortcutsOverlay(keys, Modifier.fillMaxSize())
