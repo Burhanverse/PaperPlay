@@ -23,6 +23,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
@@ -176,6 +178,14 @@ class AppServices(
                     }
                     null -> Unit
                 }
+            }
+        }
+        // A playlist edited here reaches the linked devices within seconds, not at the next 10-minute exchange.
+        // The exchange that follows one change makes no change itself, so this does not repeat.
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        scope.launch {
+            library.playlistSummaries().drop(1).debounce(4_000).collect {
+                if (lan.connected.value.any { d -> d.paired }) runCatching { lan.syncNow() }
             }
         }
         scope.launch {
