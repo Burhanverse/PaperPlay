@@ -173,6 +173,11 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                                 },
                                 enabled = !active && sections[DuplicateSection.OtherTopics].orEmpty().isNotEmpty(),
                             ) { Text("Tick topic repeats") }
+                            // Songs that only might be the same: tick every copy but the best one (shown first), after you looked them over.
+                            OutlinedButton(
+                                onClick = { sections[DuplicateSection.Maybe].orEmpty().forEach { g -> tick(g, g.others) } },
+                                enabled = !active && sections[DuplicateSection.Maybe].orEmpty().isNotEmpty(),
+                            ) { Text("Tick all but the best") }
                             TextButton(onClick = { ticked = emptySet() }, enabled = ticked.isNotEmpty()) { Text("Clear") }
                         }
                     }

@@ -100,9 +100,9 @@ private fun worseQuality(post: DuplicatePost, keep: DuplicatePost, rules: SongRu
     return post.format != keep.format || post.size * 100 < keep.size * 95
 }
 
-/** The same format at nearly the same size: a re-upload of the same track, so the older one can go. */
+/** The same format within a few percent of the size (a re-tag or re-cut of the same track): a re-upload, so the lesser one can go. */
 private fun reupload(post: DuplicatePost, keep: DuplicatePost) =
-    post.format == keep.format && abs(post.size - keep.size) <= keep.size * 0.02
+    post.format == keep.format && abs(post.size - keep.size) <= keep.size * 0.08
 
 /** A copy in General of a song already filed in a real topic: what's left when a move couldn't delete it. */
 private fun leftoverInGeneral(keep: DuplicatePost, other: DuplicatePost) =
