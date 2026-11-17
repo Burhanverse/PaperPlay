@@ -254,9 +254,11 @@ internal fun SettingsPage(
                 ChoiceRow(Look.entries, prefs.look(g), { it.name }, { prefs.setLook(g, it) })
             }
             // Wide screens lay the parts out two to a row instead of one long column.
-            if (isPhone) groups.forEach { part(it) } else androidx.compose.foundation.layout.FlowRow(
+            // The player bar's background has its own choice (transparent, card or glass) further down.
+            val listed = groups.filter { it != LookGroup.Player }
+            if (isPhone) listed.forEach { part(it) } else androidx.compose.foundation.layout.FlowRow(
                 Modifier.fillMaxWidth(), maxItemsInEachRow = 2,
-            ) { groups.forEach { g -> Column(Modifier.weight(1f)) { part(g) } } }
+            ) { listed.forEach { g -> Column(Modifier.weight(1f)) { part(g) } } }
             SectionLabel(if (isPhone) "Navigation bar" else "Sidebar")
             NavSettings(prefs)
             if (!isPhone) PlayerBarSettings(prefs)
@@ -610,11 +612,23 @@ private fun SettingsListDesktopPreview() = io.max.paperplay.ui.PreviewFrame(dark
     SettingsList(io.max.paperplay.ui.previewPrefs(), mutableListOf())
 }
 
+private enum class BarBackground(val label: String) { Transparent("Transparent"), Card("Card"), Glass("Glass") }
+
 /** Desktop player bar: background, corners and which buttons show. The Material or Glass look is chosen with the other parts above. */
 @Composable
 private fun PlayerBarSettings(prefs: UiPrefs) {
     SectionLabel("Player bar")
-    SwitchRow("Bar background", prefs.playerCard, prefs::putPlayerCard, null, "A solid card behind the bar; Glass always has one")
+    // Transparent lets the window's own background show through the bar; Card puts a solid panel behind it; Glass uses the Glass page settings.
+    val background = when {
+        prefs.look(LookGroup.Player) == Look.Glass -> BarBackground.Glass
+        prefs.playerCard -> BarBackground.Card
+        else -> BarBackground.Transparent
+    }
+    Text("Bar background", Modifier.padding(horizontal = 20.dp, vertical = 4.dp), style = MaterialTheme.typography.bodyLarge)
+    ChoiceRow(BarBackground.entries, background, { it.label }, { b ->
+        prefs.setLook(LookGroup.Player, if (b == BarBackground.Glass) Look.Glass else Look.Material)
+        prefs.putPlayerCard(b == BarBackground.Card)
+    })
     SwitchRow("Format in mini player", prefs.miniFormat, prefs::putMiniFormat, null, "Shows FLAC, Hi-Res or Dolby next to the controls")
     SliderRow("Bar corners: ${prefs.playerRadius.toInt()}%", prefs.playerRadius, 0f..100f, { prefs.putPlayerRadius(it) })
     listOf(
