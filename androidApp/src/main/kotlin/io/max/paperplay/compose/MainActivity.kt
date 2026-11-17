@@ -29,7 +29,7 @@ import java.io.File
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -98,7 +98,7 @@ class MainActivity : ComponentActivity() {
                 combine(s.scanner.progress, s.ready, s.error, s.activity) { scan, ready, error, activity -> arrayOf(scan, ready, error, activity) },
                 combine(s.enricher.progress, s.uploader.jobs, s.covers.progress, s.deleteQueue.jobs) { enrich, uploads, covers, deletes -> arrayOf(enrich, uploads, covers, deletes) },
             ) { v, w -> v to w }
-                .debounce(500)
+                .sample(1000)
                 .collect { (v, w) ->
                     val scan = v[0] as io.max.paperplay.core.app.ScanProgress?
                     val ready = v[1] as Boolean
@@ -124,41 +124,31 @@ class MainActivity : ComponentActivity() {
                         if (idleSince == 0L) idleSince = now
                         if (now - idleSince >= 5 * 60_000L) KeepAliveService.stop(applicationContext)
                     }
-                    // One line for each job that is running; the first with a known size gives the progress bar.
-                    val lines = buildList {
-                        scan?.let { add(it.text) }
-                        enrich?.let { add("Song info: ${it.done} of ${it.total}" + if (it.current.isNotBlank()) " - ${it.current}" else "") }
-                        if (open > 0) add("Uploading: ${uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done }} of ${uploads.size}")
-                        if (deleting > 0) add("Deleting: ${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Done }} of ${deletes.size}, ${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Skipped }} kept")
-                        covers?.let {
-                            if (it.total > 0) add("Missing covers: ${it.total - it.done} left of ${it.total}")
-                            if (it.lowTotal > 0) add("Low-quality covers: ${it.lowTotal - it.lowDone} left of ${it.lowTotal}")
+                    // Each running task is its own notification with its own bar; the service's own notification only counts them.
+                    val jobs = buildList {
+                        scan?.let { add(KeepAliveJob(1, "Library scan", it.text, it.fraction?.let { f -> (f * 1000).toInt() }, it.fraction?.let { 1000 })) }
+                        enrich?.let { add(KeepAliveJob(2, "Looking up song info", "${it.done} of ${it.total}" + if (it.current.isNotBlank()) " - ${it.current}" else "", if (it.total > 0) it.done else null, if (it.total > 0) it.total else null)) }
+                        if (open > 0) {
+                            val done = uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done }
+                            add(KeepAliveJob(3, "Uploading songs", "$done of ${uploads.size}", done, uploads.size))
                         }
-                        activity?.let { add(it) }
+                        if (deleting > 0) {
+                            val finished = deletes.count { it.status != io.max.paperplay.core.dupes.DeleteStatus.Queued && it.status != io.max.paperplay.core.dupes.DeleteStatus.Deleting }
+                            add(KeepAliveJob(4, "Deleting songs", "${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Done }} of ${deletes.size}, ${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Skipped }} kept", finished, deletes.size))
+                        }
+                        covers?.let {
+                            val total = it.total + it.lowTotal
+                            add(KeepAliveJob(5, "Loading covers", listOfNotNull(
+                                if (it.total > 0) "Missing: ${it.total - it.done} left of ${it.total}" else null,
+                                if (it.lowTotal > 0) "Low quality: ${it.lowTotal - it.lowDone} left of ${it.lowTotal}" else null,
+                            ).joinToString("\n"), if (total > 0) it.done + it.lowDone else null, if (total > 0) total else null))
+                        }
+                        activity?.let { add(KeepAliveJob(6, "Paper Play", it, null, null)) }
                     }
+                    KeepAliveService.updateJobs(applicationContext, jobs)
                     when {
                         error != null -> KeepAliveService.update(applicationContext, "Paper Play is running", error, null, null, false)
-                        lines.isNotEmpty() -> {
-                            val title = when {
-                                lines.size > 1 -> "Paper Play is working"
-                                scan != null -> scan.text
-                                enrich != null -> "Looking up song info"
-                                open > 0 -> "Uploading songs"
-                                deleting > 0 -> "Deleting songs"
-                                covers != null -> "Loading covers"
-                                else -> activity ?: "Paper Play is working"
-                            }
-                            val scanFraction = scan?.fraction
-                            val (progress, max) = when {
-                                scanFraction != null -> (scanFraction * 1000).toInt() to 1000
-                                enrich != null && enrich.total > 0 -> enrich.done to enrich.total
-                                open > 0 && uploads.isNotEmpty() -> uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done } to uploads.size
-                                deleting > 0 -> deletes.count { it.status != io.max.paperplay.core.dupes.DeleteStatus.Queued && it.status != io.max.paperplay.core.dupes.DeleteStatus.Deleting } to deletes.size
-                                covers != null && covers.total + covers.lowTotal > 0 -> (covers.done + covers.lowDone) to (covers.total + covers.lowTotal)
-                                else -> null to null
-                            }
-                            KeepAliveService.update(applicationContext, title, lines.joinToString("\n"), progress, max, progress == null)
-                        }
+                        jobs.isNotEmpty() -> KeepAliveService.update(applicationContext, "Paper Play is working", if (jobs.size == 1) "1 task running" else "${jobs.size} tasks running", null, null, false)
                         !ready -> KeepAliveService.update(applicationContext, "Paper Play is running", "Connecting to Telegram", null, null, true)
                         else -> KeepAliveService.update(applicationContext, "Paper Play is running", "Everything is up to date", null, null, false)
                     }

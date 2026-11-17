@@ -67,12 +67,34 @@ class KeepAliveService : Service() {
             val key = listOf(title, text, progress, max, indeterminate)
             val now = android.os.SystemClock.elapsedRealtime()
             synchronized(this) {
-                if (key == lastKey || now - lastNotify < 1000) return
+                if (key == lastKey || now - lastNotify < 700) return
                 lastKey = key
                 lastNotify = now
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.notify(NOTIFICATION, build(context, title, text, progress, max, indeterminate))
+        }
+
+        private const val JOB_BASE = 4720
+        private val postedJobs = HashSet<Int>()
+        private val lastJob = HashMap<Int, List<Any?>>()
+
+        /** Shows each running task as a separate notification and removes the ones that finished. */
+        fun updateJobs(context: Context, jobs: List<KeepAliveJob>) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            synchronized(this) {
+                val slots = jobs.map { it.slot }.toSet()
+                for (gone in postedJobs - slots) manager.cancel(JOB_BASE + gone)
+                postedJobs.retainAll(slots)
+                lastJob.keys.retainAll(slots)
+                for (j in jobs) {
+                    val key = listOf(j.title, j.text, j.progress, j.max)
+                    if (lastJob[j.slot] == key) continue
+                    lastJob[j.slot] = key
+                    manager.notify(JOB_BASE + j.slot, build(context, j.title, j.text, j.progress, j.max, j.progress == null))
+                    postedJobs += j.slot
+                }
+            }
         }
 
         /** Takes the ordinary progress notification away (the foreground service keeps its own). */
@@ -110,3 +132,6 @@ class KeepAliveService : Service() {
         }
     }
 }
+
+/** One task shown as its own notification: [slot] keeps it apart from the others, so each has its own progress bar. */
+class KeepAliveJob(val slot: Int, val title: String, val text: String, val progress: Int?, val max: Int?)

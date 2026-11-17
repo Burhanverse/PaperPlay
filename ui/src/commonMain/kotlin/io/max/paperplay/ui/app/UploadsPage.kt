@@ -203,9 +203,9 @@ internal fun UploadsPage(backend: CoreBackend) {
         if (jobs.isEmpty()) {
             Text(if (io.max.paperplay.ui.isPhone) "Nothing is uploading. Songs you choose, or share to Paper Play from another app, wait here." else "Nothing is uploading. Songs you choose, or drop onto the window while this page is open, wait here.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            Row(Modifier.padding(horizontal = 12.dp)) {
-                if (failed > 0) TextButton({ uploader.retryAll() }) { Text("Retry $failed failed") }
-                if (done > 0) TextButton({ uploader.clearFinished() }) { Text("Clear $done finished") }
+            Row(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (failed > 0) Button({ uploader.retryAll() }) { Text("Retry $failed failed") }
+                if (done > 0) androidx.compose.material3.FilledTonalButton({ uploader.clearFinished() }) { Text("Clear $done finished") }
             }
             if (paused) Text("Paused. Files being sent finish first.", Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             for (job in jobs) JobRow(job, { uploader.retry(job.id) }, { uploader.remove(job.id) })

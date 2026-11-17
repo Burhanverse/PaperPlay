@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.flow.conflate
 import io.max.paperplay.ui.state.GroupUi
 import io.max.paperplay.ui.state.LibraryUi
 import io.max.paperplay.ui.state.Load
@@ -176,6 +178,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             list.map { p -> GroupUi(p.id.toString(), p.name, "${p.count} songs", p.covers) }
         },
     ) { lib, playlists -> lib.copy(playlists = playlists) }
+        // Rebuilding every list for the whole library is heavy: after one result, newer ones wait (and merge) for a moment, which matters while a scan
+        // changes the library every second or two.
+        .conflate()
+        .transform { value -> emit(value); delay(1_200) }
         .catch { emit(LibraryUi(songs = Load.Error(it.message ?: "The library could not be read."))) }
         .flowOn(Dispatchers.Default)
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), LibraryUi())

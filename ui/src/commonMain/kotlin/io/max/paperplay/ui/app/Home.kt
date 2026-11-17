@@ -135,10 +135,10 @@ fun HomeScreen(
     }
     LazyColumn(Modifier.fillMaxSize().graphicsLayer { alpha = reveal }, contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name, message) }
-        if (ready && recentPlayed != null) item(key = "recent_played") { SongShelf(recentPlayed.title, recentPlayed.songs, currentId, actions) }
+        if (ready && recentPlayed != null) item(key = "recent_played") { Box(Modifier.staggerIn(0)) { SongShelf(recentPlayed.title, recentPlayed.songs, currentId, actions) } }
         if (ready && tileRows.isNotEmpty()) item {
             // Each column holds three tiles; two columns fill the screen and the rest wait a swipe away.
-            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(Modifier.staggerIn(1), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(tileRows) { column ->
                     Column(Modifier.fillParentMaxWidth(if (tileRows.size > 2) 0.46f else 0.485f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         column.forEach { (g, click) ->
@@ -156,7 +156,7 @@ fun HomeScreen(
             }
         }
         if (ready && home.mixes.isNotEmpty()) item {
-            Column {
+            Column(Modifier.staggerIn(2)) {
                 Section("Your daily mixes")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
                     items(home.mixes, key = { it.id }) { m -> MixCard(m) { onOpen(Detail.Mix(m.name, m.id, m.songs)) } }
@@ -166,7 +166,7 @@ fun HomeScreen(
             Text("Daily mixes appear as Paper Play learns your music.", Modifier.padding(16.dp, 20.dp, 16.dp, 0.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (ready && lib.playlists.isNotEmpty()) item {
-            Column {
+            Column(Modifier.staggerIn(3)) {
                 Section("Your playlists")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
                     items(lib.playlists, key = { it.id }) { g ->
@@ -180,7 +180,7 @@ fun HomeScreen(
         }
         // The main chat's topics and starred channels, apart from the playlists you made; swipe sideways for the rest.
         if (ready && telegram.isNotEmpty()) item {
-            Column {
+            Column(Modifier.staggerIn(4)) {
                 Section("From Telegram")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
                     items(telegram, key = { it.key }) { t ->
@@ -193,9 +193,9 @@ fun HomeScreen(
                 }
             }
         }
-        if (ready && recentAdded != null) item(key = "recent_added") { SongShelf(recentAdded.title, recentAdded.songs, currentId, actions) }
+        if (ready && recentAdded != null) item(key = "recent_added") { Box(Modifier.staggerIn(5)) { SongShelf(recentAdded.title, recentAdded.songs, currentId, actions) } }
         if (ready && moreCards.isNotEmpty()) item(key = "more_for_you") {
-            Column {
+            Column(Modifier.staggerIn(6)) {
                 Section("More for you")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
                     items(moreCards, key = { it.first }) { (title, art, list) ->
@@ -206,6 +206,21 @@ fun HomeScreen(
         }
     }
     }
+}
+
+/** A section slides up a little and fades in, one after another by [order], the first time it is shown; scrolling back does not replay it. */
+@Composable
+private fun Modifier.staggerIn(order: Int): Modifier {
+    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    var shown by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(reduce) }
+    val p = remember { androidx.compose.animation.core.Animatable(if (shown) 1f else 0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (shown) return@LaunchedEffect
+        kotlinx.coroutines.delay(order * 70L)
+        p.animateTo(1f, androidx.compose.animation.core.tween(450, easing = io.max.paperplay.ui.theme.Motion.Emphasized))
+        shown = true
+    }
+    return graphicsLayer { alpha = p.value; translationY = (1f - p.value) * 24.dp.toPx() }
 }
 
 private val homeMessages = listOf(
