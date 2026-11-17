@@ -93,6 +93,20 @@ fun HomeScreen(
             home.tiles.take((6 - size).coerceAtLeast(0)).forEach { c -> add(GroupUi(c.id, c.name, coverUris = listOf(c.coverUri)) to { onOpen(Detail.Songs(c.name, c.songs)) }) }
         }.chunked(3)
     }
+    // Recently played and Recently added stay as rows of songs. Every other shelf becomes one card on a single "More for you" row.
+    val recentPlayed = remember(home.shelves) { home.shelves.firstOrNull { it.title == "Recently played" } }
+    val recentAdded = remember(home.shelves) { home.shelves.firstOrNull { it.title == "Recently added" } }
+    val moreCards = remember(home.shelves) {
+        home.shelves.filter { it.title != "Recently played" && it.title != "Recently added" }.mapNotNull { sh ->
+            val all = (if (sh.kind == ShelfKindUi.Songs) sh.songs else sh.groups.flatMap { it.songs }).distinctBy { it.id }
+            if (all.isEmpty()) null else {
+                val withArt = all.filter { it.coverUri != null }
+                // A cover from inside the list, the same one all day.
+                val art = withArt.getOrNull(if (withArt.isEmpty()) 0 else (sh.title.hashCode() and 0x7fffffff) % withArt.size)?.coverUri
+                Triple(sh.title, art, all)
+            }
+        }
+    }
     // Until the library and the plan are ready the page shows the shape of what is coming, so it looks loaded at once.
     val planning = songs.isNotEmpty() && home.tiles.isEmpty() && home.shelves.isEmpty()
     // A plan that never comes (nothing to plan) must not keep the placeholders for good.
@@ -118,6 +132,7 @@ fun HomeScreen(
     }
     LazyColumn(Modifier.fillMaxSize().graphicsLayer { alpha = reveal }, contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name, message) }
+        if (ready && recentPlayed != null) item(key = "recent_played") { SongShelf(recentPlayed.title, recentPlayed.songs, currentId, actions) }
         if (ready && tileRows.isNotEmpty()) item {
             // Each column holds three tiles; two columns fill the screen and the rest wait a swipe away.
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -175,17 +190,13 @@ fun HomeScreen(
                 }
             }
         }
-        items(if (ready) home.shelves else emptyList(), key = { it.title }) { shelf ->
-            when (shelf.kind) {
-                ShelfKindUi.Songs -> SongShelf(shelf.title, shelf.songs, currentId, actions)
-                else -> Column {
-                    Section(shelf.title)
-                    LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        items(shelf.groups, key = { it.id }) { g ->
-                            MediaCard(g.coverUri, g.id, g.name, g.subtitle, circle = shelf.kind == ShelfKindUi.Artists) {
-                                onOpen(if (shelf.kind == ShelfKindUi.Albums) Detail.Album(g.name) else Detail.Artist(g.name))
-                            }
-                        }
+        if (ready && recentAdded != null) item(key = "recent_added") { SongShelf(recentAdded.title, recentAdded.songs, currentId, actions) }
+        if (ready && moreCards.isNotEmpty()) item(key = "more_for_you") {
+            Column {
+                Section("More for you")
+                LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    items(moreCards, key = { it.first }) { (title, art, list) ->
+                        MediaCard(art, "more:$title", title, "${list.size} songs") { onOpen(Detail.Songs(title, list)) }
                     }
                 }
             }
