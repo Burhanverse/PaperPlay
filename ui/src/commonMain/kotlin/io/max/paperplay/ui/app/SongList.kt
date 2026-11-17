@@ -134,9 +134,11 @@ fun SongList(
     var reverse by remember(listKey) { mutableStateOf(if (savedSort != null) savedSort.substringAfter(':') == "true" else uiPrefs?.songSortReverse ?: false) }
     var selection by remember { mutableStateOf(Selection()) }
     var sortSheet by remember { mutableStateOf(false) }
+    var onlyUnreachable by remember(listKey) { mutableStateOf(false) }
+    val anyUnreachable = remember(songs) { songs.any { it.botCantReach } }
 
-    val shown = remember(songs, query, sort, reverse, sortable) {
-        val found = filterSongs(songs, query)
+    val shown = remember(songs, query, sort, reverse, sortable, onlyUnreachable) {
+        val found = filterSongs(if (onlyUnreachable) songs.filter { it.botCantReach } else songs, query)
         if (sortable) sortSongs(found, sort, reverse) else found
     }
     val rowActions = remember(actions, onRemove) { actions.rowActions(onRemove) }
@@ -340,6 +342,14 @@ fun SongList(
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Start,
                             )
                         }
+                    }
+                    if (anyUnreachable) {
+                        Text("Filter", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp))
+                        androidx.compose.material3.FilterChip(
+                            selected = onlyUnreachable,
+                            onClick = { onlyUnreachable = !onlyUnreachable; sortSheet = false },
+                            label = { Text("Only songs the bot can't reach") },
+                        )
                     }
                     Spacer(Modifier.height(16.dp))
                 }

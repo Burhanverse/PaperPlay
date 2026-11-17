@@ -25,6 +25,8 @@ data class SongUi(
     val languages: List<String> = emptyList(),
     /** Set on a repeat post of a file the library lists once: "chat:message" of that post, so each row of a list has its own key. */
     val copyKey: String? = null,
+    /** Saved only as an account song: no bot can read the post, so it plays through the user account. */
+    val botCantReach: Boolean = false,
 )
 
 enum class RepeatUi { Off, All, One }

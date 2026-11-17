@@ -1351,6 +1351,7 @@ internal fun Song.toUi(): SongUi {
         languages = io.max.paperplay.core.metadata.languagesOfText(title, artist, album),
         addedAt = date, qualityLabel = label, qualityRank = if (lossless) 100_000 + (bit_depth ?: 16).toInt() * 1000 else kbps.toInt(),
         lossless = lossless, favorite = favorite, pinned = pinned, offline = size > 0 && cached_bytes >= size,
+        botCantReach = remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE,
     )
 }
 

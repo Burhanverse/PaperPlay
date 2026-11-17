@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.ui.draw.alpha
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.DropdownMenu
@@ -80,7 +82,7 @@ fun SongRow(
 
     BoxWithConstraints(modifier.fillMaxWidth()) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().alpha(if (song.botCantReach) 0.55f else 1f),
         shape = io.max.paperplay.ui.app.appShape(16.dp),
         color = containerColor,
         tonalElevation = if (current) 3.dp else 1.dp,
@@ -161,7 +163,15 @@ fun SongRow(
                             modifier = Modifier.size(14.dp),
                         )
                     }
-                    if (detail.isNotEmpty()) Text(
+                    if (song.botCantReach) {
+                        AppIcon(
+                            imageVector = Icons.Rounded.Warning,
+                            contentDescription = "Bot can't reach this song",
+                            tint = scheme.error,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text("Bot can't reach", style = MaterialTheme.typography.labelSmall, color = scheme.error, maxLines = 1, softWrap = false)
+                    } else if (detail.isNotEmpty()) Text(
                         text = detail,
                         style = MaterialTheme.typography.labelSmall,
                         color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
