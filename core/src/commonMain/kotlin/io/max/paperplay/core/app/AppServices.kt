@@ -8,7 +8,6 @@ import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdConfig
 import io.max.paperplay.core.telegram.TdError
 import io.max.paperplay.core.telegram.TdRuntime
-import io.max.paperplay.core.dupes.asCaller
 import io.max.paperplay.core.telegram.request
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -383,7 +382,7 @@ class AppServices(
             scope, caller, bot, acct, io.max.paperplay.core.dupes.LibraryDeleteStore(library.repo, rules),
             rules, { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) },
             log = { line -> io.max.paperplay.player.PlayLog.log("delete", line); activityLog("Delete", line) },
-            extraBots = { botPool.readyBots().map { (_, c) -> c.asCaller() } },
+            extraBots = { botPool.tokens().map { t -> io.max.paperplay.core.dupes.BotApi({ t }, io.max.paperplay.core.dupes.defaultHttpPoster()) } },
         )
     }
 

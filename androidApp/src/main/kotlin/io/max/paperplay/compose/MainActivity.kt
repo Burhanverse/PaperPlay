@@ -96,19 +96,25 @@ class MainActivity : ComponentActivity() {
             var idleSince = 0L
             combine(
                 combine(s.scanner.progress, s.ready, s.error, s.activity) { scan, ready, error, activity -> arrayOf(scan, ready, error, activity) },
-                combine(s.enricher.progress, s.uploader.jobs, s.covers.progress) { enrich, uploads, covers -> Triple(enrich, uploads, covers) },
+                combine(s.enricher.progress, s.uploader.jobs, s.covers.progress, s.deleteQueue.jobs) { enrich, uploads, covers, deletes -> arrayOf(enrich, uploads, covers, deletes) },
             ) { v, w -> v to w }
-                .debounce(1500)
+                .debounce(500)
                 .collect { (v, w) ->
                     val scan = v[0] as io.max.paperplay.core.app.ScanProgress?
                     val ready = v[1] as Boolean
                     val error = v[2] as String?
                     val activity = v[3] as String?
-                    val enrich = w.first
-                    val uploads = w.second
-                    val covers = w.third
+                    @Suppress("UNCHECKED_CAST")
+                    val enrich = w[0] as io.max.paperplay.core.app.EnrichProgress?
+                    @Suppress("UNCHECKED_CAST")
+                    val uploads = w[1] as List<io.max.paperplay.core.app.UploadJob>
+                    @Suppress("UNCHECKED_CAST")
+                    val covers = w[2] as io.max.paperplay.core.app.CoverProgress?
+                    @Suppress("UNCHECKED_CAST")
+                    val deletes = w[3] as List<io.max.paperplay.core.dupes.DeleteJob>
+                    val deleting = deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Queued || it.status == io.max.paperplay.core.dupes.DeleteStatus.Deleting }
                     val open = uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Queued || it.status == io.max.paperplay.core.app.UploadStatus.Uploading }
-                    val busy = scan != null || activity != null || enrich != null || open > 0 || covers != null || !ready
+                    val busy = scan != null || activity != null || enrich != null || open > 0 || deleting > 0 || covers != null || !ready
                     val now = System.currentTimeMillis()
                     if (busy) {
                         idleSince = 0L
@@ -123,6 +129,7 @@ class MainActivity : ComponentActivity() {
                         scan?.let { add(it.text) }
                         enrich?.let { add("Song info: ${it.done} of ${it.total}" + if (it.current.isNotBlank()) " - ${it.current}" else "") }
                         if (open > 0) add("Uploading: ${uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done }} of ${uploads.size}")
+                        if (deleting > 0) add("Deleting: ${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Done }} of ${deletes.size}, ${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Skipped }} kept")
                         covers?.let {
                             if (it.total > 0) add("Missing covers: ${it.total - it.done} left of ${it.total}")
                             if (it.lowTotal > 0) add("Low-quality covers: ${it.lowTotal - it.lowDone} left of ${it.lowTotal}")
@@ -137,6 +144,7 @@ class MainActivity : ComponentActivity() {
                                 scan != null -> scan.text
                                 enrich != null -> "Looking up song info"
                                 open > 0 -> "Uploading songs"
+                                deleting > 0 -> "Deleting songs"
                                 covers != null -> "Loading covers"
                                 else -> activity ?: "Paper Play is working"
                             }
@@ -145,6 +153,7 @@ class MainActivity : ComponentActivity() {
                                 scanFraction != null -> (scanFraction * 1000).toInt() to 1000
                                 enrich != null && enrich.total > 0 -> enrich.done to enrich.total
                                 open > 0 && uploads.isNotEmpty() -> uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done } to uploads.size
+                                deleting > 0 -> deletes.count { it.status != io.max.paperplay.core.dupes.DeleteStatus.Queued && it.status != io.max.paperplay.core.dupes.DeleteStatus.Deleting } to deletes.size
                                 covers != null && covers.total + covers.lowTotal > 0 -> (covers.done + covers.lowDone) to (covers.total + covers.lowTotal)
                                 else -> null to null
                             }

@@ -90,7 +90,7 @@ class DeleteQueue(
     private val pause: suspend (millis: Long) -> Unit = { delay(it) },
     private val log: (String) -> Unit = {},
     /** Every extra bot that is running; they are tried last, for posts the main bot and the account did not remove. */
-    private val extraBots: () -> List<TdCaller> = { emptyList() },
+    private val extraBots: () -> List<BotDeleter> = { emptyList() },
 ) {
     private val _jobs = MutableStateFlow<List<DeleteJob>>(emptyList())
 
@@ -387,35 +387,16 @@ class DeleteQueue(
      */
     private suspend fun deletePostsBest(chat: Long, allIds: List<Long>, onGone: suspend (Long) -> Unit = {}): List<Long> {
         var left = deletePostsViaMainAndAccount(chat, allIds, onGone)
-        // Last step: the extra bots. The bot that owns a post (and any other admin bot) can remove it where the main bot could not.
-        // TDLib answers ok for posts a bot never saw, so each post is checked afterwards: gone when that bot can no longer fetch it.
-        for (caller in extraBots()) {
+        // Last step: the extra bots, by the HTTP Bot API. Telegram's answer for each post is the only proof: deleted now, or refused. A bot that
+        // cannot fetch a post says "not found" for it as well, so "not found" is never taken as gone here.
+        for (extra in extraBots()) {
             if (left.isEmpty()) break
-            val tried = left
-            try {
-                for (part in tried.chunked(BATCH)) {
-                    caller.call(request("deleteMessages") { put("chat_id", chat); put("message_ids", JsonArray(part.map { JsonPrimitive(it) })); put("revoke", true) })
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log("An extra bot could not delete: ${e.message ?: e::class.simpleName}")
-            }
             val still = ArrayList<Long>()
-            for (id in tried) {
-                val gone = try {
-                    caller.call(request("getMessage") { put("chat_id", chat); put("message_id", id) })
-                    false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: TdError) {
-                    e.code == 404 || e.message?.contains("not found", ignoreCase = true) == true
-                } catch (e: Exception) {
-                    false
-                }
-                if (gone) onGone(id) else still += id
+            for (id in left) {
+                val why = extra.deleteOne(chat, id)
+                if (why == null) onGone(id) else { still += id; if (why != NOT_FOUND) lastRefusal = why }
             }
-            if (still.size < tried.size) log("An extra bot removed ${tried.size - still.size} of ${tried.size}")
+            if (still.size < left.size) log("An extra bot removed ${left.size - still.size} of ${left.size}")
             left = still
         }
         return left

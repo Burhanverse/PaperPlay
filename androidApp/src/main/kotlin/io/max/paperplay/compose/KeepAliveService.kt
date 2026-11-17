@@ -67,7 +67,7 @@ class KeepAliveService : Service() {
             val key = listOf(title, text, progress, max, indeterminate)
             val now = android.os.SystemClock.elapsedRealtime()
             synchronized(this) {
-                if (key == lastKey || now - lastNotify < 3000) return
+                if (key == lastKey || now - lastNotify < 1000) return
                 lastKey = key
                 lastNotify = now
             }
