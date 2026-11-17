@@ -31,6 +31,8 @@ class TdStreamSource(
     private val td: () -> TdClient?,
     val song: Song,
     private val windowSeconds: Long = DEFAULT_WINDOW_SECONDS,
+    /** Other clients to try when [td] has none or cannot read the post: the bots, for songs that were added through an account. */
+    private val others: () -> List<TdClient> = { emptyList() },
 ) : StreamSource {
     override val size: Long get() = song.size
 
@@ -52,7 +54,10 @@ class TdStreamSource(
     private class Block(val start: Long, val data: ByteArray)
 
     /** TDLib file ids do not outlive a session, so the file is looked up through its message (with offline fallback). */
-    private suspend fun client(): TdClient = td() ?: throw TdError(0, "Not logged in")
+    /** The client that last found this song's post; every later call (downloads, cancel) goes through it. */
+    @Volatile private var chosen: TdClient? = null
+
+    private suspend fun client(): TdClient = chosen ?: td() ?: throw TdError(0, "Not logged in")
 
     @Volatile private var loggedFile = false
 
@@ -94,25 +99,37 @@ class TdStreamSource(
     /** Looks the file up (getMessage, falling back to getRemoteFile when offline); a deleted post throws 404. */
     suspend fun resolve() {
         if (fileId != 0 && (completed || path.isNotEmpty())) return
-        val c = client()
-        val file = try {
-            val message = c.call(request("getMessage") {
-                put("chat_id", song.chat_id)
-                put("message_id", song.message_id)
-            })
-            fileOfMessage(message) ?: throw TdError(404, "Message holds no audio")
-        } catch (e: TdError) {
-            if (e.code == 404 || song.remote_id.isEmpty()) throw e
-            // A file id is tied to one bot. When it is not valid for this one Telegram says "Wrong padding" or the like, which hides
-            // the real reason; the first error (message not found, chat not found) is the one worth showing.
-            try {
-                c.call(request("getRemoteFile") { put("remote_file_id", song.remote_id) })
-            } catch (second: TdError) {
-                throw TdError(e.code, e.message)
-            }
+        val primary = chosen ?: td()
+        // A song added through an account has no file id a bot could use, but a bot that sits in the chat can read the post itself.
+        val candidates = (listOfNotNull(primary) + others()).distinct()
+        if (candidates.isEmpty()) throw TdError(0, "Not logged in")
+        var first: TdError? = null
+        for (c in candidates) {
+            val file = try { lookup(c) } catch (e: TdError) { if (first == null) first = e; continue }
+            if (c !== primary) chosen = c
+            applyFile(file)
+            if (fileId == 0) throw TdError(0, "No file id")
+            return
         }
-        applyFile(file)
-        if (fileId == 0) throw TdError(0, "No file id")
+        throw first ?: TdError(0, "Song not found")
+    }
+
+    /** The file of this song as [c] sees it: through the message, else (offline) through its remote id. */
+    private suspend fun lookup(c: TdClient): JsonObject = try {
+        val message = c.call(request("getMessage") {
+            put("chat_id", song.chat_id)
+            put("message_id", song.message_id)
+        })
+        fileOfMessage(message) ?: throw TdError(404, "Message holds no audio")
+    } catch (e: TdError) {
+        if (e.code == 404 || song.remote_id.isEmpty()) throw e
+        // A file id is tied to one bot. When it is not valid for this one Telegram says "Wrong padding" or the like, which hides
+        // the real reason; the first error (message not found, chat not found) is the one worth showing.
+        try {
+            c.call(request("getRemoteFile") { put("remote_file_id", song.remote_id) })
+        } catch (second: TdError) {
+            throw TdError(e.code, e.message)
+        }
     }
 
     private fun windowBytes(offset: Long, length: Int): Long {
@@ -311,6 +328,8 @@ class TrackResolver(
     private val accountTd: () -> TdClient? = { null },
     /** The client of an extra bot by its id, for songs only that bot can read. */
     private val botTd: (Long) -> TdClient? = { null },
+    /** Every bot that is running, the main one first: they read the posts of songs that were added through an account. */
+    private val botClients: () -> List<TdClient> = { emptyList() },
 ) {
     constructor(td: () -> TdClient?) : this(td, TdStreamSource.DEFAULT_WINDOW_SECONDS)
     constructor(td: () -> TdClient?, accountTd: () -> TdClient?) : this(td, TdStreamSource.DEFAULT_WINDOW_SECONDS, accountTd)
@@ -324,7 +343,8 @@ class TrackResolver(
             owner != null -> ({ botTd(owner) ?: td() })
             else -> td
         }
-        val fresh = TdStreamSource(client, if (owner != null) song.copy(remote_id = plainRemote(song.remote_id)) else song, windowSeconds)
+        val others: () -> List<TdClient> = if (song.remote_id == ACCOUNT_REMOTE) botClients else ({ emptyList() })
+        val fresh = TdStreamSource(client, if (owner != null) song.copy(remote_id = plainRemote(song.remote_id)) else song, windowSeconds, others)
         sources.update { it + (song.unique_id to (it[song.unique_id] ?: fresh)) }
         return sources.value.getValue(song.unique_id)
     }

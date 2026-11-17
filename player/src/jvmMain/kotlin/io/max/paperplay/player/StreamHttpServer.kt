@@ -28,7 +28,14 @@ class StreamHttpServer : AutoCloseable {
         return "http://127.0.0.1:${server.address.port}/$key"
     }
 
-    private fun handle(ex: HttpExchange) = ex.use {
+    private fun handle(ex: HttpExchange) = try { serve(ex) } catch (t: Throwable) {
+        // A song that cannot be read must give the player an error, not a closed connection with nothing in it.
+        PlayLog.log("stream", "${ex.requestURI.path.take(40)}: ${t::class.simpleName}: ${t.message?.take(160)}")
+        runCatching { ex.sendResponseHeaders(502, -1) }
+        runCatching { ex.close() }
+    }
+
+    private fun serve(ex: HttpExchange) = ex.use {
         val source = sources[ex.requestURI.path.removePrefix("/")]
         val head = ex.requestMethod == "HEAD"
         if (source == null || (!head && ex.requestMethod != "GET")) {

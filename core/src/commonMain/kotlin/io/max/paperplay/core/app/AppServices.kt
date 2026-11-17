@@ -331,6 +331,7 @@ class AppServices(
     val indexCloud: io.max.paperplay.core.account.IndexCloud by lazy { io.max.paperplay.core.account.IndexCloud(account, chatIndex, library) }
     val resolver = TrackResolver(
         { client }, TdStreamSource.DEFAULT_WINDOW_SECONDS, { (account as? io.max.paperplay.core.account.UserSession)?.streamClient() }, { id -> botPool.clientOf(id) },
+        { listOfNotNull(client) + botPool.readyBots().map { it.second } },
     )
     val covers = CoverService(
         platform.dataDir,
