@@ -393,6 +393,9 @@ internal fun SettingsPage(
                 val exclusive by backend.exclusiveOutput.collectAsState()
                 SwitchRow("Exclusive output (bit-perfect)", exclusive, backend::setExclusiveOutput, Icons.Rounded.GraphicEq,
                     "mpv engine only. Takes the sound device for itself so the samples reach it unchanged, with no equalizer or volume change. Other apps are silent meanwhile")
+                var taskbar by remember { mutableStateOf(backend.taskbarButtons()) }
+                SwitchRow("Taskbar player buttons", taskbar, { taskbar = it; backend.setTaskbarButtons(it) }, Icons.Rounded.GraphicEq,
+                    "Previous, play or pause and next under the taskbar preview of the window. Restart to apply")
                 var profileOpen by remember { mutableStateOf(false) }
                 val profile by backend.correctionProfile.collectAsState()
                 SettingsRow("Earphone correction profile", icon = Icons.Rounded.Equalizer,

@@ -571,6 +571,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
     fun setPcEngine(engine: String) { services.platform.settings.put("pc_engine", engine) }
 
+    /** PC only: previous, play or pause and next under the taskbar preview. On unless switched off. */
+    fun taskbarButtons(): Boolean = services.platform.settings.get("taskbar_buttons") != "off"
+    fun setTaskbarButtons(on: Boolean) { services.platform.settings.put("taskbar_buttons", if (on) "on" else "off") }
+
     /** PC only (mpv engine): exclusive output for bit-perfect playback. */
     val exclusiveOutput = MutableStateFlow(repo.pref("pc_exclusive") == "true")
 
