@@ -150,7 +150,7 @@ fun WindowTint(color: Color) {
 
 /** The desktop card: rounded, a shade above the page background. */
 @Composable
-fun Modifier.deskCard(): Modifier = partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(16.dp))
+fun Modifier.deskCard(): Modifier = partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(16.dp, CornerArea.Panels))
 
 @Composable
 fun Sidebar(

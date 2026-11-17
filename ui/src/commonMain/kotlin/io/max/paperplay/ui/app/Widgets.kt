@@ -41,7 +41,7 @@ import io.max.paperplay.ui.components.CoverImage
 fun PillField(value: String, onChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     Row(
-        modifier.fillMaxWidth().height(44.dp).clip(appShape(22.dp)).background(scheme.surfaceContainerHigh).padding(start = 12.dp, end = 4.dp),
+        modifier.fillMaxWidth().height(44.dp).clip(appShape(22.dp, CornerArea.Chips)).background(scheme.surfaceContainerHigh).padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppIcon(Icons.Rounded.Search, null, Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
@@ -66,7 +66,7 @@ fun PillField(value: String, onChange: (String) -> Unit, hint: String, modifier:
 /** Outlined chips; the selected one is filled with the tonal colour. */
 @Composable
 fun ChipRow(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = appShape(12.dp, CornerArea.Chips)
     Row(
         modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -92,7 +92,7 @@ fun CoverGrid(uris: List<String?>, key: String, size: Dp, radius: Dp, modifier: 
     if (real.size < 4) {
         CoverImage(real.firstOrNull(), key, modifier, size, radius)
     } else {
-        Column(modifier.size(size).clip(RoundedCornerShape(radius))) {
+        Column(modifier.size(size).clip(appShape(radius, CornerArea.Covers))) {
             for (r in 0..1) Row { for (c in 0..1) CoverImage(real[r * 2 + c], "$key$r$c", size = size / 2, radius = 0.dp) }
         }
     }

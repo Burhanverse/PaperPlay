@@ -124,7 +124,7 @@ fun ColorPickerDialog(title: String, initial: Color, onPick: (Color) -> Unit, on
     val current = hsvToColor(h, s, v)
     AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = overlayRim(RoundedCornerShape(28.dp)), shape = RoundedCornerShape(28.dp), containerColor = overlayColor(),
+        modifier = overlayRim(appShape(28.dp, CornerArea.Dialogs)), shape = appShape(28.dp, CornerArea.Dialogs), containerColor = overlayColor(),
         title = { Text(title) },
         text = {
             Column {

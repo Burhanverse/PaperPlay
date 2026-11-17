@@ -415,7 +415,7 @@ internal fun LanConnectionContent(ui: LanUi, a: LanActions) {
 internal fun LanCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
-            .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(20.dp))
+            .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(20.dp))
             .padding(vertical = 8.dp),
     ) {
         Text(
@@ -547,7 +547,7 @@ internal fun LanTextDialog(
     val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = overlayRim(RoundedCornerShape(28.dp)), shape = RoundedCornerShape(28.dp), containerColor = overlayColor(),
+        modifier = overlayRim(appShape(28.dp, CornerArea.Dialogs)), shape = appShape(28.dp, CornerArea.Dialogs), containerColor = overlayColor(),
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

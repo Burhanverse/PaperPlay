@@ -406,7 +406,7 @@ private fun SongInfoDialog(song: SongUi, onDismiss: () -> Unit) {
     ).filter { it.second != null }
     AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = overlayRim(RoundedCornerShape(28.dp)), shape = RoundedCornerShape(28.dp), containerColor = overlayColor(),
+        modifier = overlayRim(appShape(28.dp, CornerArea.Dialogs)), shape = appShape(28.dp, CornerArea.Dialogs), containerColor = overlayColor(),
         confirmButton = { TextButton(onDismiss) { Text("Close") } },
         title = { Text(song.title) },
         text = {
@@ -766,16 +766,11 @@ private fun DetailSection(title: String, rows: List<Pair<String, String>>) {
     }
 }
 
-/** PC (mpv engine): one switch for untouched, exclusive output. The equalizer and bass keep their settings and come back when it is off. */
+/** PC (mpv engine): one switch for untouched, exclusive output, drawn like the Equalizer switch under it. The equalizer and bass keep their settings and come back when it is off. */
 @Composable
 internal fun BitPerfectRow(backend: PlayerControls) {
     if (!backend.hasBass || io.max.paperplay.ui.isPhone) return
     val on by backend.bitPerfect.collectAsState()
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("Bit-perfect")
-            Text("Plays the file untouched through exclusive output. The equalizer and bass are bypassed, and other apps go quiet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        androidx.compose.material3.Switch(on, { backend.setBitPerfect(it) })
-    }
+    SwitchRow("Bit-perfect", on, { backend.setBitPerfect(it) }, io.max.paperplay.ui.components.TrueAudioIcon,
+        "Plays the file untouched through exclusive output. The equalizer and bass are bypassed, and other apps go quiet.")
 }

@@ -142,7 +142,7 @@ fun HomeScreen(
                     Column(Modifier.fillParentMaxWidth(if (tileRows.size > 2) 0.46f else 0.485f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         column.forEach { (g, click) ->
                             Row(
-                                Modifier.fillMaxWidth().height(56.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp))
+                                Modifier.fillMaxWidth().height(56.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, appShape(12.dp))
                                     .clickable(onClick = click),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {

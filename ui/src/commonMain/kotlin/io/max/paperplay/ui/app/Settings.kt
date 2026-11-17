@@ -159,7 +159,7 @@ private fun SettingsList(prefs: UiPrefs, stack: MutableList<String>) {
         Spacer(Modifier.height(12.dp))
         if (q.isEmpty()) {
             Row(
-                Modifier.fillMaxWidth().padding(bottom = 12.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(28.dp))
+                Modifier.fillMaxWidth().padding(bottom = 12.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(28.dp))
                     .clickableRow { stack.add("profile") }.padding(horizontal = 20.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -230,7 +230,12 @@ internal fun SettingsPage(
             }
             SectionLabel("Display")
             BackgroundSettings(prefs)
-            SliderRow("Corner radius: ${prefs.cornerRadius.toInt()}%", prefs.cornerRadius, 0f..100f, { prefs.putCornerRadius(it) })
+            SectionLabel("Corners")
+            Text("Each part has its own corner size. The first slider sets them all, the sidebar and the player bar too; the sidebar and bar sliders are further down.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SliderRow("All corners: ${prefs.cornerRadius.toInt()}%", prefs.cornerRadius, 0f..100f, { prefs.putCornerRadius(it) })
+            for (a in CornerArea.entries.filter { !isPhone || it != CornerArea.Panels }) {
+                SliderRow("${a.label}: ${prefs.radius(a).toInt()}%", prefs.radius(a), 0f..100f, { prefs.putRadius(a, it) })
+            }
             SectionLabel("Look")
             Text("Pick Material 3 or glass for each part, or all at once.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             SectionLabel("All parts")

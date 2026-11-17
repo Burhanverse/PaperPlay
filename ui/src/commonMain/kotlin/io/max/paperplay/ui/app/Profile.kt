@@ -92,7 +92,7 @@ fun ProfileScreen(
         item {
             Column(
                 Modifier.padding(horizontal = 16.dp).fillMaxWidth()
-                    .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(36.dp))
+                    .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(36.dp))
                     .clickable { onSettings("profile") }
                     .padding(vertical = 40.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -142,7 +142,7 @@ private fun AboutCard(updates: io.max.paperplay.core.update.UpdateService, onOpe
     val available = (state as? io.max.paperplay.core.update.UpdateState.Available)?.release?.version
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(28.dp))
+            Modifier.fillMaxWidth().partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(28.dp))
                 .clickable(onClickLabel = "Open About", onClick = onOpen).padding(20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -164,7 +164,7 @@ private fun AboutCard(updates: io.max.paperplay.core.update.UpdateService, onOpe
 @Composable
 private fun Stat(icon: ImageVector, n: Int, label: String, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        modifier.partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(32.dp))
+        modifier.partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(32.dp))
             .clickable(onClick = onClick).padding(vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -185,7 +185,7 @@ private fun ProfileSection(
     var open by androidx.compose.runtime.remember(key) { androidx.compose.runtime.mutableStateOf(defaultOpen) }
     Column(
         Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()
-            .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(28.dp))
+            .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(28.dp))
             .animateContentSize(),
     ) {
         val state = if (open) "Expanded" else "Collapsed"

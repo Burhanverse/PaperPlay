@@ -580,7 +580,7 @@ private fun PlaylistPicker(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = overlayRim(RoundedCornerShape(28.dp)), shape = RoundedCornerShape(28.dp), containerColor = overlayColor(),
+        modifier = overlayRim(appShape(28.dp, CornerArea.Dialogs)), shape = appShape(28.dp, CornerArea.Dialogs), containerColor = overlayColor(),
         confirmButton = { TextButton(onNew) { Text("New playlist") } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
         title = { Text("Add to playlist") },
@@ -600,7 +600,7 @@ private fun NameDialog(title: String, onDone: (String) -> Unit, onDismiss: () ->
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = overlayRim(RoundedCornerShape(28.dp)), shape = RoundedCornerShape(28.dp), containerColor = overlayColor(),
+        modifier = overlayRim(appShape(28.dp, CornerArea.Dialogs)), shape = appShape(28.dp, CornerArea.Dialogs), containerColor = overlayColor(),
         confirmButton = { TextButton({ onDone(name) }) { Text("Create") } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
         title = { Text(title) },

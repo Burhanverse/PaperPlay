@@ -258,7 +258,7 @@ internal fun FormatChip(text: String) {
     Box(
         modifier = Modifier
             .height(16.dp)
-            .clip(io.max.paperplay.ui.app.appShape(5.dp))
+            .clip(io.max.paperplay.ui.app.appShape(5.dp, io.max.paperplay.ui.app.CornerArea.Chips))
             .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f))
             .padding(horizontal = 5.dp),
         contentAlignment = Alignment.Center,
@@ -321,7 +321,7 @@ fun SongMenu(
         if (open) DropdownMenu(
             expanded = true,
             onDismissRequest = { open = false },
-            modifier = io.max.paperplay.ui.app.overlayRim(RoundedCornerShape(20.dp)),
+            modifier = io.max.paperplay.ui.app.overlayRim(io.max.paperplay.ui.app.appShape(20.dp, io.max.paperplay.ui.app.CornerArea.Dialogs)),
             shape = RoundedCornerShape(20.dp),
             containerColor = io.max.paperplay.ui.app.overlayColor(),
         ) {

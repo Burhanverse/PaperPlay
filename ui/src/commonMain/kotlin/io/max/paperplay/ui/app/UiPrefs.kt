@@ -51,6 +51,15 @@ enum class LookGroup(val label: String, val hint: String) {
 }
 enum class Look { Material, Glass }
 
+/** Parts whose corners have their own size. The sidebar and the player bar already have theirs. */
+enum class CornerArea(val label: String, val hint: String) {
+    Panels("Page panels", "The big cards on desktop: the page and the playing panel"),
+    Cards("Cards and rows", "Tiles, list rows and settings cards"),
+    Covers("Covers", "Album and playlist art everywhere"),
+    Chips("Chips and tags", "Format tags, filter chips and the search field"),
+    Dialogs("Dialogs and menus", "Anything that opens over a page"),
+}
+
 class AccentOption(val id: String, val label: String, val color: Int)
 
 val accentOptions = listOf(
@@ -179,6 +188,14 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
 
     val cornerScale: Float get() = (cornerRadius / 100f).coerceIn(0f, 1f)
 
+    /** Corner size per area, 0..100. An area never set follows the old single corner setting. */
+    private val radii = mutableStateMapOf<CornerArea, Float>().also { m ->
+        for (a in CornerArea.entries) read("radius_${a.name.lowercase()}")?.toFloatOrNull()?.let { m[a] = it.coerceIn(0f, 100f) }
+    }
+    fun radius(a: CornerArea): Float = radii[a] ?: cornerRadius
+    fun cornerScale(a: CornerArea): Float = (radius(a) / 100f).coerceIn(0f, 1f)
+    fun putRadius(a: CornerArea, v: Float) { radii[a] = v; write("radius_${a.name.lowercase()}", "$v") }
+
     private val glass0 = runCatching { Json.parseToJsonElement(read("glass_style").orEmpty()).jsonObject }.getOrNull()
     var glass by mutableStateOf(GlassStyle().let { d ->
         fun bool(k: String, def: Boolean) = (glass0?.get(k) as? JsonPrimitive)?.booleanOrNull ?: def
@@ -233,9 +250,12 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
     fun putReduceMotion(on: Boolean) { reduceMotion = on; write("reduce_motion", "$on") }
     fun setLook(g: LookGroup, l: Look) { looks[g] = l; write("look_${g.name.lowercase()}", l.name.lowercase()) }
 
+    /** One value for every area, the sidebar and the player bar. */
     fun putCornerRadius(value: Float) {
         cornerRadius = value
         write("nav_radius", "$value")
+        for (a in CornerArea.entries) putRadius(a, value)
+        putPlayerRadius(value)
         setNav(bar = value, selection = value)
     }
 
@@ -295,8 +315,8 @@ fun glassLook(group: LookGroup): Boolean = LocalUiPrefs.current?.look(group) == 
 
 /** Scaled rounded corner shape based on the unified corner radius preference setting. */
 @Composable
-fun appShape(base: Dp): RoundedCornerShape {
-    val scale = LocalUiPrefs.current?.cornerScale ?: 1f
+fun appShape(base: Dp, area: CornerArea = CornerArea.Cards): RoundedCornerShape {
+    val scale = LocalUiPrefs.current?.cornerScale(area) ?: 1f
     return remember(base, scale) { RoundedCornerShape(base * scale) }
 }
 

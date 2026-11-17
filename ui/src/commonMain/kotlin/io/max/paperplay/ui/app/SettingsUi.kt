@@ -52,7 +52,7 @@ fun BackTopBar(title: String, onBack: () -> Unit, modifier: Modifier = Modifier,
 @Composable
 fun SettingsCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        modifier.fillMaxWidth().partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(20.dp))
+        modifier.fillMaxWidth().partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(20.dp))
             .clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -171,7 +171,7 @@ fun NotBuilt(what: String) {
 fun ConfirmDialog(title: String, body: String, action: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = overlayRim(RoundedCornerShape(28.dp)), shape = RoundedCornerShape(28.dp), containerColor = overlayColor(),
+        modifier = overlayRim(appShape(28.dp, CornerArea.Dialogs)), shape = appShape(28.dp, CornerArea.Dialogs), containerColor = overlayColor(),
         title = { Text(title) },
         text = { Text(body) },
         confirmButton = { TextButton({ onDismiss(); onConfirm() }) { Text(action) } },
