@@ -52,6 +52,7 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Equalizer
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -310,6 +311,11 @@ fun PlayerBar(
             if (!wide) tools()
             if (shown("devices")) extras()
             var showEq by remember { mutableStateOf(false) }
+            if (backend != null && backend.hasBass) {
+                // Same kind of button as the equalizer: one tap switches untouched, exclusive output on or off.
+                val bitPerfect by backend.bitPerfect.collectAsState()
+                IconButton({ backend.setBitPerfect(!bitPerfect) }) { AppIcon(Icons.Rounded.GraphicEq, if (bitPerfect) "Bit-perfect (on)" else "Bit-perfect", sz, tint = if (bitPerfect) scheme.primary else off) }
+            }
             if (backend != null) {
                 val eqOn by backend.eqOn.collectAsState()
                 IconButton({ showEq = true }) { AppIcon(Icons.Rounded.Equalizer, "Equalizer", sz, tint = if (eqOn) scheme.primary else off) }
