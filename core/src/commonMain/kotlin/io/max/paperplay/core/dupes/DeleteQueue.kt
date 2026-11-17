@@ -86,6 +86,8 @@ class DeleteQueue(
     private val beforeDelete: suspend (Song) -> Unit = {},
     private val pause: suspend (millis: Long) -> Unit = { delay(it) },
     private val log: (String) -> Unit = {},
+    /** Every extra bot that is running; they are tried last, for posts the main bot and the account did not remove. */
+    private val extraBots: () -> List<TdCaller> = { emptyList() },
 ) {
     private val _jobs = MutableStateFlow<List<DeleteJob>>(emptyList())
 
@@ -93,6 +95,10 @@ class DeleteQueue(
     val jobs: StateFlow<List<DeleteJob>> = _jobs
 
     private class Pending(val post: DuplicatePost, val keep: DuplicatePost, val key: String)
+
+    /** What Telegram last said when it refused a delete, so the error shown says why instead of guessing. */
+    @kotlin.concurrent.Volatile
+    private var lastRefusal: String? = null
 
     private val pending = MutableStateFlow<List<Pending>>(emptyList())
     private var pump: Job? = null
@@ -343,7 +349,7 @@ class DeleteQueue(
                         set(
                             e.key, DeleteStatus.Failed,
                             if (account.isLoggedIn) "Telegram wouldn't let this post be deleted."
-                            else "Too old for the bot. Log in your account in Settings, Library.",
+                            else "Telegram refused: ${lastRefusal ?: "no reason given"}. Log in your account in Settings, Library.",
                         )
                     } else {
                         store.removePost(e.post.chatId, e.post.messageId)
@@ -368,7 +374,7 @@ class DeleteQueue(
         throw TdError(
             400,
             if (account.isLoggedIn) "Telegram wouldn't let this post be deleted."
-            else "The bot can't delete posts older than 48 hours. Log in your account in Settings, Library, to allow it.",
+            else "Telegram refused: ${lastRefusal ?: "no reason given"}. Log in your account in Settings, Library, to try it as yourself.",
         )
     }
 
@@ -377,6 +383,42 @@ class DeleteQueue(
      * nobody could remove. Bot first, then the Bot API, then the owner's account. A 429 from the bot is thrown.
      */
     private suspend fun deletePostsBest(chat: Long, allIds: List<Long>, onGone: suspend (Long) -> Unit = {}): List<Long> {
+        var left = deletePostsViaMainAndAccount(chat, allIds, onGone)
+        // Last step: the extra bots. The bot that owns a post (and any other admin bot) can remove it where the main bot could not.
+        // TDLib answers ok for posts a bot never saw, so each post is checked afterwards: gone when that bot can no longer fetch it.
+        for (caller in extraBots()) {
+            if (left.isEmpty()) break
+            val tried = left
+            try {
+                for (part in tried.chunked(BATCH)) {
+                    caller.call(request("deleteMessages") { put("chat_id", chat); put("message_ids", JsonArray(part.map { JsonPrimitive(it) })); put("revoke", true) })
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("An extra bot could not delete: ${e.message ?: e::class.simpleName}")
+            }
+            val still = ArrayList<Long>()
+            for (id in tried) {
+                val gone = try {
+                    caller.call(request("getMessage") { put("chat_id", chat); put("message_id", id) })
+                    false
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: TdError) {
+                    e.code == 404 || e.message?.contains("not found", ignoreCase = true) == true
+                } catch (e: Exception) {
+                    false
+                }
+                if (gone) onGone(id) else still += id
+            }
+            if (still.size < tried.size) log("An extra bot removed ${tried.size - still.size} of ${tried.size}")
+            left = still
+        }
+        return left
+    }
+
+    private suspend fun deletePostsViaMainAndAccount(chat: Long, allIds: List<Long>, onGone: suspend (Long) -> Unit): List<Long> {
         // Your account sees every post and may delete any age, in one call per 100 and checked afterwards. Asking the bot first meant
         // one web request per post, all refused for old posts, with nothing shown as done meanwhile.
         var ids = allIds
@@ -429,7 +471,7 @@ class DeleteQueue(
                     else refused[id] = if (alive == null) "Telegram says the post is not found and it could not be checked" else "Telegram says the post is not found, but your account still sees it"
                 }
             }
-            if (refused.isNotEmpty()) log("Telegram refused ${refused.size} of ${ids.size}: ${refused.values.first()}")
+            if (refused.isNotEmpty()) { lastRefusal = refused.values.first(); log("Telegram refused ${refused.size} of ${ids.size}: $lastRefusal") }
             if (refused.isEmpty()) return emptyList()
             val rest = if (account.isLoggedIn) account.deleteBatch(chat, refused.keys.toList()) else refused.keys.toList()
             if (account.isLoggedIn) log("Your account removed ${refused.size - rest.size} of ${refused.size}" + (if (rest.isNotEmpty()) account.lastError?.let { ": $it" }.orEmpty() else ""))
