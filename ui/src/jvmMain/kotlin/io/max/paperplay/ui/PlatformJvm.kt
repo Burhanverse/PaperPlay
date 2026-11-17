@@ -103,6 +103,13 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
     small.toComposeImageBitmap()
 }.getOrNull()
 
+actual fun shrinkImageBytes(bytes: ByteArray, maxSide: Int): ByteArray? = runCatching {
+    val img = org.jetbrains.skia.Image.makeFromEncoded(bytes)
+    if (maxOf(img.width, img.height) <= maxSide) { img.close(); return@runCatching null }
+    val small = shrink(img, maxSide)
+    try { small.encodeToData(org.jetbrains.skia.EncodedImageFormat.JPEG, 90)?.bytes } finally { if (small !== img) small.close(); img.close() }
+}.getOrNull()
+
 actual fun localTimeLabel(epochMs: Long): String =
     java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault())
         .format(java.time.format.DateTimeFormatter.ofPattern("dd/MM HH:mm:ss"))

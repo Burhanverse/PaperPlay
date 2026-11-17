@@ -466,8 +466,13 @@ class MetadataEnricher(
         return true
     }
 
+    /** Set by the app: returns smaller JPEG bytes for a large image, or null to keep it as it is. */
+    @Volatile var coverShrink: ((ByteArray) -> ByteArray?)? = null
+
     /** Sets a cover from image bytes on [songs]. Each song gets its own file and is marked as chosen. */
     fun setCoverBytes(songs: List<Song>, bytes: ByteArray) {
+        // A picked cover is shrunk once when it is saved, so every list, card and player reads the small file and none has to decode a huge one.
+        val bytes = coverShrink?.invoke(bytes) ?: bytes
         val at = clock()
         val dir = "${dataDir.trimEnd('/')}/covers"
         Fs.mkdirs(dir)

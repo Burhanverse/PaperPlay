@@ -20,6 +20,9 @@ expect fun androidx.compose.ui.Modifier.mouseBackButton(onBack: () -> Unit): and
 /** Decodes the image file at [path] to at most about [maxSide] pixels on its longer side; null if unreadable. */
 expect fun decodeImageFile(path: String, maxSide: Int): ImageBitmap?
 
+/** JPEG bytes of the image shrunk to at most [maxSide] pixels on its longer side, or null when it is already that small or unreadable. */
+expect fun shrinkImageBytes(bytes: ByteArray, maxSide: Int): ByteArray?
+
 /** Local hour of day, 0 to 23. */
 expect fun currentHour(): Int
 

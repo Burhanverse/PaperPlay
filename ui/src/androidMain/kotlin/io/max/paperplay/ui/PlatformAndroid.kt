@@ -55,6 +55,23 @@ actual fun rememberAppForeground(): Boolean {
 
 actual fun androidx.compose.ui.Modifier.mouseBackButton(onBack: () -> Unit): androidx.compose.ui.Modifier = this
 
+actual fun shrinkImageBytes(bytes: ByteArray, maxSide: Int): ByteArray? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+    if (longest <= maxSide) return@runCatching null
+    var sample = 1
+    while (longest / (sample * 2) >= maxSide) sample *= 2
+    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@runCatching null
+    val scale = maxSide.toFloat() / maxOf(decoded.width, decoded.height)
+    val out = if (scale < 1f) android.graphics.Bitmap.createScaledBitmap(decoded, (decoded.width * scale).toInt().coerceAtLeast(1), (decoded.height * scale).toInt().coerceAtLeast(1), true) else decoded
+    val buf = java.io.ByteArrayOutputStream()
+    out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, buf)
+    if (out !== decoded) out.recycle()
+    decoded.recycle()
+    buf.toByteArray()
+}.getOrNull()
+
 actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatching {
     if (path.startsWith("http://") || path.startsWith("https://")) {
         val conn = (URI.create(path).toURL().openConnection() as HttpURLConnection).apply {

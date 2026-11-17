@@ -258,7 +258,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         scope.launch { weather.value = runCatching { weatherService.kindAt(p) }.getOrNull() }
     }
 
-    init { refreshWeather() }
+    init {
+        refreshWeather()
+        services.enricher.coverShrink = { b -> io.max.paperplay.ui.shrinkImageBytes(b, 1280) }
+    }
 
     /** tg://privatepost link of the song's channel post, or null for chats that are not channels or supergroups. */
     /** Queues the song for another online lookup; says what happened. */
