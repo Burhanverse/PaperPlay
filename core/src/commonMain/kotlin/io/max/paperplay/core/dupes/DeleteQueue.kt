@@ -113,6 +113,11 @@ class DeleteQueue(
     private fun set(key: String, status: DeleteStatus, error: String? = null) =
         _jobs.update { l -> l.map { if (it.key == key) it.copy(status = status, error = error) else it } }
 
+    /** How many posts of the song last deleted stayed in Telegram because they are in a chat other than the main one. */
+    @kotlin.concurrent.Volatile
+    var keptElsewhere = 0
+        private set
+
     /** Permanently deletes a song from Telegram: its post and any repeats of the file. Returns how many posts went. */
     suspend fun deleteSong(s: Song): Int {
         // Only the main chat is ever changed in Telegram, so without one nothing could be deleted there.
@@ -121,8 +126,13 @@ class DeleteQueue(
         beforeDelete(s)
         val byChat = linkedMapOf(s.chat_id to mutableListOf(s.message_id))
         for (c in copies) byChat.getOrPut(c.chat_id) { mutableListOf() }.add(c.message_id)
-        // Posts in other chats stay in Telegram and only leave the library.
-        for ((chat, ids) in byChat) if (chat == main) deletePosts(chat, ids)
+        // Posts in other chats stay in Telegram and only leave the library. Say so, so "deleted" is not taken to mean every copy is gone.
+        var kept = 0
+        for ((chat, ids) in byChat) {
+            if (chat == main) { deletePosts(chat, ids); log("Deleted ${ids.size} post(s) of \"${s.title}\" from the main chat") }
+            else { kept += ids.size; log("Kept ${ids.size} post(s) of \"${s.title}\" in chat $chat: only the main chat is changed in Telegram") }
+        }
+        keptElsewhere = kept
         for (c in copies) store.removePost(c.chat_id, c.message_id)
         store.removePost(s.chat_id, s.message_id)
         store.markSongGone(s.unique_id)

@@ -1101,7 +1101,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         scope.launch(Dispatchers.IO) {
             val queue = services.deleteQueue
             val msg = try {
-                if (queue.deleteSongs(listOf(s)) > 0) "Deleted \"${s.title}\" from Telegram"
+                if (queue.deleteSongs(listOf(s)) > 0) {
+                    val kept = queue.keptElsewhere
+                    if (kept > 0) "Deleted \"${s.title}\" from the main chat; $kept ${if (kept == 1) "copy stays" else "copies stay"} in other chats" else "Deleted \"${s.title}\" from Telegram"
+                }
                 else queue.jobs.value.firstOrNull()?.error?.let { "Could not delete: $it" } ?: "Could not delete the song"
             } catch (e: kotlin.coroutines.cancellation.CancellationException) {
                 throw e
