@@ -146,14 +146,14 @@ private fun AboutCard(updates: io.max.paperplay.core.update.UpdateService, onOpe
                 .clickable(onClickLabel = "Open About", onClick = onOpen).padding(20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            io.max.paperplay.ui.StaticLogo(size = 56.dp)
+            io.max.paperplay.ui.StaticLogo(size = 28.dp)
             Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
                 Text("Paper Play", style = MaterialTheme.typography.titleLarge)
                 Text(
                     "Version ${updates.installed} · ${if (updates.prefs.beta) "Beta" else "Stable"} updates",
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (available != null) Text("Update $available available", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                if (available != null) Text("Update $available available", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
             AppIcon(Icons.Rounded.ChevronRight, null)
         }
