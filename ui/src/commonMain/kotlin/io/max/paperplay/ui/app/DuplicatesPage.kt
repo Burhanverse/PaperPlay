@@ -236,7 +236,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                                     io.max.paperplay.ui.components.CoverImage(p.song?.cover_path ?: art, "${g.title}|${g.artist}", Modifier.padding(end = 12.dp), size = 36.dp, radius = 6.dp)
                                     val topic = p.topicId?.takeIf { it != 1L && it != GENERAL_TOPIC_ID }?.let { topicNames["topic:${p.chatId}:$it"] ?: "Unnamed topic" } ?: "General"
                                     val verdict = state ?: if (p.key in ticked) "Will be deleted" else "Stays"
-                                    androidx.compose.foundation.layout.Column(Modifier.padding(vertical = 6.dp)) {
+                                    androidx.compose.foundation.layout.Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
                                         Text(
                                             "$topic · ${p.format} · ${sizeText(p.size)} · ${dateText(p.date)}",
                                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
@@ -250,7 +250,6 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                                             maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
                                     }
-                                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                                     // The same menu entry as in the song lists: open this post in Telegram.
                                     val link = backend.postLink(p.chatId, p.messageId, p.topicId)
                                     if (link != null) {
