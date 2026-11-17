@@ -143,7 +143,8 @@ class MainActivity : ComponentActivity() {
                                 if (it.lowTotal > 0) "Low quality: ${it.lowTotal - it.lowDone} left of ${it.lowTotal}" else null,
                             ).joinToString("\n"), if (total > 0) it.done + it.lowDone else null, if (total > 0) total else null))
                         }
-                        activity?.let { add(KeepAliveJob(6, "Paper Play", it, null, null)) }
+                        // The activity line often repeats the scan or another task; it is shown only when it says something they do not.
+                        activity?.let { line -> if (none { j -> j.text.contains(line) || line.contains(j.text) }) add(KeepAliveJob(6, "Paper Play", line, null, null)) }
                     }
                     KeepAliveService.updateJobs(applicationContext, jobs)
                     when {
