@@ -64,6 +64,19 @@ class BotApi(private val token: suspend () -> String?, private val http: HttpPos
             (status == "administrator" && member["can_delete_messages"]?.jsonPrimitive?.booleanOrNull == true)
     }
 
+    /** Why this bot cannot delete other posts in [chatId] (a plain sentence), or null when it can. Asks Telegram, not TDLib's cache. */
+    suspend fun deleteProblem(chatId: Long): String? {
+        if (botId == null) botId = call("getMe", emptyMap())?.get("result")?.jsonObject?.get("id")?.jsonPrimitive?.longOrNull
+        val id = botId ?: return "Telegram could not be reached to check the rights"
+        val member = call("getChatMember", mapOf("chat_id" to "$chatId", "user_id" to "$id"))
+            ?.get("result")?.jsonObject ?: return "Telegram could not be reached to check the rights"
+        val status = member["status"]?.jsonPrimitive?.contentOrNull
+        if (status == "creator") return null
+        if (status != "administrator") return "not an admin of this chat (status: ${status ?: "unknown"})"
+        if (member["can_delete_messages"]?.jsonPrimitive?.booleanOrNull != true) return "an admin, but without the \"delete messages\" right"
+        return null
+    }
+
     /** Why the bot cannot repost and delete in [chatId] (a plain sentence), or null when it can. Asks Telegram, not TDLib's cache. */
     suspend fun moveProblem(chatId: Long): String? {
         if (botId == null) botId = call("getMe", emptyMap())?.get("result")?.jsonObject?.get("id")?.jsonPrimitive?.longOrNull

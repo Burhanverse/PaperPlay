@@ -8,6 +8,7 @@ import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdConfig
 import io.max.paperplay.core.telegram.TdError
 import io.max.paperplay.core.telegram.TdRuntime
+import io.max.paperplay.core.dupes.asCaller
 import io.max.paperplay.core.telegram.request
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -382,7 +383,13 @@ class AppServices(
             scope, caller, bot, acct, io.max.paperplay.core.dupes.LibraryDeleteStore(library.repo, rules),
             rules, { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) },
             log = { line -> io.max.paperplay.player.PlayLog.log("delete", line); activityLog("Delete", line) },
-            extraBots = { botPool.tokens().map { t -> io.max.paperplay.core.dupes.BotApi({ t }, io.max.paperplay.core.dupes.defaultHttpPoster()) } },
+            extraCallers = { botPool.readyBots().map { (b, c) -> b.id to c.asCaller() } },
+            extraBots = {
+                botPool.tokens().mapNotNull { t ->
+                    t.substringBefore(':').toLongOrNull()?.let { id -> id to (io.max.paperplay.core.dupes.BotApi({ t }, io.max.paperplay.core.dupes.defaultHttpPoster()) as io.max.paperplay.core.dupes.BotDeleter) }
+                }
+            },
+            ownerOf = { chat, message -> library.repo.db.songsQueries.song(chat, message).executeAsOneOrNull()?.let { botOwnerOf(it.remote_id) } },
         )
     }
 

@@ -87,6 +87,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     // Position and scan text change every tick: keep them as State and read them only in draw lambdas and small leaf composables.
     val pos = backend.position.collectAsState()
     val scan = backend.scan.collectAsState()
+    val runningTasks = backend.tasks.running.collectAsState().value.size
     val scanning by backend.scanning.collectAsState()
     val pbError by backend.playbackError.collectAsState()
     val conn by backend.connection.collectAsState()
@@ -348,6 +349,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                             },
                             barsHeight,
                             scan = scan,
+                            runningTasks = runningTasks,
                             updates = backend.services.updates,
                         )
                     }
@@ -483,6 +485,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                     },
                                     pad,
                                     scan = scan,
+                                    runningTasks = runningTasks,
                                     updates = backend.services.updates,
                                 )
                                 k.page == "tasks" -> TasksScreen(backend.tasks, onBack = ::goBack, onOpen = { kd -> openLive(kd) })

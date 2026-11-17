@@ -86,6 +86,8 @@ fun ProfileScreen(
     bottomPadding: Dp,
     modifier: Modifier = Modifier,
     scan: androidx.compose.runtime.State<ScanUi?>? = null,
+    /** How many background tasks are running (song info, covers, uploads and so on), for the Tasks row. */
+    runningTasks: Int = 0,
     updates: io.max.paperplay.core.update.UpdateService? = null,
 ) {
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding + 32.dp)) {
@@ -117,7 +119,7 @@ fun ProfileScreen(
                     onSettings("channels")
                 }
                 NavRow("Scan library", icon = Icons.Rounded.Sync, subtitle = "Read the chats with the bots and account you pick") { onSettings("repair") }
-                NavRow("Tasks", icon = Icons.Rounded.TaskAlt, subtitle = scan?.value?.text ?: "Nothing running", onClick = onTasks)
+                NavRow("Tasks", icon = Icons.Rounded.TaskAlt, subtitle = scan?.value?.text ?: if (runningTasks > 0) "$runningTasks running" else "Nothing running", onClick = onTasks)
                 NavRow("Upload songs", icon = Icons.Rounded.Upload, subtitle = "Send songs or a folder to a chat, with speed and queue") { onSettings("uploadhub") }
                 NavRow("Listening", icon = Icons.Rounded.BarChart, subtitle = "Time listened, top songs and artists") { onSettings("stats") }
                 NavRow("Duplicates", icon = Icons.Rounded.ContentCopy, subtitle = "Find repeated songs and remove the extras") { onSettings("dupes") }

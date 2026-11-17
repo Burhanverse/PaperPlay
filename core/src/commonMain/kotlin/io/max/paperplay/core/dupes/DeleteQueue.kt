@@ -90,7 +90,11 @@ class DeleteQueue(
     private val pause: suspend (millis: Long) -> Unit = { delay(it) },
     private val log: (String) -> Unit = {},
     /** Every extra bot that is running; they are tried last, for posts the main bot and the account did not remove. */
-    private val extraBots: () -> List<BotDeleter> = { emptyList() },
+    private val extraBots: () -> List<Pair<Long, BotDeleter>> = { emptyList() },
+    /** The extra bot that owns (posted) a post, by id, or null when it is not known. Its own delete is tried before the others. */
+    private val ownerOf: (chat: Long, message: Long) -> Long? = { _, _ -> null },
+    /** The extra bots as TDLib clients, for asking whether a post exists. */
+    private val extraCallers: () -> List<Pair<Long, TdCaller>> = { emptyList() },
 ) {
     private val _jobs = MutableStateFlow<List<DeleteJob>>(emptyList())
 
@@ -263,11 +267,24 @@ class DeleteQueue(
         return gone.size
     }
 
-    /** True if the post exists, false if Telegram says it doesn't, null if it couldn't be asked. Waits out rate limits. */
+    /**
+     * True if the post exists, false if Telegram says it doesn't, null if it couldn't be asked. The main bot cannot see posts another bot or
+     * the account uploaded and answers "not found" for them, so a post counts as existing when any extra bot can fetch it.
+     */
     private suspend fun postState(chat: Long, message: Long): Boolean? {
+        // A post of an extra bot is asked about through that bot; the others only when no owner is known.
+        val owner = ownerOf(chat, message)
+        if (owner != null) extraCallers().firstOrNull { it.first == owner }?.let { return postStateVia(it.second, chat, message) }
+        val own = postStateVia(td, chat, message)
+        if (own != false) return own
+        for ((_, caller) in extraCallers()) if (postStateVia(caller, chat, message) == true) return true
+        return false
+    }
+
+    private suspend fun postStateVia(caller: TdCaller, chat: Long, message: Long): Boolean? {
         repeat(4) {
             try {
-                td.call(request("getMessage") { put("chat_id", chat); put("message_id", message) }, ASK_TIMEOUT)
+                caller.call(request("getMessage") { put("chat_id", chat); put("message_id", message) }, ASK_TIMEOUT)
                 return true
             } catch (e: TdError) {
                 val wait = e.retryAfter
@@ -287,12 +304,16 @@ class DeleteQueue(
         // This device may not have heard that a kept post was moved or deleted; the only live post
         // of a song is never deleted as a "copy". One question per 100 keepers.
         val keepers = batch.map { it.keep.chatId to it.keep.messageId }.toSet()
-        val alive = postsExist(keepers).toMutableSet()
+        // Only your account sees every post, so the keeper check runs only when it is logged in. The bots answer "not found" for posts of
+        // another bot, which wrongly refused deletes; without the account the library's record of the keeper is trusted.
+        val verify = account.isLoggedIn
+        if (!verify) log("Your account is not logged in: the post to keep is taken from the library, not checked")
+        val alive = if (verify) postsExist(keepers).toMutableSet() else keepers.toMutableSet()
         // A batch that couldn't be answered also looks like "not there", so what wasn't confirmed is
         // asked about singly, waiting out a rate limit, before it is blamed.
         val unsure = mutableSetOf<Pair<Long, Long>>()
         for (k in keepers) {
-            if (k in alive) continue
+            if (!verify || k in alive) continue
             when (postState(k.first, k.second)) {
                 true -> alive += k
                 null -> unsure += k
@@ -386,10 +407,20 @@ class DeleteQueue(
      * nobody could remove. Bot first, then the Bot API, then the owner's account. A 429 from the bot is thrown.
      */
     private suspend fun deletePostsBest(chat: Long, allIds: List<Long>, onGone: suspend (Long) -> Unit = {}): List<Long> {
-        var left = deletePostsViaMainAndAccount(chat, allIds, onGone)
+        // The bot that owns a post goes first: it is the one Telegram lets remove it.
+        val removedByOwner = HashSet<Long>()
+        val owners = extraBots()
+        for (id in allIds) {
+            val api = ownerOf(chat, id)?.let { o -> owners.firstOrNull { it.first == o }?.second } ?: continue
+            if (api.deleteOne(chat, id) == null) { removedByOwner += id; onGone(id) }
+        }
+        if (removedByOwner.isNotEmpty()) log("The owning bot removed ${removedByOwner.size} of ${allIds.size}")
+        val rest = allIds.filter { it !in removedByOwner }
+        if (rest.isEmpty()) return emptyList()
+        var left = deletePostsViaMainAndAccount(chat, rest, onGone)
         // Last step: the extra bots, by the HTTP Bot API. Telegram's answer for each post is the only proof: deleted now, or refused. A bot that
         // cannot fetch a post says "not found" for it as well, so "not found" is never taken as gone here.
-        for (extra in extraBots()) {
+        for ((_, extra) in extraBots()) {
             if (left.isEmpty()) break
             val still = ArrayList<Long>()
             for (id in left) {
@@ -399,7 +430,18 @@ class DeleteQueue(
             if (still.size < left.size) log("An extra bot removed ${left.size - still.size} of ${left.size}")
             left = still
         }
+        if (left.isNotEmpty()) diagnoseRights(chat)
         return left
+    }
+
+    private var diagnosed = false
+
+    /** Once per run: says which bots may delete in the chat, so a refusal can be traced to the bot that lacks the right. */
+    private suspend fun diagnoseRights(chat: Long) {
+        if (diagnosed) return
+        diagnosed = true
+        log("Main bot in this chat: ${(bot as? BotApi)?.deleteProblem(chat) ?: "can delete messages"}")
+        for ((id, api) in extraBots()) log("Extra bot $id in this chat: ${(api as? BotApi)?.deleteProblem(chat) ?: "can delete messages"}")
     }
 
     private suspend fun deletePostsViaMainAndAccount(chat: Long, allIds: List<Long>, onGone: suspend (Long) -> Unit): List<Long> {
