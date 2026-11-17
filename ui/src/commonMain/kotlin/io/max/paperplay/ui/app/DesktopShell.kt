@@ -52,7 +52,7 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Equalizer
-import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -248,6 +248,8 @@ fun PlayerBar(
     state: PlaybackUiState, volume: Float, backend: PlayerControls?, actions: ListActions,
     onOpen: () -> Unit, modifier: Modifier = Modifier,
     onNowPlaying: (() -> Unit)? = null, extras: @Composable () -> Unit = {},
+    /** The Now playing page shows its own transport and seek bar, so the bar leaves them out while that page is open. */
+    transportInPage: Boolean = false,
 ) {
     val song = state.current
     val scheme = MaterialTheme.colorScheme
@@ -290,7 +292,7 @@ fun PlayerBar(
             }
             if (wide) tools()
         }
-        Column(Modifier.width(centre), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        if (transportInPage) Spacer(Modifier.width(centre)) else Column(Modifier.width(centre), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 IconButton({ backend?.toggleShuffle() }) { AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) scheme.primary else scheme.onSurface) }
                 // The same rewind, play and fast-forward glyphs as the phone player, with the play button drawn bare.
@@ -314,7 +316,7 @@ fun PlayerBar(
             if (backend != null && backend.hasBass) {
                 // Same kind of button as the equalizer: one tap switches untouched, exclusive output on or off.
                 val bitPerfect by backend.bitPerfect.collectAsState()
-                IconButton({ backend.setBitPerfect(!bitPerfect) }) { AppIcon(Icons.Rounded.GraphicEq, if (bitPerfect) "Bit-perfect (on)" else "Bit-perfect", sz, tint = if (bitPerfect) scheme.primary else off) }
+                IconButton({ backend.setBitPerfect(!bitPerfect) }) { AppIcon(Icons.Rounded.HighQuality, if (bitPerfect) "Bit-perfect (on)" else "Bit-perfect", sz, tint = if (bitPerfect) scheme.primary else off) }
             }
             if (backend != null) {
                 val eqOn by backend.eqOn.collectAsState()

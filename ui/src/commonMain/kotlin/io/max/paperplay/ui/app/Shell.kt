@@ -506,7 +506,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     }
                     RemoteNowStrip(backend)
                     PlayerBar(pb, volume, backend, actions, { showPlayer = true },
-                        onNowPlaying = { showNow = !showNow }, extras = { DevicePickerButton(onOpen = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } }); MiniPlayerToggle() })
+                        onNowPlaying = { showNow = !showNow }, transportInPage = showNow && pb.current != null, extras = { DevicePickerButton(onOpen = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } }); MiniPlayerToggle() })
                 }
                 }
                 if (nowSong != null) CoverTinted(nowSong.coverUri) {
