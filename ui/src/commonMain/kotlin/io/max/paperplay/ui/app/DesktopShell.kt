@@ -162,6 +162,8 @@ fun Sidebar(
     val readTelegram = LocalTelegramLists.current
     val telegram = remember(readTelegram, playlists.size) { readTelegram() }
     var toolsOpen by remember { mutableStateOf(false) }
+    var playlistsOpen by remember { mutableStateOf(true) }
+    var telegramOpen by remember { mutableStateOf(true) }
     val scheme = MaterialTheme.colorScheme
     val prefs = LocalUiPrefs.current
     val look = prefs?.selectionLook ?: SelectionLook.Fill
@@ -228,12 +230,22 @@ fun Sidebar(
         if (toolsOpen) items(toolPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
         item { androidx.compose.material3.HorizontalDivider(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = scheme.onSurface.copy(alpha = 0.08f)) }
         item { item("settings", "Settings", { AppIcon(Icons.Rounded.Settings, null, Modifier.size(22.dp)) }, page == "settings" && playlistId == null) { onPage("settings") } }
-        item { label("Playlists") { IconButton(onNewPlaylist, Modifier.size(32.dp)) { AppIcon(Icons.Rounded.Add, "New playlist", Modifier.size(20.dp)) } } }
-        items(playlists, key = { it.id }) { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
+        // Playlists and Telegram fold like Tools: an icon row with a fold arrow, which still works when the sidebar is narrow.
+        item {
+            item("playlists_group", "Playlists", { AppIcon(Icons.Rounded.QueueMusic, null, Modifier.size(22.dp)) }, false, {
+                IconButton(onNewPlaylist, Modifier.size(32.dp)) { AppIcon(Icons.Rounded.Add, "New playlist", Modifier.size(20.dp)) }
+                AppIcon(if (playlistsOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (playlistsOpen) "Hide playlists" else "Show playlists", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
+            }) { playlistsOpen = !playlistsOpen }
+        }
+        if (playlistsOpen) items(playlists, key = { it.id }) { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
         // The main chat's topics (and starred channels) sit apart from the playlists you made.
         if (telegram.isNotEmpty()) {
-            item { label("From Telegram") }
-            items(telegram, key = { it.key }) { t ->
+            item {
+                item("telegram_group", "From Telegram", { AppIcon(Icons.Rounded.Forum, null, Modifier.size(22.dp)) }, false, {
+                    AppIcon(if (telegramOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (telegramOpen) "Hide Telegram" else "Show Telegram", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
+                }) { telegramOpen = !telegramOpen }
+            }
+            if (telegramOpen) items(telegram, key = { it.key }) { t ->
                 item(t.key, t.name, { CoverGrid(t.songs.mapNotNull { it.coverUri }.distinct().take(4), t.key, 28.dp, 6.dp) }, false) { onTelegram(t) }
             }
         }
