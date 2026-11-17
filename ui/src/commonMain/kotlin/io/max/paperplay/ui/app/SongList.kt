@@ -135,7 +135,6 @@ fun SongList(
     var selection by remember { mutableStateOf(Selection()) }
     var sortSheet by remember { mutableStateOf(false) }
     var onlyUnreachable by remember(listKey) { mutableStateOf(false) }
-    val anyUnreachable = remember(songs) { songs.any { it.botCantReach } }
 
     val shown = remember(songs, query, sort, reverse, sortable, onlyUnreachable) {
         val found = filterSongs(if (onlyUnreachable) songs.filter { it.botCantReach } else songs, query)
@@ -326,6 +325,12 @@ fun SongList(
                     Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    Text("Filter", style = MaterialTheme.typography.titleLarge)
+                    androidx.compose.material3.FilterChip(
+                        selected = onlyUnreachable,
+                        onClick = { onlyUnreachable = !onlyUnreachable; sortSheet = false },
+                        label = { Text("Only songs the bot can't reach (${songs.count { it.botCantReach }})") },
+                    )
                     Text("Sort songs", style = MaterialTheme.typography.titleLarge)
                     SongSort.entries.forEach { option ->
                         TextButton(
@@ -342,14 +347,6 @@ fun SongList(
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Start,
                             )
                         }
-                    }
-                    if (anyUnreachable) {
-                        Text("Filter", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp))
-                        androidx.compose.material3.FilterChip(
-                            selected = onlyUnreachable,
-                            onClick = { onlyUnreachable = !onlyUnreachable; sortSheet = false },
-                            label = { Text("Only songs the bot can't reach") },
-                        )
                     }
                     Spacer(Modifier.height(16.dp))
                 }
