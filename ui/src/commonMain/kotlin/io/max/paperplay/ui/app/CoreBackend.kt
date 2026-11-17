@@ -289,8 +289,13 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         if (song == null) return "Bot: not recorded (a repeat of the same file)"
         if (song.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE) return "Bot: none can read it (account only)"
         val id = io.max.paperplay.core.app.botOwnerOf(song.remote_id)
-        if (id == null) return "Bot: main bot" + (services.botPool.mainBot.value.username?.let { " @$it" } ?: "")
-        return "Bot: " + (services.botPool.bots.value.firstOrNull { it.id == id }?.username?.let { "@$it" } ?: "bot $id")
+        // The bot's name as Telegram shows it; its username only when it has no name. Never an "@".
+        if (id == null) {
+            val main = services.botPool.mainBot.value
+            return "Bot: " + (main.name ?: main.username?.removePrefix("@") ?: "main bot") + " (main bot)"
+        }
+        val bot = services.botPool.bots.value.firstOrNull { it.id == id }
+        return "Bot: " + (bot?.name ?: bot?.username?.removePrefix("@") ?: "bot $id")
     }
 
     /** The link to one post: [chatId] and [messageId] are TDLib's ids; a post in a forum topic names its topic. */

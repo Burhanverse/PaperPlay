@@ -95,6 +95,8 @@ class DeleteQueue(
     private val ownerOf: (chat: Long, message: Long) -> Long? = { _, _ -> null },
     /** The extra bots as TDLib clients, for asking whether a post exists. */
     private val extraCallers: () -> List<Pair<Long, TdCaller>> = { emptyList() },
+    /** True for a song saved only as an account song: no bot can see its post, so no bot may say it is gone. */
+    private val accountOnly: (chat: Long, message: Long) -> Boolean = { _, _ -> false },
 ) {
     private val _jobs = MutableStateFlow<List<DeleteJob>>(emptyList())
 
@@ -215,8 +217,10 @@ class DeleteQueue(
         }
     }
 
-    private suspend fun idsExist(chat: Long, ids: List<Long>): JsonArray? = try {
-        td.call(
+    private suspend fun idsExist(chat: Long, ids: List<Long>): JsonArray? = idsExistVia(td, chat, ids)
+
+    private suspend fun idsExistVia(caller: TdCaller, chat: Long, ids: List<Long>): JsonArray? = try {
+        caller.call(
             request("getMessages") {
                 put("chat_id", chat)
                 put("message_ids", JsonArray(ids.map { JsonPrimitive(it) }))
@@ -248,10 +252,23 @@ class DeleteQueue(
             if (found.size != ids.size) continue
             val missing = ids.indices.filter { found[it] is JsonNull }.map { ids[it] }
             if (missing.isEmpty()) continue
-            // The bot cannot see another bot's posts, so only your account can say a post is really gone.
-            if (!account.isLoggedIn) continue
-            val seen = account.existing(chat, missing) ?: continue
-            for (id in missing) if (id !in seen) gone += chat to id
+            // The bot cannot see another bot's posts, so only your account can say a post is really gone. Without it, a post counts as gone
+            // when the main bot and every extra bot see nothing there (an account-only song is invisible to all of them, so it never does).
+            val goneIds: Set<Long> = if (account.isLoggedIn) {
+                val seen = account.existing(chat, missing) ?: continue
+                missing.filter { it !in seen }.toSet()
+            } else {
+                var candidates = missing.filter { !accountOnly(chat, it) }.toSet()
+                val callers = extraCallers()
+                if (callers.isEmpty()) candidates = emptySet()
+                for ((_, caller) in callers) {
+                    if (candidates.isEmpty()) break
+                    val r = idsExistVia(caller, chat, candidates.toList()) ?: run { candidates = emptySet(); null } ?: break
+                    candidates = candidates.filterIndexed { i, _ -> i < r.size && r[i] is JsonNull }.toSet()
+                }
+                candidates
+            }
+            for (id in goneIds) gone += chat to id
         }
         return gone
     }

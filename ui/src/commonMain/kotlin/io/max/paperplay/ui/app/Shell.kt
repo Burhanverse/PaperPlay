@@ -307,7 +307,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                 val navHeight = if (prefs.navLayout == NavLayout.Labels || prefs.navLayout == NavLayout.Dock) 76.dp else 64.dp
                 val barsHeight = (if (pb.current != null) 70.dp + 8.dp else 0.dp) + navHeight + (if (prefs.floatingNav) 24.dp else 0.dp) + bottomInset + 40.dp // extra scroll room so the last item clears the bar
-                Box((if (navGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()).padding(top = top)) {
+                // The layer the nav bar blurs: the page colour (a still copy, so it costs no animation) with the page on top. Without the colour there
+                // would be almost nothing under the bar to blur or refract.
+                Box(if (navGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()) {
+                if (navGlass) AppBackground(prefs, pb.current?.coverUri, base, playing = false)
+                Box(Modifier.fillMaxSize().padding(top = top)) {
                     // Each page is drawn from its own key, so the page that is leaving keeps showing what it showed.
                     val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
                     // A tab remembers where its list was scrolled to while you are on another page.
@@ -356,6 +360,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     }
                     if (k.settings || k.detail != null || k.tasks) phonePage() else tabStates.SaveableStateProvider("tab${k.tab}") { phonePage() }
                     }
+                }
                 }
                 Column(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth().blockTouchesBehind().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),

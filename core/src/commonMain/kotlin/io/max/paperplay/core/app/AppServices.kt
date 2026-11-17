@@ -389,6 +389,7 @@ class AppServices(
                     t.substringBefore(':').toLongOrNull()?.let { id -> id to (io.max.paperplay.core.dupes.BotApi({ t }, io.max.paperplay.core.dupes.defaultHttpPoster()) as io.max.paperplay.core.dupes.BotDeleter) }
                 }
             },
+            accountOnly = { chat, message -> library.repo.db.songsQueries.song(chat, message).executeAsOneOrNull()?.remote_id == ACCOUNT_REMOTE },
             ownerOf = { chat, message -> library.repo.db.songsQueries.song(chat, message).executeAsOneOrNull()?.let { botOwnerOf(it.remote_id) } },
         )
     }
