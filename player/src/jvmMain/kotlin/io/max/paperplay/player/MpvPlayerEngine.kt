@@ -221,8 +221,15 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         } else start(startIndex.coerceIn(items.indices))
     }
 
-    override fun play() = cmd { if (_state.value == PlayerState.Ended) start(_currentIndex.value) else setProp("pause", "no") }
-    override fun pause() = cmd { setProp("pause", "yes") }
+    // Exclusive output holds the sound device for this app alone, so it is given back while paused and taken again on play.
+    override fun play() = cmd {
+        if (exclusive) setProp("audio-exclusive", "yes")
+        if (_state.value == PlayerState.Ended) start(_currentIndex.value) else setProp("pause", "no")
+    }
+    override fun pause() = cmd {
+        setProp("pause", "yes")
+        if (exclusive) { setProp("audio-exclusive", "no"); publishInfo() }
+    }
     override fun next() = cmd { val i = _currentIndex.value; if (i + 1 in queue.indices) start(i + 1) }
     override fun previous() = cmd {
         val i = _currentIndex.value
