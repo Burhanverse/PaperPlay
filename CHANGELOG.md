@@ -2,6 +2,16 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.2] - 2026-11-17
+
+### Other changes
+- Streaming: remember which bot found an account song so later plays and covers go straight to it ([`225adcb`](https://github.com/maxcodl/PaperPlay/commit/225adcb727884b71af5811fcbe5a1fefc1b937a1))
+- Player: stream errors answer the player and are logged, mpv skips its youtube-dl hook ([`a5ed339`](https://github.com/maxcodl/PaperPlay/commit/a5ed3390c6110ddae2012791d3bd14d2bf2191f6))
+- Streaming: songs added through an account play through the bots when the account is gone ([`edd3bc5`](https://github.com/maxcodl/PaperPlay/commit/edd3bc541a323580856c1f1015237db51ef06fef))
+- Standby: always release keep-screen-on, even if closing the dialog window fails ([`201be1b`](https://github.com/maxcodl/PaperPlay/commit/201be1b37c03dbf7743e426c5a77e8746715445a))
+
+**Full changes:** [v1.9.1...v1.9.2](https://github.com/maxcodl/PaperPlay/compare/v1.9.1...v1.9.2)
+
 ## [1.9.1] - 2026-11-17
 
 ### Other changes
