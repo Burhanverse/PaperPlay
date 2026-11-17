@@ -2,6 +2,15 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.6] - 2026-11-17
+
+### Other changes
+- Ui: Bass dial on the PC with the mpv engine and an Equalizer button in the player bar ([`c909213`](https://github.com/maxcodl/PaperPlay/commit/c909213f3c7c6bafa6c418eeb155f090d79c4d6e))
+- Ui: playing song and queue pick up a changed cover at once ([`ac2aa15`](https://github.com/maxcodl/PaperPlay/commit/ac2aa15e4a72a10a3a11dbd29d652362ed356e47))
+- Player: mpv engine remembers a seek made before the song loads ([`6b1fef4`](https://github.com/maxcodl/PaperPlay/commit/6b1fef4290ee0d14fca275a039f3bf6f6a351235))
+
+**Full changes:** [v1.8.5...v1.8.6](https://github.com/maxcodl/PaperPlay/compare/v1.8.5...v1.8.6)
+
 ## [1.8.5] - 2026-11-17
 
 ### Documentation
