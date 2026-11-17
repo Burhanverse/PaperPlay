@@ -250,6 +250,22 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                                             maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
                                     }
+                                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                                    // The same menu entry as in the song lists: open this post in Telegram.
+                                    val link = backend.postLink(p.chatId, p.messageId, p.topicId)
+                                    if (link != null) {
+                                        val uri = androidx.compose.ui.platform.LocalUriHandler.current
+                                        var menu by remember { mutableStateOf(false) }
+                                        androidx.compose.foundation.layout.Box {
+                                            androidx.compose.material3.IconButton({ menu = true }) { io.max.paperplay.ui.components.AppIcon(Icons.Rounded.MoreVert, "Post options") }
+                                            androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
+                                                androidx.compose.material3.DropdownMenuItem(
+                                                    text = { Text("Open in Telegram") },
+                                                    onClick = { menu = false; runCatching { uri.openUri(link) } },
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

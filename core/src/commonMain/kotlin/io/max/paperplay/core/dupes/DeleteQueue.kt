@@ -417,7 +417,9 @@ class DeleteQueue(
         if (removedByOwner.isNotEmpty()) log("The owning bot removed ${removedByOwner.size} of ${allIds.size}")
         val rest = allIds.filter { it !in removedByOwner }
         if (rest.isEmpty()) return emptyList()
+        mainNotFound.clear()
         var left = deletePostsViaMainAndAccount(chat, rest, onGone)
+        val notFoundByAll = left.filter { it in mainNotFound }.toMutableSet()
         // Last step: the extra bots, by the HTTP Bot API. Telegram's answer for each post is the only proof: deleted now, or refused. A bot that
         // cannot fetch a post says "not found" for it as well, so "not found" is never taken as gone here.
         for ((_, extra) in extraBots()) {
@@ -425,14 +427,24 @@ class DeleteQueue(
             val still = ArrayList<Long>()
             for (id in left) {
                 val why = extra.deleteOne(chat, id)
-                if (why == null) onGone(id) else { still += id; if (why != NOT_FOUND) lastRefusal = why }
+                if (why == null) onGone(id) else { still += id; if (why != NOT_FOUND) { lastRefusal = why; notFoundByAll -= id } }
             }
             if (still.size < left.size) log("An extra bot removed ${left.size - still.size} of ${left.size}")
             left = still
         }
+        // No account to ask: a post that the main bot and every extra bot (all with the delete right) say does not exist is gone already.
+        if (!account.isLoggedIn && extraBots().isNotEmpty()) {
+            val gone = left.filter { it in notFoundByAll }
+            for (id in gone) onGone(id)
+            if (gone.isNotEmpty()) log("${gone.size} post${if (gone.size == 1) " was" else "s were"} already gone: every bot says not found")
+            left = left - gone.toSet()
+        }
         if (left.isNotEmpty()) diagnoseRights(chat)
         return left
     }
+
+    /** Posts the main bot reported as not found and the account could not be asked about (no account): the extra bots are asked next. */
+    private val mainNotFound = HashSet<Long>()
 
     private var diagnosed = false
 
@@ -494,7 +506,7 @@ class DeleteQueue(
                 val alive = account.existing(chat, notFound)
                 for (id in notFound) {
                     if (alive != null && id !in alive) onGone(id)
-                    else refused[id] = if (alive == null) "Telegram says the post is not found and it could not be checked" else "Telegram says the post is not found, but your account still sees it"
+                    else refused[id] = if (alive == null) { mainNotFound += id; "Telegram says the post is not found and it could not be checked" } else "Telegram says the post is not found, but your account still sees it"
                 }
             }
             if (refused.isNotEmpty()) { lastRefusal = refused.values.first(); log("Telegram refused ${refused.size} of ${ids.size}: $lastRefusal") }
