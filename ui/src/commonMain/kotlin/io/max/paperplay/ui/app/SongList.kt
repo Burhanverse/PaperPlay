@@ -31,6 +31,8 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.AssistChip
@@ -183,20 +185,20 @@ fun SongList(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    TextButton(onClick = {
+                    IconButton(onClick = {
                         actions.play(shown.filter { it.id in picked }, 0)
                         selection = Selection()
-                    }) { Text("Play") }
-                    TextButton(onClick = {
+                    }) { AppIcon(Icons.Rounded.PlayArrow, "Play picked") }
+                    IconButton(onClick = {
                         actions.addToPlaylist(picked.ids)
                         selection = Selection()
-                    }) { Text("Playlist") }
-                    TextButton(onClick = {
+                    }) { AppIcon(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to playlist") }
+                    IconButton(onClick = {
                         val songsPicked = shown.filter { it.id in picked }
                         val makeFavorite = songsPicked.any { !it.favorite }
                         songsPicked.forEach { actions.setFavorite(it, makeFavorite) }
                         selection = Selection()
-                    }) { Text("Favorite") }
+                    }) { AppIcon(Icons.Rounded.FavoriteBorder, "Favorite picked") }
                     IconButton(onClick = { confirmBulkDelete = true }) {
                         AppIcon(Icons.Rounded.Delete, "Delete from Telegram", tint = MaterialTheme.colorScheme.error)
                     }
