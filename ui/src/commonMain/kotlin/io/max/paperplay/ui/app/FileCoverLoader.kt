@@ -83,10 +83,32 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
         }
     }
 
+    /** Decodes these covers and returns when they are in memory, or after [timeoutMs]: Home waits for its lead covers so it is drawn with them. */
+    suspend fun preloadAndWait(uris: Collection<String>, maxSide: Int, timeoutMs: Long) {
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            kotlinx.coroutines.coroutineScope {
+                for (uri in uris.distinct()) {
+                    val key = "$uri@$maxSide"
+                    if (synchronized(cache) { cache.containsKey(key) }) continue
+                    launch {
+                        val decoded = decoder.async { decodeImageFile(uri, maxSide) }.await() ?: return@launch
+                        keep(key, decoded)
+                        kotlinx.coroutines.withContext(Dispatchers.Main) { CoverSeeds.setFromBitmap(uri, decoded) }
+                    }
+                }
+            }
+        }
+    }
+
+    /** A decoded copy of the same file at any size: shown at once while the exact size is decoded, so a cover never goes blank. */
+    private fun anySize(uri: String): ImageBitmap? = synchronized(cache) {
+        SIZES.firstNotNullOfOrNull { cache["$uri@$it"] }
+    }
+
     @Composable
     override fun painter(uri: String, maxSide: Int): Painter? {
         val key = "$uri@$maxSide"
-        val initial = synchronized(cache) { cache[key] }
+        val initial = synchronized(cache) { cache[key] } ?: anySize(uri)
         val bitmap by produceState(initial, key) {
             val cached = synchronized(cache) { cache[key] }
             if (cached != null) {
@@ -127,6 +149,8 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
         return remember(bitmap) { bitmap?.let { BitmapPainter(it, filterQuality = androidx.compose.ui.graphics.FilterQuality.Medium) } }
     }
 }
+
+private val SIZES = listOf(512, 768, 384, 1280, 160)
 
 /** One decoded-cover cache for every window (main, mini player, tray menu) so a cover is held in memory once. */
 object SharedCovers {

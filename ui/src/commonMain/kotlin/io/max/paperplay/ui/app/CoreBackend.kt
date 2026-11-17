@@ -728,8 +728,11 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             }.distinctBy { it.unique_id }
             if (leadSongs.isNotEmpty()) services.covers.prioritize(leadSongs)
             // Covers already on disk are decoded now, so Home shows its art as soon as it is drawn instead of a moment later.
-            SharedCovers.loader.preload(plan.tiles.mapNotNull { it.cover.cover_path }, 160)
-            SharedCovers.loader.preload(leadSongs.mapNotNull { it.cover_path }, 512)
+            // The first screen waits up to 0.7 s for its lead covers, so it is drawn with them and they do not pop in one by one.
+            kotlinx.coroutines.coroutineScope {
+                launch { SharedCovers.loader.preloadAndWait(plan.tiles.mapNotNull { it.cover.cover_path }, 160, 700) }
+                launch { SharedCovers.loader.preloadAndWait(leadSongs.mapNotNull { it.cover_path }, 512, 700) }
+            }
             // Tiles and shelves show at once; the slower daily mixes join when they are ready.
             if (!input.taste.showMixes) { emit(HomePlanState(plan = plan)); return@transformLatest }
             // Saved mixes show at once, even from an older day or library; fresh ones replace them when computed.
