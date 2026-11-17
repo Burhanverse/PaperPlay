@@ -23,8 +23,14 @@ class ShizukuInstaller(private val context: Context) : io.max.paperplay.core.upd
 
     private var lastLookup: String? = null
 
+    /** Some builds of Shizuku carry a suffix (moe.shizuku.privileged.api.xyz); find it by its launcher entry, else the stock id. */
+    private fun shizukuPackage(): String = runCatching {
+        val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        context.packageManager.queryIntentActivities(main, 0).map { it.activityInfo.packageName }.firstOrNull { it.startsWith(PACKAGE) }
+    }.getOrNull() ?: PACKAGE
+
     private fun packageVisible(): Boolean {
-        val failure = runCatching { context.packageManager.getPackageInfo(PACKAGE, 0) }.exceptionOrNull()
+        val failure = runCatching { context.packageManager.getPackageInfo(shizukuPackage(), 0) }.exceptionOrNull()
         val result = failure?.javaClass?.simpleName ?: "found"
         if (result != lastLookup) { // the About page asks every second; say it once per change
             lastLookup = result
@@ -54,7 +60,7 @@ class ShizukuInstaller(private val context: Context) : io.max.paperplay.core.upd
     }
 
     fun openShizuku() {
-        context.packageManager.getLaunchIntentForPackage(PACKAGE)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let(context::startActivity)
+        context.packageManager.getLaunchIntentForPackage(shizukuPackage())?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let(context::startActivity)
     }
 
     /** Null when the install went through; otherwise why not, after a toast. [useSystem] is offered as the way out. */
