@@ -1,6 +1,7 @@
 ﻿package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
+import io.max.paperplay.ui.components.activeMark
 import io.max.paperplay.ui.theme.motionItem
 import kotlinx.coroutines.launch
 
@@ -308,10 +309,10 @@ private fun PlayerBody(
                     var showLyrics by remember { mutableStateOf(false) }
                     IconButton({ showLyrics = true }, enabled = state.current != null) { AppIcon(Icons.Outlined.Lyrics, "Lyrics") }
                     if (showLyrics) state.current?.let { LyricsDialog(it.id, it.title, backend) { showLyrics = false } }
-                    IconButton(backend::toggleShuffle) {
+                    IconButton(backend::toggleShuffle, Modifier.activeMark(state.shuffle)) {
                         AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) scheme.primary else scheme.onSurface)
                     }
-                    IconButton(backend::cycleRepeat) {
+                    IconButton(backend::cycleRepeat, Modifier.activeMark(state.repeat != RepeatUi.Off)) {
                         AppIcon(
                             if (state.repeat == RepeatUi.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat",
                             tint = if (state.repeat != RepeatUi.Off) scheme.primary else scheme.onSurface,
@@ -327,7 +328,7 @@ private fun PlayerBody(
                     var showEq by remember { mutableStateOf(false) }
                     val eqOn by backend.eqOn.collectAsState()
                     Box {
-                        IconButton({ more = true }) {
+                        IconButton({ more = true }, Modifier.activeMark(sleepAt != null || speed != 1f || eqOn)) {
                             AppIcon(Icons.Rounded.Tune, "More controls", tint = if (sleepAt != null || speed != 1f || eqOn) scheme.primary else scheme.onSurface)
                         }
                         androidx.compose.material3.DropdownMenu(more, { more = false }) {

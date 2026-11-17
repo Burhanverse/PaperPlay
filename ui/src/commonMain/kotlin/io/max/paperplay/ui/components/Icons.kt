@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -231,3 +232,8 @@ private fun GlyphButtonPreview() {
     }
 }
 
+
+/** A soft round fill behind a toggle button that is on, so on and off differ by more than the icon colour. Put it on the [androidx.compose.material3.IconButton]. */
+@Composable
+fun Modifier.activeMark(on: Boolean): Modifier =
+    if (on) this.clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)) else this
