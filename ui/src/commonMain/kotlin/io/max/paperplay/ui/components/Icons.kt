@@ -27,7 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -233,7 +233,19 @@ private fun GlyphButtonPreview() {
 }
 
 
-/** A soft round fill behind a toggle button that is on, so on and off differ by more than the icon colour. Put it on the [androidx.compose.material3.IconButton]. */
+/**
+ * The colour of a toggle that is on: the theme accent, unless that is too close to the screen behind it (a white page, a light cover),
+ * where a stronger orange is used so on and off can still be told apart.
+ */
 @Composable
-fun Modifier.activeMark(on: Boolean): Modifier =
-    if (on) this.clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)) else this
+fun toggleOnColor(): androidx.compose.ui.graphics.Color {
+    val scheme = MaterialTheme.colorScheme
+    val a = scheme.primary.luminance() + 0.05f
+    val b = scheme.surface.luminance() + 0.05f
+    val contrast = maxOf(a, b) / minOf(a, b)
+    return when {
+        contrast >= 3f -> scheme.primary
+        scheme.surface.luminance() > 0.5f -> androidx.compose.ui.graphics.Color(0xFFE65100)
+        else -> androidx.compose.ui.graphics.Color(0xFFFFB300)
+    }
+}

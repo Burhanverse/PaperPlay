@@ -221,6 +221,20 @@ internal object TablerIcons {
             addPath(pathData = PathParser().parsePathString("M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
         }.build()
     }
+    val equalizer: ImageVector by lazy {
+        ImageVector.Builder(name = "Tabler_equalizer", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+            addPath(pathData = PathParser().parsePathString("M5 20v-6").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+            addPath(pathData = PathParser().parsePathString("M12 20v-16").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+            addPath(pathData = PathParser().parsePathString("M19 20v-10").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+        }.build()
+    }
+    val true_audio: ImageVector by lazy {
+        ImageVector.Builder(name = "Tabler_true_audio", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+            addPath(pathData = PathParser().parsePathString("M6 4h12l3 5l-9 11l-9 -11z").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+            addPath(pathData = PathParser().parsePathString("M3 9h18").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+            addPath(pathData = PathParser().parsePathString("M9.5 4l-1.5 5l4 11l4 -11l-1.5 -5").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+        }.build()
+    }
     val music: ImageVector by lazy {
         ImageVector.Builder(name = "Tabler_music", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
             addPath(pathData = PathParser().parsePathString("M3 17a3 3 0 1 0 6 0a3 3 0 0 0 -6 0").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
@@ -479,7 +493,7 @@ internal fun tablerIconForMaterial(name: String): ImageVector? = when (name) {
     "BlurOn" -> TablerIcons.sparkles
     "Check", "CheckCircle" -> TablerIcons.list_check
     "DirectionsCar" -> TablerIcons.devices
-    "Equalizer" -> TablerIcons.music
+    "Equalizer" -> TablerIcons.equalizer
     "FitnessCenter" -> TablerIcons.activity_heartbeat
     "MoreHoriz" -> TablerIcons.dots_vertical
     "NightsStay" -> TablerIcons.moon
@@ -490,3 +504,6 @@ internal fun tablerIconForMaterial(name: String): ImageVector? = when (name) {
     else -> null
 }
 
+
+/** The gem for true audio, shared by both icon sets. */
+val TrueAudioIcon: ImageVector get() = TablerIcons.true_audio

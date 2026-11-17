@@ -1,7 +1,7 @@
 ﻿package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
-import io.max.paperplay.ui.components.activeMark
+import io.max.paperplay.ui.components.toggleOnColor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -53,7 +53,6 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Equalizer
-import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -307,13 +306,13 @@ fun PlayerBar(
         }
         if (transportInPage) Spacer(Modifier.width(centre)) else Column(Modifier.width(centre), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                IconButton({ backend?.toggleShuffle() }, Modifier.activeMark(state.shuffle)) { AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) scheme.primary else scheme.onSurface) }
+                IconButton({ backend?.toggleShuffle() }) { AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) toggleOnColor() else scheme.onSurface) }
                 // The same rewind, play and fast-forward glyphs as the phone player, with the play button drawn bare.
                 IconButton({ backend?.previous() }) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(28.dp)) }
                 IconButton({ backend?.togglePlay() }, Modifier.size(48.dp)) { AppIcon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(38.dp)) }
                 IconButton({ backend?.next() }) { AppIcon(Icons.Rounded.FastForward, "Next", Modifier.size(28.dp)) }
-                IconButton({ backend?.cycleRepeat() }, Modifier.activeMark(state.repeat != RepeatUi.Off)) {
-                    AppIcon(if (state.repeat == RepeatUi.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat", tint = if (state.repeat != RepeatUi.Off) scheme.primary else scheme.onSurface)
+                IconButton({ backend?.cycleRepeat() }) {
+                    AppIcon(if (state.repeat == RepeatUi.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat", tint = if (state.repeat != RepeatUi.Off) toggleOnColor() else scheme.onSurface)
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -329,11 +328,11 @@ fun PlayerBar(
             if (backend != null && backend.hasBass) {
                 // Same kind of button as the equalizer: one tap switches untouched, exclusive output on or off.
                 val bitPerfect by backend.bitPerfect.collectAsState()
-                IconButton({ backend.setBitPerfect(!bitPerfect) }, Modifier.activeMark(bitPerfect)) { AppIcon(Icons.Rounded.HighQuality, if (bitPerfect) "Bit-perfect (on)" else "Bit-perfect", sz, tint = if (bitPerfect) scheme.primary else off) }
+                BitPerfectButton(bitPerfect, off, sz) { backend.setBitPerfect(!bitPerfect) }
             }
             if (backend != null) {
                 val eqOn by backend.eqOn.collectAsState()
-                IconButton({ showEq = true }, Modifier.activeMark(eqOn)) { AppIcon(Icons.Rounded.Equalizer, "Equalizer", sz, tint = if (eqOn) scheme.primary else off) }
+                IconButton({ showEq = true }) { AppIcon(Icons.Rounded.Equalizer, "Equalizer", sz, tint = if (eqOn) toggleOnColor() else off) }
                 if (showEq) EqualizerDialog(backend) { showEq = false }
             }
             Spacer(Modifier.width(8.dp))
