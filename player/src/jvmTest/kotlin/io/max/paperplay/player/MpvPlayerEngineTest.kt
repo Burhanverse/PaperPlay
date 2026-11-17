@@ -135,6 +135,13 @@ class MpvPlayerEngineTest {
     }
 
     @Test
+    fun `a seek made before the song has loaded is applied once it has`() {
+        val e = engine ?: return
+        e.restoreQueue(listOf(QueueItem(wav("r.wav", 44100, 6.0, 440.0))), 0, 3_000)
+        waitFor(what = "paused at the restored place") { e.state.value == PlayerState.Paused && e.positionMs.value in 2_800..3_600 }
+    }
+
+    @Test
     fun `a missing file ends in an error and does not hang the engine`() {
         val e = engine ?: return
         e.setQueue(listOf(QueueItem(File(dir, "nothing.wav").absolutePath)))

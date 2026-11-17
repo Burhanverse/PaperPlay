@@ -115,7 +115,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 MpvC.EVENT_PROPERTY_CHANGE -> ev.getPointer(16)?.let { onProperty(it) }
                 MpvC.EVENT_START_FILE -> cmd { onStartFile() }
                 MpvC.EVENT_FILE_LOADED -> cmd { onFileLoaded() }
-                MpvC.EVENT_AUDIO_RECONFIG -> cmd { publishInfo() }
+                MpvC.EVENT_AUDIO_RECONFIG, MpvC.EVENT_PLAYBACK_RESTART -> cmd { publishInfo() }
                 MpvC.EVENT_END_FILE -> { val reason = ev.getPointer(16)?.getInt(0) ?: MpvC.END_EOF; cmd { onEndFile(reason) } }
             }
         }
@@ -231,6 +231,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     }
     override fun seek(positionMs: Long) = cmd {
         seekTarget = positionMs; seekAt = System.currentTimeMillis()
+        // Nothing loaded yet (a session being restored): remember the place, the song is opened there once it has loaded.
+        if (!loaded) { resumeAtMs = positionMs.coerceAtLeast(0); return@cmd }
         command("seek", "%.3f".format(java.util.Locale.ROOT, positionMs.coerceAtLeast(0) / 1000.0), "absolute+exact")
     }
 
