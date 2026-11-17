@@ -249,6 +249,10 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                                             p.fileName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                         )
+                                        Text(
+                                            backend.ownerLabel(p.song), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        )
                                     }
                                     // The same menu entry as in the song lists: open this post in Telegram.
                                     val link = backend.postLink(p.chatId, p.messageId, p.topicId)

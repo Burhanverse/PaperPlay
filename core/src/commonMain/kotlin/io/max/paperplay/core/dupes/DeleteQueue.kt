@@ -410,9 +410,14 @@ class DeleteQueue(
         // The bot that owns a post goes first: it is the one Telegram lets remove it.
         val removedByOwner = HashSet<Long>()
         val owners = extraBots()
+        log("Deleting ${allIds.size} posts; owners recorded: " + allIds.groupingBy { ownerOf(chat, it)?.let { o -> "bot $o" } ?: "none (main bot or a copy)" }.eachCount().entries.joinToString(", ") { "${it.key} x${it.value}" })
         for (id in allIds) {
-            val api = ownerOf(chat, id)?.let { o -> owners.firstOrNull { it.first == o }?.second } ?: continue
-            if (api.deleteOne(chat, id) == null) { removedByOwner += id; onGone(id) }
+            val o = ownerOf(chat, id)
+            val api = o?.let { owners.firstOrNull { b -> b.first == o }?.second }
+            if (o != null && api == null) log("Post $id: owner bot $o is not one of the running extra bots")
+            if (api == null) continue
+            val why = api.deleteOne(chat, id)
+            if (why == null) { removedByOwner += id; onGone(id) } else log("Post $id: owner bot $o could not delete it: $why")
         }
         if (removedByOwner.isNotEmpty()) log("The owning bot removed ${removedByOwner.size} of ${allIds.size}")
         val rest = allIds.filter { it !in removedByOwner }
