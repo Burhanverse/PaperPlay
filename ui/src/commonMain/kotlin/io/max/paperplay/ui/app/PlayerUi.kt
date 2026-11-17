@@ -720,31 +720,49 @@ internal fun OutputInfoDialog(song: SongUi, backend: PlayerControls, onDismiss: 
         info?.outputRateHz?.let { "Mixer rate" to khz(it) },
         "Effects" to (info?.effects?.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "None"),
     ) + (info?.details ?: emptyList())
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Output info") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                rows.forEach { (k, v) ->
-                    Row {
-                        Text(k, Modifier.width(104.dp), color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                        Text(v, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                if (info == null) Text("Play the song to see how it is decoded and sent to the output.", color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                else {
-                    Text(
-                        if (info?.bitPerfect == true) "Bit-perfect: the samples reach the output unchanged." else "Not bit-perfect.",
-                        Modifier.padding(top = 6.dp), style = MaterialTheme.typography.titleSmall,
-                        color = if (info?.bitPerfect == true) scheme.primary else scheme.onSurface,
-                    )
-                    info?.note?.let { Text(it, color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-                }
-            }
-        },
-        confirmButton = { TextButton(onDismiss) { Text("Close") } },
+    val songRows = listOfNotNull(
+        "Artist" to song.artist, song.album.ifBlank { null }?.let { "Album" to it }, song.genre?.let { "Genre" to it },
+        song.year?.let { "Year" to it.toString() }, "Length" to formatDuration(song.durationSec.toLong()),
+        "Size" to "${song.sizeBytes / 100_000 / 10.0} MB", "Plays" to song.plays.toString(),
     )
+    val perfect = info?.bitPerfect == true
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            Modifier.widthIn(max = 460.dp).fillMaxWidth(), shape = RoundedCornerShape(28.dp), color = overlayColor(), tonalElevation = 6.dp,
+        ) {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(song.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
+                DetailSection("Song", songRows)
+                DetailSection("Sound", rows)
+                if (info == null) Text("Play the song to see how it is decoded and sent to the output.", color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                else Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (perfect) scheme.primaryContainer else scheme.surfaceContainerHighest).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(if (perfect) "Bit-perfect" else "Not bit-perfect", style = MaterialTheme.typography.titleSmall, color = if (perfect) scheme.onPrimaryContainer else scheme.onSurface)
+                    Text(
+                        if (perfect) "The samples reach the output unchanged." else info?.note.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall, color = if (perfect) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onDismiss) { Text("Close") } }
+            }
+        }
+    }
+}
+
+/** A titled block of label and value rows for the details popup. */
+@Composable
+private fun DetailSection(title: String, rows: List<Pair<String, String>>) {
+    if (rows.isEmpty()) return
+    val scheme = MaterialTheme.colorScheme
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge, color = scheme.primary)
+        for ((k, v) in rows) Row {
+            Text(k, Modifier.width(112.dp), color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            Text(v, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
 }
 
 /** PC (mpv engine): one switch for untouched, exclusive output. The equalizer and bass keep their settings and come back when it is off. */
