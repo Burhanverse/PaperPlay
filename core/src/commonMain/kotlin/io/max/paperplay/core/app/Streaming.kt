@@ -33,6 +33,8 @@ class TdStreamSource(
     private val windowSeconds: Long = DEFAULT_WINDOW_SECONDS,
     /** Other clients to try when [td] has none or cannot read the post: the bots, for songs that were added through an account. */
     private val others: () -> List<TdClient> = { emptyList() },
+    /** Told when a client other than the first found the post, with that client and the file's remote id, so the library can remember the owner. */
+    private val claimed: (TdClient, String) -> Unit = { _, _ -> },
 ) : StreamSource {
     override val size: Long get() = song.size
 
@@ -106,7 +108,10 @@ class TdStreamSource(
         var first: TdError? = null
         for (c in candidates) {
             val file = try { lookup(c) } catch (e: TdError) { if (first == null) first = e; continue }
-            if (c !== primary) chosen = c
+            if (c !== primary) {
+                chosen = c
+                file.obj("remote")?.str("id")?.takeIf { it.isNotEmpty() }?.let { runCatching { claimed(c, it) } }
+            }
             applyFile(file)
             if (fileId == 0) throw TdError(0, "No file id")
             return
@@ -330,6 +335,8 @@ class TrackResolver(
     private val botTd: (Long) -> TdClient? = { null },
     /** Every bot that is running, the main one first: they read the posts of songs that were added through an account. */
     private val botClients: () -> List<TdClient> = { emptyList() },
+    /** A bot turned out to own an account song: its new remote id (`bot:<id>:<file id>`, or the plain file id for the main bot) is for the library to keep. */
+    private val onClaim: (Song, TdClient, String) -> Unit = { _, _, _ -> },
 ) {
     constructor(td: () -> TdClient?) : this(td, TdStreamSource.DEFAULT_WINDOW_SECONDS)
     constructor(td: () -> TdClient?, accountTd: () -> TdClient?) : this(td, TdStreamSource.DEFAULT_WINDOW_SECONDS, accountTd)
@@ -344,7 +351,10 @@ class TrackResolver(
             else -> td
         }
         val others: () -> List<TdClient> = if (song.remote_id == ACCOUNT_REMOTE) botClients else ({ emptyList() })
-        val fresh = TdStreamSource(client, if (owner != null) song.copy(remote_id = plainRemote(song.remote_id)) else song, windowSeconds, others)
+        val fresh = TdStreamSource(
+            client, if (owner != null) song.copy(remote_id = plainRemote(song.remote_id)) else song, windowSeconds, others,
+            claimed = { c, rid -> if (song.remote_id == ACCOUNT_REMOTE) onClaim(song, c, rid) },
+        )
         sources.update { it + (song.unique_id to (it[song.unique_id] ?: fresh)) }
         return sources.value.getValue(song.unique_id)
     }

@@ -332,6 +332,11 @@ class AppServices(
     val resolver = TrackResolver(
         { client }, TdStreamSource.DEFAULT_WINDOW_SECONDS, { (account as? io.max.paperplay.core.account.UserSession)?.streamClient() }, { id -> botPool.clientOf(id) },
         { listOfNotNull(client) + botPool.readyBots().map { it.second } },
+        // The bot that found an account song's post keeps it: later plays, downloads and covers go straight to that bot.
+        { song, c, rid ->
+            val owner = if (c === client) null else botPool.readyBots().firstOrNull { it.second === c }?.first?.id
+            library.claimRemote(song, if (owner != null) botRemote(owner, rid) else rid)
+        },
     )
     val covers = CoverService(
         platform.dataDir,
