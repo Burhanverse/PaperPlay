@@ -76,6 +76,29 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # The audio engine (engine/, Rust) is built here and packed into the APK; without this step the app falls back to the phone equalizer.
+      - name: Rust target for the audio engine
+        run: rustup target add aarch64-linux-android
+
+      - name: Cache cargo-ndk
+        id: cargo-ndk
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-v4
+
+      - name: Install cargo-ndk
+        if: steps.cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install cargo-ndk --locked
+
+      - name: Build the audio engine library
+        working-directory: engine
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}"
+          cargo test --release
+          cargo ndk -t arm64-v8a -o ../androidApp/src/main/jniLibs build --release
+          ls -l ../androidApp/src/main/jniLibs/arm64-v8a/libengine.so
+
       - name: Accept Android SDK licenses
         if: env.ANDROID_HOME != ''
         run: |
