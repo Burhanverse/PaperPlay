@@ -42,8 +42,16 @@ class PlayerKeys(private val backend: PlayerControls) {
     var volume = 1f
     private var lastVolume = 1f
 
+    /**
+     * True while the shortcut target itself holds keyboard focus. When a text box (or anything else inside the window) holds it,
+     * the keys belong to that box: a letter typed in search must not shuffle, a space must not pause, arrows must not change the volume.
+     * A text field does not mark the plain key-down events it types from as handled, so they would otherwise reach these shortcuts.
+     */
+    @kotlin.concurrent.Volatile var ownsFocus = true
+
     fun handle(e: KeyEvent): Boolean {
         if (e.type != KeyEventType.KeyDown) return false
+        if (!ownsFocus && e.key != Key.F1) return false
         when (e.key) {
             Key.Spacebar -> backend.togglePlay()
             Key.DirectionRight -> if (e.isCtrlPressed) backend.next() else backend.seekToMs(backend.position.value.positionMs + 5_000)
@@ -79,7 +87,7 @@ fun Modifier.playerKeys(keys: PlayerKeys): Modifier {
     LaunchedEffect(inside) {
         if (!inside) { kotlinx.coroutines.delay(60); runCatching { focus.requestFocus() } }
     }
-    return this.onFocusChanged { inside = it.hasFocus }.focusRequester(focus).focusable().onKeyEvent(keys::handle)
+    return this.onFocusChanged { inside = it.hasFocus; keys.ownsFocus = it.isFocused }.focusRequester(focus).focusable().onKeyEvent(keys::handle)
 }
 
 private val shortcutList = listOf(
