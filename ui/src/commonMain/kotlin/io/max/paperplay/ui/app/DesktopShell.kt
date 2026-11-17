@@ -304,7 +304,18 @@ fun PlayerBar(
             }
             if (wide) tools()
         }
-        if (transportInPage) Spacer(Modifier.width(centre)) else Column(Modifier.width(centre), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        if (transportInPage) {
+            // The page has the controls; the bar's middle says how the sound is going out.
+            val info = backend?.outputInfo?.collectAsState()?.value
+            val line = listOfNotNull(
+                song?.qualityLabel,
+                info?.let { if (it.bitPerfect) "Bit-perfect" else null },
+                info?.takeIf { it.bitPerfect }?.sampleRateHz?.let { (it / 1000.0).toString().removeSuffix(".0") + " kHz" },
+            ).joinToString("  ·  ")
+            Box(Modifier.width(centre), contentAlignment = Alignment.Center) {
+                if (line.isNotEmpty()) Text(line, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+            }
+        } else Column(Modifier.width(centre), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 IconButton({ backend?.toggleShuffle() }) { AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) toggleOnColor() else scheme.onSurface) }
                 // The same rewind, play and fast-forward glyphs as the phone player, with the play button drawn bare.
