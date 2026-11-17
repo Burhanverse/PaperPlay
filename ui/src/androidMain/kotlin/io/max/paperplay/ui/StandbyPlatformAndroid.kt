@@ -46,10 +46,14 @@ actual fun StandbyWindowEffect(brightness: Float) {
             }
         }
         onDispose {
-            windows.forEach { w ->
-                w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                w.attributes = w.attributes.also { it.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
-                androidx.core.view.WindowCompat.getInsetsController(w, w.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            // The activity's window first, each step on its own: if the dialog window is already gone and one step throws, the screen must still be allowed to turn off.
+            // A flag left on the activity window kept the screen awake for the whole app.
+            val last = activity?.window
+            val order = listOfNotNull(last) + windows.filter { it !== last }
+            order.forEach { w ->
+                runCatching { w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+                runCatching { w.attributes = w.attributes.also { it.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE } }
+                runCatching { androidx.core.view.WindowCompat.getInsetsController(w, w.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
             }
         }
     }
