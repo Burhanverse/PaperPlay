@@ -277,7 +277,9 @@ fun PlayerBar(
                 Column(Modifier.weight(1f, fill = false).padding(start = 12.dp)) {
                     Text(song.title, modifier = Modifier.basicMarquee(), maxLines = 1, style = MaterialTheme.typography.titleSmall)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        io.max.paperplay.ui.components.formatChipOf(song)?.let { io.max.paperplay.ui.components.FormatChip(it) }
+                        var outputInfoOpen by remember { mutableStateOf(false) }
+                        io.max.paperplay.ui.components.formatChipOf(song)?.let { Box(Modifier.clickable { outputInfoOpen = true }) { io.max.paperplay.ui.components.FormatChip(it) } }
+                        if (outputInfoOpen && backend != null) OutputInfoDialog(song, backend) { outputInfoOpen = false }
                         Text(song.artist, Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                     }
                 }

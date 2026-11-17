@@ -618,6 +618,7 @@ internal fun EqualizerDialog(backend: PlayerControls, onClose: () -> Unit) {
         title = { Text("Equalizer") },
         text = {
             Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                BitPerfectRow(backend)
                 EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
             }
         },
@@ -744,4 +745,18 @@ internal fun OutputInfoDialog(song: SongUi, backend: PlayerControls, onDismiss: 
         },
         confirmButton = { TextButton(onDismiss) { Text("Close") } },
     )
+}
+
+/** PC (mpv engine): one switch for untouched, exclusive output. The equalizer and bass keep their settings and come back when it is off. */
+@Composable
+internal fun BitPerfectRow(backend: PlayerControls) {
+    if (!backend.hasBass || io.max.paperplay.ui.isPhone) return
+    val on by backend.bitPerfect.collectAsState()
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Bit-perfect")
+            Text("Plays the file untouched through exclusive output. The equalizer and bass are bypassed, and other apps go quiet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.material3.Switch(on, { backend.setBitPerfect(it) })
+    }
 }

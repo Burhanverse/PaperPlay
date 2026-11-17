@@ -188,9 +188,11 @@ internal object MpvFilters {
         if (parts.isEmpty()) return null
         val chain = parts.joinToString(",")
         if (plan == null) return chain
+        // The rest was lowered to keep the bass clear; give back a quarter of that (at most 2 dB) on the high half only, so bass peaks are not squeezed.
+        val highDb = plan.highTrimDb + (-plan.highTrimDb / 4.0).coerceIn(0.0, 2.0)
         return chain + ",acrossover=split=${CROSSOVER_HZ.toInt()}:order=4th[lo][hi];" +
             "[lo]volume=${num(plan.lowTrimDb)}dB,${limiter(LIMIT_LOW)}[l2];" +
-            "[hi]volume=${num(plan.highTrimDb)}dB,${limiter(LIMIT_HIGH)}[h2];" +
+            "[hi]volume=${num(highDb)}dB,${limiter(LIMIT_HIGH)}[h2];" +
             "[l2][h2]amix=inputs=2:normalize=0,${limiter(LIMIT_OUT)}"
     }
 

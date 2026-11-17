@@ -99,6 +99,9 @@ interface PlayerControls {
     /** Extra bass in dB, 0 to 12, on top of the equalizer. */
     val eqBass: StateFlow<Float> get() = MutableStateFlow(0f)
     fun setEqBass(db: Float) {}
+    /** PC with the mpv engine: plays the file untouched through exclusive output; the equalizer, bass, normalise and profile are bypassed (not erased). */
+    val bitPerfect: StateFlow<Boolean> get() = MutableStateFlow(false)
+    fun setBitPerfect(on: Boolean) {}
     /** True where the engine in use has a Bass control: the phone, and the PC with the mpv engine. */
     val hasBass: Boolean get() = io.max.paperplay.ui.isPhone
     fun removeFromQueue(index: Int)
@@ -551,6 +554,18 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** PC only: which audio engine plays (vlc or mpv; read when the app starts, so a change applies after a restart). */
     fun pcEngine(): String = services.platform.settings.get("pc_engine") ?: "vlc"
     override val hasBass: Boolean get() = io.max.paperplay.ui.isPhone || pcEngine() == "mpv"
+    override val bitPerfect = MutableStateFlow(repo.pref("pc_bitperfect") == "true" && !io.max.paperplay.ui.isPhone)
+
+    override fun setBitPerfect(on: Boolean) {
+        bitPerfect.value = on
+        repo.setPref("pc_bitperfect", "$on")
+        if (!playerStarted.value) return
+        pushBass()
+        player.setEqualizer(if (on || !eqOn.value) null else eqGains.value)
+        player.setNormalize(!on && normalizeOn.value)
+        player.setCorrectionProfile(correctionProfile.value.takeIf { it.isNotBlank() && !on })
+        player.setExclusiveOutput(on || exclusiveOutput.value)
+    }
     fun setPcEngine(engine: String) { services.platform.settings.put("pc_engine", engine) }
 
     /** PC only (mpv engine): exclusive output for bit-perfect playback. */
@@ -559,7 +574,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun setExclusiveOutput(on: Boolean) {
         exclusiveOutput.value = on
         repo.setPref("pc_exclusive", "$on")
-        if (playerStarted.value) player.setExclusiveOutput(on)
+        if (playerStarted.value) player.setExclusiveOutput(on || bitPerfect.value)
     }
 
     /** PC only (mpv engine): an earphone correction curve in AutoEq GraphicEQ text, empty for none. */
@@ -568,7 +583,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun setCorrectionProfile(text: String) {
         correctionProfile.value = text
         repo.setPref("pc_profile", text)
-        if (playerStarted.value) player.setCorrectionProfile(text.takeIf { it.isNotBlank() })
+        if (playerStarted.value) player.setCorrectionProfile(text.takeIf { it.isNotBlank() && !bitPerfect.value })
     }
 
     override val eqBass = MutableStateFlow(repo.pref("eq_bass")?.toFloatOrNull() ?: 0f)
@@ -579,14 +594,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         pushBass()
     }
 
-    private fun pushBass() { if (playerStarted.value) player.setBass(if (eqOn.value) eqBass.value else 0f) }
+    private fun pushBass() { if (playerStarted.value) player.setBass(if (eqOn.value && !bitPerfect.value) eqBass.value else 0f) }
 
     override fun setEqualizer(on: Boolean, gains: List<Float>) {
         eqOn.value = on
         eqGains.value = gains
         repo.setPref("eq_on", "$on")
         repo.setPref("eq_gains", gains.joinToString(",", "[", "]"))
-        if (playerStarted.value) player.setEqualizer(if (on) gains else null)
+        if (playerStarted.value) player.setEqualizer(if (on && !bitPerfect.value) gains else null)
         pushBass()
     }
 
@@ -801,7 +816,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun setNormalize(on: Boolean) {
         normalizeOn.value = on
         repo.setPref("normalize", "$on")
-        if (playerStarted.value) player.setNormalize(on)
+        if (playerStarted.value) player.setNormalize(on && !bitPerfect.value)
     }
 
     override fun removeFromQueue(index: Int) { withPlayer { it.removeAt(index) } }
@@ -823,12 +838,13 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     private val playerLazy = lazy {
         services.playback.also { p ->
             scope.launch { p.outputInfo.collect { _outputInfo.value = it } }
-            if (eqOn.value) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
-            if (exclusiveOutput.value) p.setExclusiveOutput(true)
-            correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
+            val bp = bitPerfect.value
+            if (eqOn.value && !bp) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
+            if (exclusiveOutput.value || bp) p.setExclusiveOutput(true)
+            if (!bp) correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)
             if (speed.value != 1f) p.setSpeed(speed.value)
-            if (normalizeOn.value) p.setNormalize(true)
+            if (normalizeOn.value && !bp) p.setNormalize(true)
             // A listen counts after half the song or four minutes, whichever comes first.
             p.onListened = { song, ms ->
                 val token = services.platform.secrets.get(io.max.paperplay.core.backup.SecretKeys.LISTENBRAINZ_TOKEN)
