@@ -45,7 +45,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 ## UI
 - Match the neighbours first: copy the row, header, spacing and icon style of the nearest existing screen or list instead of inventing a new one. Reuse the shared composables and theme tokens (`MaterialTheme.colorScheme`, `AppIcon`, `LocalUiPrefs`); no hard-coded colours.
 - Every navigation row, setting and tool has an icon from the Material rounded set, and the same icon means the same thing everywhere.
-- A collapsible group is a normal row with an icon and a fold arrow, not a bare title. It must still show and work when the sidebar is narrow.
+- A collapsible group is a normal row with an icon and a fold arrow, not a bare title. It must still show and work when the sidebar is narrow. The sidebar lists Tools, Playlists and From Telegram this way, so every list of items in it folds the same way.
 - Separate groups with a divider or a section label, never by position alone. Settings and About sit apart from content and tools.
 - Highlight the open page in every list that can open pages.
 - Sidebar and settings headings follow the same groups; a new page names its group.
