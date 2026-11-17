@@ -2,6 +2,17 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.10] - 2026-11-17
+
+### Documentation
+- Sidebar lists fold like Tools ([`b93a7c5`](https://github.com/maxcodl/PaperPlay/commit/b93a7c530e3317cbc635805415c75b3bf5858880))
+
+### Other changes
+- Ui: Playlists and From Telegram fold like Tools in the PC sidebar ([`4d6d515`](https://github.com/maxcodl/PaperPlay/commit/4d6d515571d37ec281dd23b754ae5943096d4318))
+- Player: mpv warnings go to the activity log ([`e882046`](https://github.com/maxcodl/PaperPlay/commit/e8820468fb016e81558ad16444827e013a475d65))
+
+**Full changes:** [v1.8.9...v1.8.10](https://github.com/maxcodl/PaperPlay/compare/v1.8.9...v1.8.10)
+
 ## [1.8.9] - 2026-11-17
 
 ### Other changes
