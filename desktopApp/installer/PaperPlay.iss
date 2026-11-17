@@ -58,7 +58,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Code: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM PaperPlay.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM PaperPlay.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Sleep(800);
   Result := '';
 end;
