@@ -167,6 +167,25 @@ jobs:
           Copy-Item "$($src.FullName)\plugins" "$dst\plugins" -Recurse
           "PAPERPLAY_VLC=$($src.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
+      # libmpv for the optional mpv engine (LGPL build, no GPL code), a pinned build with its checksum. If it cannot be fetched the app is
+      # built without it and stays on VLC. Not in the repository.
+      - name: Get libmpv
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/zhongfly/mpv-winbuild/releases/download/2026-11-16-543a8c2c59/mpv-dev-lgpl-x86_64-20261116-git-543a8c2c59.7z'
+          $sha = '9df5586a2520b43614cd249e7827fc11be3cf35f1bfe87628947d0b08a503c34'
+          $f = "$env:RUNNER_TEMP\mpv.7z"
+          curl.exe --fail --location --retry 3 --silent --show-error -o $f $url
+          if ($LASTEXITCODE -ne 0) { throw "libmpv download failed (curl exit code $LASTEXITCODE)" }
+          if ((Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -ne $sha) { throw "libmpv checksum mismatch" }
+          7z x $f "-o$env:RUNNER_TEMP\mpv" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "libmpv unzip failed (7z exit code $LASTEXITCODE)" }
+          $dst = "desktopApp\src\jvmMain\resources\mpv\windows"
+          New-Item -ItemType Directory -Force $dst | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\mpv\libmpv-2.dll" $dst
+          "libmpv: {0:N1} MB" -f ((Get-Item "$dst\libmpv-2.dll").Length / 1MB)
+
       - name: Build release app image
         shell: cmd
         env:

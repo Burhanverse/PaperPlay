@@ -58,6 +58,8 @@ val stagePackagingResources = tasks.register<Copy>("stagePackagingResources") {
         eachFile { if (!file.isDirectory && !vlcWanted(relativePath.pathString.removePrefix("vlc/").removePrefix("vlc\\"))) exclude() }
         includeEmptyDirs = false
     }
+    // libmpv (git-ignored, see HANDOVER.md) for the optional mpv engine; without it the player stays on VLC.
+    from("src/jvmMain/resources/mpv") { into("mpv") }
     val tdlib = file(System.getenv("PAPERPLAY_TDLIB") ?: "third_party/tdlib")
     if (tdlib.exists()) from(tdlib) { into("native"); include("*.dll") }
 }
@@ -85,7 +87,7 @@ stagePackagingResources.configure {
 tasks.matching { it.name == "prepareAppResources" }.configureEach { dependsOn(stagePackagingResources) }
 
 // libvlc is shipped through appResourcesRootDir; keeping a second copy inside the app jar doubled it.
-tasks.named<ProcessResources>("jvmProcessResources") { exclude("vlc/**") }
+tasks.named<ProcessResources>("jvmProcessResources") { exclude("vlc/**", "mpv/**") }
 
 // jlink in the Compose plugin leaves the runtime image uncompressed; ask for ZIP (about half the size).
 afterEvaluate {
