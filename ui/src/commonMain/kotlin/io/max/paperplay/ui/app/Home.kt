@@ -75,6 +75,8 @@ import io.max.paperplay.ui.state.SongUi
 import io.max.paperplay.ui.theme.hsl
 
 private val cardSize = 150.dp
+/** Playlist cards are smaller so more of them show at once; the row swipes sideways for the rest. */
+private val playlistCardSize = 112.dp
 
 @Composable
 fun HomeScreen(
@@ -167,8 +169,8 @@ fun HomeScreen(
                 Section("Your playlists")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
                     items(lib.playlists, key = { it.id }) { g ->
-                        Column(Modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable { onOpen(Detail.Playlist(g.id, g.name)) }.padding(8.dp)) {
-                            CoverGrid(g.coverUris, g.id, cardSize, 10.dp)
+                        Column(Modifier.width(playlistCardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable { onOpen(Detail.Playlist(g.id, g.name)) }.padding(8.dp)) {
+                            CoverGrid(g.coverUris, g.id, playlistCardSize, 10.dp)
                             Text(g.name, Modifier.padding(top = 8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
                         }
                     }
