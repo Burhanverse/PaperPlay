@@ -2,6 +2,23 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.1] - 2026-11-17
+
+### Other changes
+- Ui: Top bars look and the Dot and Text selection looks are wired; checklist ([`c9ac84f`](https://github.com/maxcodl/PaperPlay/commit/c9ac84f5692b54e17235b82d43807802bf1cb56a))
+- Ui: player bar background is transparent, card or glass ([`50957af`](https://github.com/maxcodl/PaperPlay/commit/50957afe9a9914f0cc0a3cba85b6c1eb2d0d82fc))
+- Ui: glass settings (edge, shadow, glow, saturation) apply to every glass surface ([`f0982e9`](https://github.com/maxcodl/PaperPlay/commit/f0982e928f63d0bed00ad262d400bd874404bb9d))
+- Delete: say when copies stay in other chats and log which posts went ([`85dbc45`](https://github.com/maxcodl/PaperPlay/commit/85dbc45d3d44f4b722ed2b5c8e5273f2514cb115))
+- Ui: keyboard shortcuts stay off while a text box holds focus ([`b923a48`](https://github.com/maxcodl/PaperPlay/commit/b923a483d05c829b1b4efa9adb859281cd2bb2ff))
+- Ui: separate corner size for panels, cards, covers, chips and dialogs; the bit-perfect row matches the equalizer row ([`0c88c8c`](https://github.com/maxcodl/PaperPlay/commit/0c88c8ce4f0ff2d50977808f1d1bd66606f06902))
+- Ui: Settings switch for the taskbar buttons ([`fab179e`](https://github.com/maxcodl/PaperPlay/commit/fab179e463d8bde5d001a0be1cb6563939456f19))
+- Desktop: previous, play or pause and next buttons under the taskbar preview ([`b1111c1`](https://github.com/maxcodl/PaperPlay/commit/b1111c119511f57a026a5210029fe2b14827efed))
+- Ui: the bar shows the sound status while Now playing is open ([`2408336`](https://github.com/maxcodl/PaperPlay/commit/240833647e16d6b442a3bc953b3ba14f18324db4))
+- Player: mpv output reloads itself after under-runs and when the song's format changes, and logs what it opened ([`ee38aa6`](https://github.com/maxcodl/PaperPlay/commit/ee38aa600254a5454ecebde4d1c44e1e737cbe06))
+- Ui: toggles use a contrast-aware on colour, equalizer bars icon, animated true-audio gem button ([`13fe78b`](https://github.com/maxcodl/PaperPlay/commit/13fe78bc2e95aae8b0e13a2e38d589b1a4e85fd9))
+
+**Full changes:** [v1.9.0...v1.9.1](https://github.com/maxcodl/PaperPlay/compare/v1.9.0...v1.9.1)
+
 ## [1.8.11] - 2026-11-17
 
 ### Other changes
