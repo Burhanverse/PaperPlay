@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -306,6 +307,12 @@ fun PlayerBar(
             if (shown("queue")) IconButton(onNowPlaying ?: onOpen) { AppIcon(Icons.Rounded.QueueMusic, "Queue", sz, tint = off) }
             if (!wide) tools()
             if (shown("devices")) extras()
+            var showEq by remember { mutableStateOf(false) }
+            if (backend != null) {
+                val eqOn by backend.eqOn.collectAsState()
+                IconButton({ showEq = true }) { AppIcon(Icons.Rounded.Equalizer, "Equalizer", sz, tint = if (eqOn) scheme.primary else off) }
+                if (showEq) EqualizerDialog(backend) { showEq = false }
+            }
             Spacer(Modifier.width(8.dp))
             var lastVolume by remember { mutableStateOf(1f) }
             IconButton({ if (volume > 0f) { lastVolume = volume; backend?.setVolume(0f) } else backend?.setVolume(lastVolume) }) { AppIcon(if (volume > 0f) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff, "Mute", sz, tint = off) }

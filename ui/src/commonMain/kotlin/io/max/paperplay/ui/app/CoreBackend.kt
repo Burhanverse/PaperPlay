@@ -99,6 +99,8 @@ interface PlayerControls {
     /** Extra bass in dB, 0 to 12, on top of the equalizer. */
     val eqBass: StateFlow<Float> get() = MutableStateFlow(0f)
     fun setEqBass(db: Float) {}
+    /** True where the engine in use has a Bass control: the phone, and the PC with the mpv engine. */
+    val hasBass: Boolean get() = io.max.paperplay.ui.isPhone
     fun removeFromQueue(index: Int)
     fun moveInQueue(from: Int, to: Int)
     fun togglePlay()
@@ -548,6 +550,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     /** PC only: which audio engine plays (vlc or mpv; read when the app starts, so a change applies after a restart). */
     fun pcEngine(): String = services.platform.settings.get("pc_engine") ?: "vlc"
+    override val hasBass: Boolean get() = io.max.paperplay.ui.isPhone || pcEngine() == "mpv"
     fun setPcEngine(engine: String) { services.platform.settings.put("pc_engine", engine) }
 
     /** PC only (mpv engine): exclusive output for bit-perfect playback. */

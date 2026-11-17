@@ -71,7 +71,7 @@ internal fun EqualizerPage(backend: CoreBackend) {
     val on by backend.eqOn.collectAsState()
     val gains by backend.eqGains.collectAsState()
     val bass by backend.eqBass.collectAsState()
-    EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (io.max.paperplay.ui.isPhone) { v: Float -> backend.setEqBass(v) } else null)
+    EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
 }
 
 @Composable

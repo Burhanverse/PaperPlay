@@ -618,7 +618,7 @@ internal fun EqualizerDialog(backend: PlayerControls, onClose: () -> Unit) {
         title = { Text("Equalizer") },
         text = {
             Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
-                EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (io.max.paperplay.ui.isPhone) { v: Float -> backend.setEqBass(v) } else null)
+                EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
             }
         },
         confirmButton = { TextButton(onClose) { Text("Close") } },
