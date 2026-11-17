@@ -105,6 +105,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     var showPlayer by remember { mutableStateOf(false) }
     // How far the full player has slid up; it follows a drag and the back swipe.
     val sheet = remember { PlayerSheetState() }
+    // Left for a while (phone in the background): free the decoded covers and compact the heap. Opening the app decodes what is on screen again.
+    val inForeground = io.max.paperplay.ui.rememberAppForeground()
+    androidx.compose.runtime.LaunchedEffect(inForeground) {
+        if (!inForeground) { kotlinx.coroutines.delay(10_000); SharedCovers.loader.clear(); System.gc() }
+    }
     // While the full player has covered the screen, the page under it is not composed, so it holds no lists, covers or animations. It returns the moment the sheet starts to close.
     val covered by remember { androidx.compose.runtime.derivedStateOf { showPlayer && sheet.progress.value >= 1f } }
     // Where the phone came from, so Back returns there instead of jumping to Home or Settings.

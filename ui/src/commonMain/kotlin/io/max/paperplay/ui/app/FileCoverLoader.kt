@@ -46,6 +46,9 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
         }
     }
 
+    /** Drops every decoded cover. They are decoded again from the small files when a screen asks for them. */
+    fun clear() = synchronized(cache) { cache.clear(); cached = 0L }
+
     private val ahead = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     /** Decodes covers before a screen asks for them, so they are in memory (and appear at once) when it does. */

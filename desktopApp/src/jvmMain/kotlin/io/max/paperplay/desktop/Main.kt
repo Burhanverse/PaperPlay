@@ -248,6 +248,13 @@ fun main() {
         val mainState = rememberWindowState(width = 1320.dp, height = 840.dp)
         var raise by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
         androidx.compose.runtime.LaunchedEffect(Unit) { showMain.collect { mainVisible = true; mainState.isMinimized = false; raise++ } }
+        // Hidden to the tray or minimized for a while: compact the heap and hand idle pages back to Windows.
+        androidx.compose.runtime.LaunchedEffect(mainVisible, mainState.isMinimized) {
+            if (!mainVisible || mainState.isMinimized) {
+                kotlinx.coroutines.delay(15_000)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { MemoryTrim.trim() }
+            }
+        }
         val trayOk = androidx.compose.ui.window.isTraySupported
         val fullscreen by io.max.paperplay.ui.app.WindowFullscreen.on.collectAsState()
         androidx.compose.runtime.LaunchedEffect(Unit) { io.max.paperplay.ui.app.WindowFullscreen.supported.value = true }
