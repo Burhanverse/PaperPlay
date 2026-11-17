@@ -75,6 +75,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         (base + options).forEach { (k, v) -> val rc = lib.mpv_set_option_string(ctx, k, v); if (rc < 0) PlayLog.log("mpv", "option $k=$v: ${lib.mpv_error_string(rc)}") }
         val rc = lib.mpv_initialize(ctx)
         check(rc >= 0) { "mpv_initialize failed: ${lib.mpv_error_string(rc)}" }
+        lib.mpv_request_log_messages(ctx, "warn")
         lib.mpv_observe_property(ctx, 1, "time-pos", MpvC.FORMAT_DOUBLE)
         lib.mpv_observe_property(ctx, 2, "duration", MpvC.FORMAT_DOUBLE)
         lib.mpv_observe_property(ctx, 3, "pause", MpvC.FORMAT_FLAG)
@@ -112,6 +113,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             when (ev.getInt(0)) {
                 MpvC.EVENT_NONE -> {}
                 MpvC.EVENT_SHUTDOWN -> return
+                MpvC.EVENT_LOG_MESSAGE -> ev.getPointer(16)?.let { onLog(it) }
                 MpvC.EVENT_PROPERTY_CHANGE -> ev.getPointer(16)?.let { onProperty(it) }
                 MpvC.EVENT_START_FILE -> cmd { onStartFile() }
                 MpvC.EVENT_FILE_LOADED -> cmd { onFileLoaded() }
@@ -119,6 +121,22 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 MpvC.EVENT_END_FILE -> { val reason = ev.getPointer(16)?.getInt(0) ?: MpvC.END_EOF; cmd { onEndFile(reason) } }
             }
         }
+    }
+
+    private var logWindowStart = 0L
+    private var logInWindow = 0
+    private var lastLog = ""
+
+    /** mpv_event_log_message: prefix at 0, level at 8, text at 16. Decoder and output warnings go to the activity log, at most a few a second. */
+    private fun onLog(p: Pointer) {
+        val prefix = p.getPointer(0)?.getString(0, "UTF-8") ?: return
+        val text = p.getPointer(16)?.getString(0, "UTF-8")?.trim() ?: return
+        val line = "$prefix: $text"
+        if (line == lastLog) return
+        lastLog = line
+        val now = System.currentTimeMillis()
+        if (now - logWindowStart > 1_000) { logWindowStart = now; logInWindow = 0 }
+        if (++logInWindow <= 4) PlayLog.log("mpv", line.take(200))
     }
 
     /** mpv_event_property: name at 0, format at 8, data at 16. */

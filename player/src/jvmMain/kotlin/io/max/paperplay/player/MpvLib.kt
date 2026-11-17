@@ -19,6 +19,9 @@ internal interface MpvLib : Library {
     fun mpv_observe_property(ctx: Pointer, replyUserdata: Long, name: String, format: Int): Int
     /** Returns an mpv_event that stays valid until the next call; read it at once. */
     fun mpv_wait_event(ctx: Pointer, timeout: Double): Pointer
+
+    /** Asks for log messages of [minLevel] ("warn", "error"...) as EVENT_LOG_MESSAGE events. */
+    fun mpv_request_log_messages(ctx: Pointer, minLevel: String): Int
     fun mpv_wakeup(ctx: Pointer)
     fun mpv_error_string(error: Int): String
 }
@@ -30,6 +33,7 @@ internal object MpvC {
 
     const val EVENT_NONE = 0
     const val EVENT_SHUTDOWN = 1
+    const val EVENT_LOG_MESSAGE = 2
     const val EVENT_START_FILE = 6
     const val EVENT_END_FILE = 7
     const val EVENT_FILE_LOADED = 8
