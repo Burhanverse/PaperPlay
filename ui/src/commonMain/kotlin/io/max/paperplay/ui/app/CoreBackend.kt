@@ -134,6 +134,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     @Volatile private var byId: Map<String, Song> = emptyMap()
     @Volatile private var byGroupKey: Map<String, Song> = emptyMap()
+    /** Bumped each time [byId] has been rebuilt, so the playing song and queue are mapped from the new rows, not the old ones. */
+    private val songsVersion = kotlinx.coroutines.flow.MutableStateFlow(0L)
 
     fun ensureCover(key: String) {
         val song = byId[key] ?: byGroupKey[key] ?: return
@@ -143,6 +145,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     val library: StateFlow<LibraryUi> = combine(
         repo.allSongs().map { songs ->
             byId = songs.associateBy { it.unique_id }
+            songsVersion.value += 1
             val groupsByKey = HashMap<String, Song>(songs.size)
             for (s in songs) {
                 for (k in listOf(s.album, s.artist, s.title)) {
@@ -928,7 +931,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 (a.queue === b.queue || a.queue == b.queue)
         }.onEach { np -> prioritizeNowPlaying(np) },
         repo.changes,
-    ) { np, changes -> np.toUi(changes) }
+        songsVersion,
+    ) { np, changes, version -> np.toUi(changes * 1_000_003L + version) }
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, PlaybackUiState())
 
