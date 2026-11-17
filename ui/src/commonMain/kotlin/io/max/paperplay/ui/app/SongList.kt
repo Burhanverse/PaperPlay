@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.AssistChip
@@ -84,6 +85,7 @@ class ListActions(
     val changeCover: (SongUi) -> Unit = {},
     val setPinned: (SongUi, Boolean) -> Unit = { _, _ -> },
     val deleteSong: (SongUi) -> Unit = {},
+    val deleteSongs: (List<SongUi>) -> Unit = {},
 )
 
 internal fun ListActions.rowActions(onRemove: ((SongUi) -> Unit)? = null) = object : SongActions {
@@ -135,6 +137,7 @@ fun SongList(
     var selection by remember { mutableStateOf(Selection()) }
     var sortSheet by remember { mutableStateOf(false) }
     var onlyUnreachable by remember(listKey) { mutableStateOf(false) }
+    var confirmBulkDelete by remember { mutableStateOf(false) }
 
     val shown = remember(songs, query, sort, reverse, sortable, onlyUnreachable) {
         val found = filterSongs(if (onlyUnreachable) songs.filter { it.botCantReach } else songs, query)
@@ -194,6 +197,9 @@ fun SongList(
                         songsPicked.forEach { actions.setFavorite(it, makeFavorite) }
                         selection = Selection()
                     }) { Text("Favorite") }
+                    IconButton(onClick = { confirmBulkDelete = true }) {
+                        AppIcon(Icons.Rounded.Delete, "Delete from Telegram", tint = MaterialTheme.colorScheme.error)
+                    }
                     IconButton(onClick = { selection = Selection() }) {
                         AppIcon(Icons.Rounded.Close, "Clear selection")
                     }
@@ -319,6 +325,19 @@ fun SongList(
                 items(tail, key = { "ghost:${it.key}" }) { g -> GhostRow(g, Modifier.padding(horizontal = 16.dp, vertical = 3.dp)) }
             }
         }
+        if (confirmBulkDelete) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmBulkDelete = false },
+            title = { Text("Delete ${picked.size} ${if (picked.size == 1) "song" else "songs"} from Telegram?") },
+            text = { Text("They are removed from your main chat and from this library. Repeats of the same files in that chat go too. Progress shows on the Tasks page. This cannot be undone.") },
+            confirmButton = {
+                TextButton({
+                    confirmBulkDelete = false
+                    actions.deleteSongs(shown.filter { it.id in picked })
+                    selection = Selection()
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton({ confirmBulkDelete = false }) { Text("Cancel") } },
+        )
         if (sortSheet) {
             ModalBottomSheet(onDismissRequest = { sortSheet = false }) {
                 Column(

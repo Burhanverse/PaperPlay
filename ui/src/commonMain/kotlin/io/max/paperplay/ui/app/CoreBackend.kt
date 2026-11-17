@@ -1118,6 +1118,30 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
+    /** Deletes several songs from Telegram (main chat only) and the library, one by one; progress shows on the Tasks page. */
+    fun deleteSongs(ids: Collection<String>, say: (String) -> Unit) {
+        val list = ids.mapNotNull { byId[it] }
+        if (list.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            val queue = services.deleteQueue
+            val msg = try {
+                val done = queue.deleteSongs(list)
+                val failed = list.size - done
+                val why = queue.jobs.value.firstOrNull { it.error != null }?.error
+                when {
+                    failed == 0 -> "Deleted $done ${if (done == 1) "song" else "songs"}"
+                    done == 0 -> "Could not delete: ${why ?: "nothing was removed"}"
+                    else -> "Deleted $done, $failed failed${why?.let { ": $it" }.orEmpty()}"
+                }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "Could not delete: ${e.message ?: e::class.simpleName}"
+            }
+            say(msg)
+        }
+    }
+
     /** Pins every song of a playlist, or unpins them all when they are already pinned. Returns the new state. */
     fun togglePinAll(ids: Collection<String>): Boolean {
         val all = ids.mapNotNull { byId[it] }

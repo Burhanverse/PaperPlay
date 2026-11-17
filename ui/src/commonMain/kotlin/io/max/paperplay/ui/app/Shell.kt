@@ -190,6 +190,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 if (s.copyKey != null) scope.launch { snack.showSnackbar("Delete repeated posts from the Duplicates page") }
                 else backend.deleteSong(s.id) { m -> scope.launch { snack.showSnackbar(m) } }
             },
+            deleteSongs = { list ->
+                val real = list.filter { it.copyKey == null }
+                if (real.size < list.size) scope.launch { snack.showSnackbar("Repeated posts are skipped; delete them from the Duplicates page") }
+                if (real.isNotEmpty()) backend.deleteSongs(real.map { it.id }) { m -> scope.launch { snack.showSnackbar(m) } }
+            },
             telegramLink = backend::telegramLink,
             findMetadata = { s -> tagDialogs.match = s },
             editTags = { s -> tagDialogs.tags = s },

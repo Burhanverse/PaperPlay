@@ -159,7 +159,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                         )
                     }
                     item {
-                        Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.foundation.layout.FlowRow(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             OutlinedButton(onClick = { found.forEach { g -> tick(g, g.others.filter { it.messageId in g.suggested }) } }, enabled = !active) { Text("Tick extras") }
                             // The same file in several topics (topics act as playlists, so it is never ticked on its own): keep one copy per
                             // song, a named topic before General, and tick the others.
@@ -177,7 +177,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                             OutlinedButton(
                                 onClick = { sections[DuplicateSection.Maybe].orEmpty().forEach { g -> tick(g, g.others) } },
                                 enabled = !active && sections[DuplicateSection.Maybe].orEmpty().isNotEmpty(),
-                            ) { Text("Tick all but the best") }
+                            ) { Text("All but the best", softWrap = false) }
                             TextButton(onClick = { ticked = emptySet() }, enabled = ticked.isNotEmpty()) { Text("Clear") }
                         }
                     }
