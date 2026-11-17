@@ -270,6 +270,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
 
     private fun deviceName(): String {
         val id = str("audio-device") ?: return "System default output"
+        if (id == "auto") return "System default output"
         val json = str("audio-device-list") ?: return id
         val m = Regex("\"name\":\"((?:[^\"\\\\]|\\\\.)*)\",\"description\":\"((?:[^\"\\\\]|\\\\.)*)\"").findAll(json)
             .firstOrNull { it.groupValues[1].replace("\\\\", "\\") == id }
@@ -280,6 +281,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         val srcFmt = str("audio-params/format"); val srcRate = int("audio-params/samplerate"); val srcCh = int("audio-params/channel-count")
         val outFmt = str("audio-out-params/format"); val outRate = int("audio-out-params/samplerate"); val outCh = int("audio-out-params/channel-count")
         val ao = str("current-ao")
+        // What mpv really has set, not what this class last asked for.
+        val exclusiveNow = str("audio-exclusive") == "yes"
         val effects = buildList {
             val p = plan
             if (p != null && p.bands.any { abs(it) >= 0.05 }) add("Equalizer")
@@ -290,7 +293,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             if (volume < 0.995f) add("Volume ${(volume * 100).toInt()}%")
         }
         val same = srcFmt != null && srcFmt == outFmt && srcRate == outRate && srcCh == outCh
-        val wasapiExclusive = exclusive && ao?.startsWith("wasapi") == true
+        val wasapiExclusive = exclusiveNow && ao?.startsWith("wasapi") == true
         val perfect = wasapiExclusive && effects.isEmpty() && same
         val details = buildList {
             if (srcFmt != null) add("Decoder output" to "$srcFmt, ${srcRate ?: "?"} Hz, ${srcCh ?: "?"} ch")
@@ -312,7 +315,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             note = when {
                 perfect -> "Exclusive WASAPI output: the samples reach the sound device in the format they were decoded in."
                 effects.isNotEmpty() -> "Effects change the sound before it reaches the output."
-                !exclusive -> "Windows mixes sound at the format set in Sound settings. Turn on exclusive output for bit-perfect playback."
+                !exclusiveNow -> "Windows mixes sound at the format set in Sound settings. Turn on exclusive output for bit-perfect playback."
                 !same -> "The device did not accept the decoded format, so mpv converts it."
                 else -> null
             },
