@@ -117,10 +117,35 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 MpvC.EVENT_PROPERTY_CHANGE -> ev.getPointer(16)?.let { onProperty(it) }
                 MpvC.EVENT_START_FILE -> cmd { onStartFile() }
                 MpvC.EVENT_FILE_LOADED -> cmd { onFileLoaded() }
-                MpvC.EVENT_AUDIO_RECONFIG, MpvC.EVENT_PLAYBACK_RESTART -> cmd { publishInfo() }
+                MpvC.EVENT_AUDIO_RECONFIG -> cmd { onAudioReconfig() }
+                MpvC.EVENT_PLAYBACK_RESTART -> cmd { publishInfo() }
                 MpvC.EVENT_END_FILE -> { val reason = ev.getPointer(16)?.getInt(0) ?: MpvC.END_EOF; cmd { onEndFile(reason) } }
             }
         }
+    }
+
+    private val underruns = UnderrunWatch()
+    private var lastFormat: String? = null
+
+    /** Opens the sound output again. The `ao-reload` command if this mpv has it, otherwise the exclusive switch off and on. */
+    private fun reloadOutput(reason: String) {
+        if (!command("ao-reload")) { setProp("audio-exclusive", "no"); setProp("audio-exclusive", "yes") }
+        PlayLog.log("mpv", "output reloaded ($reason)")
+    }
+
+    /** The output was (re)configured. Records what it is, and in exclusive mode opens it afresh once when the song's format changed. */
+    private fun onAudioReconfig() {
+        publishInfo()
+        val fmt = "${str("audio-params/samplerate")}/${str("audio-params/format")}/${str("audio-params/hr-channels")}"
+        PlayLog.log(
+            "mpv",
+            "output: file $fmt, device ${str("audio-out-params/samplerate")}/${str("audio-out-params/format")}, ao=${str("current-ao")}, " +
+                "exclusive=${str("audio-exclusive")}, speed=${str("speed")}",
+        )
+        val previous = lastFormat
+        lastFormat = fmt
+        // A different rate or sample format means the exclusive stream was opened for another song: start it clean, once.
+        if (exclusive && previous != null && previous != fmt) reloadOutput("format changed from $previous to $fmt")
     }
 
     private var logWindowStart = 0L
@@ -131,6 +156,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     private fun onLog(p: Pointer) {
         val prefix = p.getPointer(0)?.getString(0, "UTF-8") ?: return
         val text = p.getPointer(16)?.getString(0, "UTF-8")?.trim() ?: return
+        // The output has fallen behind for good (heard as static and slow sound): open it again, the way switching bit-perfect off and on does.
+        if (exclusive && prefix.startsWith("ao") && text.startsWith("Under-run") && underruns.hit()) cmd { reloadOutput("under-runs") }
         val line = "$prefix: $text"
         if (line == lastLog) return
         lastLog = line
