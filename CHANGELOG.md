@@ -2,6 +2,16 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.4] - 2026-11-17
+
+### Documentation
+- Checklist for account songs, bit-perfect, details popup, standby, delete notice ([`675becf`](https://github.com/maxcodl/PaperPlay/commit/675becf28ae62130b87cd3811945f7dda5102667))
+
+### Other changes
+- Ui: equalizer shows a fader board, true audio a waveform ([`a0b9f8e`](https://github.com/maxcodl/PaperPlay/commit/a0b9f8e59e55c86770617e8372bdf83c5e9eea59))
+
+**Full changes:** [v1.9.3...v1.9.4](https://github.com/maxcodl/PaperPlay/compare/v1.9.3...v1.9.4)
+
 ## [1.9.3] - 2026-11-17
 
 ### Other changes
