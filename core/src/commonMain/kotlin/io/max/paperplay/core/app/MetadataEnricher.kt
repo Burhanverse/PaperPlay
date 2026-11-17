@@ -355,14 +355,6 @@ class MetadataEnricher(
         return null
     }
 
-    /** Puts every unmatched song back in the queue and starts the run. Returns how many. */
-    fun retryUnmatched(): Int {
-        val list = repo.unmatchedSongs()
-        repo.replaceSongs(list.map { it.copy(enrich_state = EnrichState.PENDING) })
-        if (list.isNotEmpty()) kick()
-        return list.size
-    }
-
     /** Looks these songs up again, even if they matched before. Edited songs are left alone. */
     fun retrySongs(songs: List<Song>): Int {
         val rows = songs.mapNotNull { s -> repo.songByUniqueId(s.unique_id)?.takeIf { !it.user_edited } }

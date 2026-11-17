@@ -72,12 +72,6 @@ class MoodScanner(
 
     fun stop() { job?.cancel(); retry?.cancel() }
 
-    /** Makes every song eligible again, then scans. */
-    fun rescanAll() {
-        driver.execute(null, "UPDATE songs SET mood_scanned_at = 0", 0)
-        start()
-    }
-
     internal suspend fun scanOne(s: Song) {
         var lyrics: String? = null
         var instrumental = false

@@ -115,11 +115,6 @@ fun DesktopNowPlayingView(
     }
 }
 
-private fun Color.compositeOverColor(background: Color): Color {
-    val a = alpha
-    return Color(red * a + background.red * (1 - a), green * a + background.green * (1 - a), blue * a + background.blue * (1 - a), 1f)
-}
-
 @Composable
 private fun NowPlayingMain(
     song: SongUi, state: PlaybackUiState, backend: PlayerControls, actions: ListActions,

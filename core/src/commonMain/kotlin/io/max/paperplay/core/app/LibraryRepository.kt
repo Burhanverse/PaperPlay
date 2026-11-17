@@ -180,8 +180,6 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun albumSongs(name: String): List<Song> = songs.albumRows(name).executeAsList()
     /** Songs whose cover is only a thumbnail but have a full-size source. */
     fun songsNeedingUpgrade(): List<Song> = songs.songsNeedingUpgrade().executeAsList()
-    /** Ids of songs with no cover, then of songs holding only a thumbnail; light rows for the cover queue. */
-    fun coverCandidateIds(): List<String> = songs.idsNeedingCovers().executeAsList() + songs.idsNeedingUpgrade().executeAsList()
     /** Ids of songs with no cover at all, newest first. */
     fun coverMissingIds(): List<String> = songs.idsNeedingCovers().executeAsList()
     /** Ids of songs whose cover is only a low-quality thumbnail that has a full-size source. */

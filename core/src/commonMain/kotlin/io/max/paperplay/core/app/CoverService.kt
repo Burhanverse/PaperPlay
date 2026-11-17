@@ -190,15 +190,6 @@ class CoverService(
         }
     }
 
-    /** Asks for the cover of a song on screen or playing; a thumbnail with a full-size source is upgraded too. */
-    fun requestCover(song: Song) = prioritize(listOf(song))
-
-    /**
-     * Queues the whole library: songs with no cover first, then thumbnails that can be upgraded to
-     * full size. Songs no source had a cover for are left alone for a week. Songs on screen still jump ahead.
-     */
-    fun coverAll() = kick(retryTdMissing = true)
-
     /** Tries these songs again even if nothing was found for them recently. */
     fun retrySongs(songs: Collection<Song>) {
         ensureStarted()
