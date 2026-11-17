@@ -225,6 +225,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         _state.value = PlayerState.Loading
         loaded = false
         if (!retry) { _positionMs.value = 0; _durationMs.value = 0; lastPos = -1 }
+        if (exclusive) setProp("audio-exclusive", "yes")
         setProp("pause", "no")
         command("loadfile", mrlFor(index), "replace")
     }
@@ -280,7 +281,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
 
     override fun setExclusiveOutput(on: Boolean) {
         exclusive = on
-        cmd { setProp("audio-exclusive", if (on) "yes" else "no"); publishInfo() }
+        // Bit-perfect needs the device opened at each song's own rate. "yes" would keep the first song's rate and convert every later song to it.
+        cmd { setProp("gapless-audio", if (on) "weak" else "yes"); setProp("audio-exclusive", if (on) "yes" else "no"); publishInfo() }
     }
 
     private fun applyFilters() {
