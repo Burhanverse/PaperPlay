@@ -2,6 +2,36 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.5] - 2026-11-17
+
+### Improved
+- Keyed shelves and queue, idle polling gated, no right-click handler on phone ([`aacd1f7`](https://github.com/maxcodl/PaperPlay/commit/aacd1f756faf9e1ace056d214309c6a09586b914))
+
+### Other changes
+- Delete: posts older than 48 hours are not tried through bots; the error says to log in the account ([`687eff2`](https://github.com/maxcodl/PaperPlay/commit/687eff265eb293db240c32789208e94a71c1aec8))
+- Ignore the local secrets folder ([`a3c293e`](https://github.com/maxcodl/PaperPlay/commit/a3c293efe9e059957b82a371b8ccd86814d524ed))
+- Notifications: the activity line is not shown when it repeats another task ([`2e90a70`](https://github.com/maxcodl/PaperPlay/commit/2e90a703d4301e4802619957efbb958cede8536d))
+- Glass: nav bar blurs the page colour too; duplicates: bot names, no stray @, refresh drops posts every bot cannot see ([`f10ade3`](https://github.com/maxcodl/PaperPlay/commit/f10ade395e694be2d4bc1e51414785c4c0722d0c))
+- Duplicates: each post shows the bot the library holds it under, and the delete log says which bot was tried for each post ([`87d65cb`](https://github.com/maxcodl/PaperPlay/commit/87d65cb8091f70d9418afbbbb461d93adffcd6f9))
+- Duplicates: the post text shares the row so the menu button is never pushed off ([`0499d93`](https://github.com/maxcodl/PaperPlay/commit/0499d937e915fb7518d67023519a552603ec0060))
+- Delete: posts every bot says are not found are treated as gone; duplicates page rows get a menu to open the post in Telegram ([`f91235d`](https://github.com/maxcodl/PaperPlay/commit/f91235da6cd8fe6bf7071884d63b3e113b42deb6))
+- Delete: the owning bot deletes its own posts, keeper check only with the account logged in, rights diagnosed in the log; Tasks row counts running tasks ([`2d996bb`](https://github.com/maxcodl/PaperPlay/commit/2d996bb3261d3a92fe444fb4e1883d8abd3f30c5))
+- Names: split Song - Version - Artist files correctly at upload and scan, and repair the songs already split wrong ([`0d978f3`](https://github.com/maxcodl/PaperPlay/commit/0d978f3dc2d275e8c645f243c84a8ac1ee359690))
+- Notifications: each running task is its own notification with its own bar; library list rebuild rate-limited; Home sections ease in; upload buttons ([`1953925`](https://github.com/maxcodl/PaperPlay/commit/19539251884d25456e6958c6247d579d259ef35c))
+- Delete: extra bots are judged by Telegram's own answer per post, not by a failed fetch; notification also shows deleting and updates faster ([`4e7e97e`](https://github.com/maxcodl/PaperPlay/commit/4e7e97eb57743467ec250f8e6b033b8037d88f35))
+- Selection bar: play, playlist and favorite as icons so the count fits ([`11e5fb6`](https://github.com/maxcodl/PaperPlay/commit/11e5fb6d643d25f41b0298d21b0e8a7b8fd5a085))
+- Uploads: speed, totals and time left, percent per file, and an Upload entry on Profile ([`fb8138f`](https://github.com/maxcodl/PaperPlay/commit/fb8138f747d209f9ac2022e2d6c472c0ce72e553))
+- Selection bar can delete songs from Telegram; duplicates buttons wrap instead of squashing ([`01b1e84`](https://github.com/maxcodl/PaperPlay/commit/01b1e84bf431b493e26229732cbc131e770c8493))
+- Delete: five posts per call so progress moves in small steps ([`da8b02d`](https://github.com/maxcodl/PaperPlay/commit/da8b02dfbbdcce4ca3430af3fe5f1ece1356da93))
+- Duplicates: wider re-upload size match and a tick all but the best button ([`753c98b`](https://github.com/maxcodl/PaperPlay/commit/753c98b83a9a0bed79c4bb6eb79dbf79bfa66c96))
+- Delete: extra bots take the posts the account and main bot could not, and the error names Telegram's reason ([`988ea34`](https://github.com/maxcodl/PaperPlay/commit/988ea34fd3101e3b2b3bb9e43674cf48e497c16c))
+- Filter chip for songs the bot can't reach is always shown, with a count ([`145ba15`](https://github.com/maxcodl/PaperPlay/commit/145ba154b22f4aa8f43701b3600f50e27b316fd4))
+- Start-up: Home waits for its lead covers, any-size cover shown while the exact one decodes, softer cover fade ([`42209a5`](https://github.com/maxcodl/PaperPlay/commit/42209a5ad17bfa9f6af53c27e34c2cbd95f28ab8))
+- Songs only an account can read are greyed with a warning and can be filtered ([`e533c1c`](https://github.com/maxcodl/PaperPlay/commit/e533c1cd0798ec11ba97301c72206cb0ca1ce128))
+- Update: find Shizuku builds with a suffixed package id ([`f59c692`](https://github.com/maxcodl/PaperPlay/commit/f59c69231b0f77df68e091512021e6da979c0833))
+
+**Full changes:** [v1.9.4...v1.9.5](https://github.com/maxcodl/PaperPlay/compare/v1.9.4...v1.9.5)
+
 ## [1.9.4] - 2026-11-17
 
 ### Documentation
