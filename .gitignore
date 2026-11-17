@@ -30,3 +30,6 @@ __pycache__/
 # Rust engine build output
 engine/target/
 androidApp/src/main/jniLibs/arm64-v8a/libengine.so
+
+# Local secrets for manual Telegram tests: never commit
+.secrets/
