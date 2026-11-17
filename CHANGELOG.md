@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.3] - 2026-11-17
+
+### Other changes
+- Scan: an extra bot takes over the songs saved as account songs when it can read their posts ([`24df215`](https://github.com/maxcodl/PaperPlay/commit/24df215840c8aa1a8aec9485d6cd33a9aa03ad1b))
+
+**Full changes:** [v1.9.2...v1.9.3](https://github.com/maxcodl/PaperPlay/compare/v1.9.2...v1.9.3)
+
 ## [1.9.2] - 2026-11-17
 
 ### Other changes
