@@ -52,7 +52,6 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -350,7 +349,7 @@ fun PlayerBar(
             }
             if (backend != null) {
                 val eqOn by backend.eqOn.collectAsState()
-                IconButton({ showEq = true }) { AppIcon(Icons.Rounded.Equalizer, "Equalizer", sz, tint = if (eqOn) toggleOnColor() else off) }
+                IconButton({ showEq = true }) { AppIcon(io.max.paperplay.ui.components.EqualizerBoardIcon, "Equalizer", sz, tint = if (eqOn) toggleOnColor() else off) }
                 if (showEq) EqualizerDialog(backend) { showEq = false }
             }
             Spacer(Modifier.width(8.dp))

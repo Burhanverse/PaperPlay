@@ -77,7 +77,7 @@ internal fun EqualizerPage(backend: CoreBackend) {
 
 @Composable
 internal fun EqualizerContent(on: Boolean, gains: List<Float>, onToggle: (Boolean) -> Unit, onGains: (List<Float>) -> Unit, bass: Float = 0f, onBass: ((Float) -> Unit)? = null) {
-    SwitchRow("Equalizer", on, onToggle, Icons.Rounded.Equalizer, "Applies to this device only")
+    SwitchRow("Equalizer", on, onToggle, io.max.paperplay.ui.components.EqualizerBoardIcon, "Applies to this device only")
     val preset = eqPresets.entries.firstOrNull { e -> e.value.zip(gains).all { (a, b) -> kotlin.math.abs(a - b) < 0.05f } }?.key
     SectionLabel("Response")
     var drag by remember(gains) { mutableStateOf(gains) }

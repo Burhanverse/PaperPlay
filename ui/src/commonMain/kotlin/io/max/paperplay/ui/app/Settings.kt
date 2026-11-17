@@ -389,7 +389,7 @@ internal fun SettingsPage(
         "listening" -> {
             NavRow("Listening statistics", "Time listened, top songs and artists", Icons.Rounded.BarChart) { stack.add("stats") }
             NavRow("ListenBrainz", "Send what you listen to", Icons.Rounded.Sync) { stack.add("listenbrainz") }
-            NavRow("Equalizer", icon = Icons.Rounded.Equalizer) { stack.add("eq") }
+            NavRow("Equalizer", icon = io.max.paperplay.ui.components.EqualizerBoardIcon) { stack.add("eq") }
             val levelOn by backend.normalizeOn.collectAsState()
             SwitchRow("Even out loudness", levelOn, backend::setNormalize, Icons.Rounded.GraphicEq,
                 if (isPhone) "Pulls loud peaks down and lifts quiet songs. Needs Android 9 or newer" else "Evens out loud and quiet songs. Applies from the next song")
@@ -405,7 +405,7 @@ internal fun SettingsPage(
                     "Previous, play or pause and next under the taskbar preview of the window. Restart to apply")
                 var profileOpen by remember { mutableStateOf(false) }
                 val profile by backend.correctionProfile.collectAsState()
-                SettingsRow("Earphone correction profile", icon = Icons.Rounded.Equalizer,
+                SettingsRow("Earphone correction profile", icon = io.max.paperplay.ui.components.EqualizerBoardIcon,
                     subtitle = if (profile.isBlank()) "None. mpv engine only" else "On, ${io.max.paperplay.player.CorrectionProfile.parse(profile)?.size ?: 0} points",
                     onClick = { profileOpen = true })
                 if (profileOpen) CorrectionProfileDialog(profile, { backend.setCorrectionProfile(it); profileOpen = false }) { profileOpen = false }
