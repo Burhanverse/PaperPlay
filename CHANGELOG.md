@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.7] - 2026-11-17
+
+### Other changes
+- Ui, player: bit-perfect mode on the PC, bass gives back some level, Output info from the player bar ([`f1486e6`](https://github.com/maxcodl/PaperPlay/commit/f1486e6a37eaad3f2c4b2368ddd7465360758f8d))
+
+**Full changes:** [v1.8.6...v1.8.7](https://github.com/maxcodl/PaperPlay/compare/v1.8.6...v1.8.7)
+
 ## [1.8.6] - 2026-11-17
 
 ### Other changes
