@@ -53,6 +53,16 @@ begin
            mbInformation, MB_OK);
 end;
 
+{ The app lives in the tray with no window, so the installer's own close request cannot reach it. End it before files are replaced; the library is a database that recovers from a hard stop. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM PaperPlay.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(800);
+  Result := '';
+end;
+
 { After the app is removed, offer to erase the library, Telegram session and secrets in %APPDATA%\PaperPlay. Silent uninstalls keep them. }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
