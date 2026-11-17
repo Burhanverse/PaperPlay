@@ -40,6 +40,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - No allocation, locks or panics in the audio path; no panic across the FFI line. If the library fails to load, fall back to the Media3 pipeline and log it.
 - Sound changes are judged by ear on the phone, level matched, against the previous build; mark `[~]` in `CHECKLIST.md` until heard working.
 - Plan and status live in the local `ENGINE_PLAN.md` (ignored); keep `CHECKLIST.md` in step.
+- Desktop: the optional mpv engine uses `libmpv-2.dll` through JNA. LGPL build only (the file name contains `lgpl`), never in git (`desktopApp/src/jvmMain/resources/mpv/`); the Windows CI step pins the build and its SHA-256. VLC stays the default until the mpv engine is proven. Tests use `ao=null` so nothing is played aloud.
 
 ## UI
 - Match the neighbours first: copy the row, header, spacing and icon style of the nearest existing screen or list instead of inventing a new one. Reuse the shared composables and theme tokens (`MaterialTheme.colorScheme`, `AppIcon`, `LocalUiPrefs`); no hard-coded colours.
