@@ -65,6 +65,9 @@ fun goneKeyOf(s: Song, rules: SongRules): String =
     "song:${rules.comparableTitle(s)}\u0001${rules.comparableArtist(s)}\u0001${s.duration_sec}"
 
 private const val BATCH = 100
+
+/** Posts per delete call, so the progress on screen moves in small steps. */
+private const val DELETE_STEP = 5
 private val ASK_TIMEOUT = 30.seconds
 
 /**
@@ -174,7 +177,7 @@ class DeleteQueue(
 
     /**
      * Queues repeated posts for deletion after the owner confirmed them: (post to delete, post to keep).
-     * Each post goes after what points at it moves to its keeper, in batches of up to 100.
+     * Each post goes after what points at it moves to its keeper, in batches of 5.
      */
     fun deleteDuplicates(pairs: List<Pair<DuplicatePost, DuplicatePost>>) {
         val running = pump?.isActive == true
@@ -202,7 +205,7 @@ class DeleteQueue(
                 _jobs.update { l -> l.filter { it.key !in dropped } }
                 break
             }
-            val batch = pending.getAndUpdate { it.drop(BATCH) }.take(BATCH)
+            val batch = pending.getAndUpdate { it.drop(DELETE_STEP) }.take(DELETE_STEP)
             for (e in batch) set(e.key, DeleteStatus.Deleting)
             deleteDuplicateBatch(batch)
         }
