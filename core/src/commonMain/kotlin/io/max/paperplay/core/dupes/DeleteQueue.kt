@@ -5,6 +5,7 @@ import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdError
 import io.max.paperplay.core.telegram.request
+import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -65,6 +66,10 @@ fun goneKeyOf(s: Song, rules: SongRules): String =
     "song:${rules.comparableTitle(s)}\u0001${rules.comparableArtist(s)}\u0001${s.duration_sec}"
 
 private const val BATCH = 100
+
+/** Telegram lets a bot delete a post only within 48 hours of sending it (tested: every admin bot refuses older ones). One hour of margin. */
+private const val BOT_DELETE_SECONDS = 47 * 3600L
+private const val TOO_OLD_FOR_BOTS = "Older than 48 hours: Telegram only lets your own account delete this. Log in your account in Settings, Library."
 
 /** Posts per delete call, so the progress on screen moves in small steps. */
 private const val DELETE_STEP = 5
@@ -137,6 +142,7 @@ class DeleteQueue(
     suspend fun deleteSong(s: Song): Int {
         // Only the main chat is ever changed in Telegram, so without one nothing could be deleted there.
         val main = mainChat() ?: throw TdError(0, "Choose a main chat in Settings first; songs are deleted from it.")
+        if (!account.isLoggedIn && s.chat_id == main && s.date > 0 && Clock.System.now().epochSeconds - s.date > BOT_DELETE_SECONDS) throw TdError(400, TOO_OLD_FOR_BOTS)
         val copies = store.postCopiesOf(s.unique_id)
         beforeDelete(s)
         val byChat = linkedMapOf(s.chat_id to mutableListOf(s.message_id))
@@ -351,6 +357,8 @@ class DeleteQueue(
             val keepKey = e.keep.chatId to e.keep.messageId
             when {
                 e.post.chatId != main -> set(e.key, DeleteStatus.Failed, "That post isn't in the main chat.")
+                !account.isLoggedIn && e.post.date > 0 && Clock.System.now().epochSeconds - e.post.date > BOT_DELETE_SECONDS ->
+                    set(e.key, DeleteStatus.Failed, TOO_OLD_FOR_BOTS)
                 keepKey in unsure ->
                     set(e.key, DeleteStatus.Failed, "Couldn't check the post to keep (Telegram is busy). Nothing was deleted; try again.")
                 keepKey !in alive -> {
