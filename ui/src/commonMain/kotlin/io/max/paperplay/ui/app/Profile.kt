@@ -118,6 +118,7 @@ fun ProfileScreen(
                 }
                 NavRow("Scan library", icon = Icons.Rounded.Sync, subtitle = "Read the chats with the bots and account you pick") { onSettings("repair") }
                 NavRow("Tasks", icon = Icons.Rounded.TaskAlt, subtitle = scan?.value?.text ?: "Nothing running", onClick = onTasks)
+                NavRow("Upload songs", icon = Icons.Rounded.Upload, subtitle = "Send songs or a folder to a chat, with speed and queue") { onSettings("uploadhub") }
                 NavRow("Listening", icon = Icons.Rounded.BarChart, subtitle = "Time listened, top songs and artists") { onSettings("stats") }
                 NavRow("Duplicates", icon = Icons.Rounded.ContentCopy, subtitle = "Find repeated songs and remove the extras") { onSettings("dupes") }
                 NavRow("Song info left", icon = Icons.Rounded.Rule, subtitle = "See which songs still lack info or a cover") { onSettings("missing") }

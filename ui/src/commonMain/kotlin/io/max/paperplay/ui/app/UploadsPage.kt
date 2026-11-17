@@ -161,6 +161,44 @@ internal fun UploadsPage(backend: CoreBackend) {
 
         val failed = jobs.count { it.status == UploadStatus.Failed }
         val done = jobs.count { it.status == UploadStatus.Done }
+        // Totals and speed of the whole queue. The speed is the bytes sent in the last seconds, smoothed, and the time left follows from it.
+        val sentBytes = jobs.sumOf { when (it.status) { UploadStatus.Done -> it.size; UploadStatus.Uploading -> (it.size * it.progress).toLong(); else -> 0L } }
+        val totalBytes = jobs.filter { it.status != UploadStatus.Failed }.sumOf { it.size }
+        val sentNow by androidx.compose.runtime.rememberUpdatedState(sentBytes)
+        var speed by remember { mutableStateOf(0.0) }
+        LaunchedEffect(Unit) {
+            var last = sentNow
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                val delta = (sentNow - last).coerceAtLeast(0L)
+                last = sentNow
+                speed = speed * 0.6 + delta * 0.4
+            }
+        }
+        val sending = jobs.count { it.status == UploadStatus.Uploading }
+        val waiting = jobs.count { it.status == UploadStatus.Queued }
+        if (jobs.isNotEmpty()) {
+            val left = (totalBytes - sentBytes).coerceAtLeast(0L)
+            val active = sending > 0 && !paused && speed > 1024
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+                Text(
+                    if (active) "${megabytes(speed.toLong())}/s" else if (paused) "Paused" else if (sending > 0) "Starting" else "Idle",
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    buildString {
+                        append("${megabytes(sentBytes)} of ${megabytes(totalBytes)}")
+                        if (active && left > 0) append(" - about ${duration((left / speed).toLong())} left")
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Sending $sending, waiting $waiting, done $done, failed $failed",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (totalBytes > 0) LinearProgressIndicator(progress = { (sentBytes.toFloat() / totalBytes).coerceIn(0f, 1f) }, Modifier.fillMaxWidth().padding(top = 8.dp))
+            }
+        }
         SectionLabel("Queue (${jobs.size})")
         if (jobs.isEmpty()) {
             Text(if (io.max.paperplay.ui.isPhone) "Nothing is uploading. Songs you choose, or share to Paper Play from another app, wait here." else "Nothing is uploading. Songs you choose, or drop onto the window while this page is open, wait here.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -183,6 +221,15 @@ internal fun UploadsPage(backend: CoreBackend) {
     if (choosing) TargetDialog(chats.map { it.id to it.title }, topics.map { Triple(it.chat_id, it.topic_id, it.name) }, target, { target = it; choosing = false }) { choosing = false }
 }
 
+private fun megabytes(bytes: Long): String =
+    if (bytes >= 1_000_000_000L) "${bytes / 10_000_000 / 100.0} GB" else "${bytes / 100_000 / 10.0} MB"
+
+private fun duration(seconds: Long): String = when {
+    seconds >= 3600 -> "${seconds / 3600} h ${seconds % 3600 / 60} min"
+    seconds >= 60 -> "${seconds / 60} min ${seconds % 60} s"
+    else -> "$seconds s"
+}
+
 @Composable
 private fun JobRow(job: UploadJob, onRetry: () -> Unit, onRemove: () -> Unit) {
     val where = job.topicName?.let { "${job.chatTitle} / $it" } ?: job.chatTitle
@@ -191,7 +238,7 @@ private fun JobRow(job: UploadJob, onRetry: () -> Unit, onRemove: () -> Unit) {
             Text(job.name, maxLines = 1, style = MaterialTheme.typography.titleMedium)
             val sub = when (job.status) {
                 UploadStatus.Queued -> if (job.error != null) "Retrying, attempt ${job.attempts + 1}: ${job.error}" else "Waiting - $where"
-                UploadStatus.Uploading -> where
+                UploadStatus.Uploading -> "$where - ${(job.progress * 100).toInt()}% of ${megabytes(job.size)}"
                 UploadStatus.Done -> "Uploaded to $where"
                 UploadStatus.Failed -> "$where - ${job.error ?: "Failed"}"
             }
