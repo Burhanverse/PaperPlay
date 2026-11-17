@@ -2,6 +2,18 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.5] - 2026-11-17
+
+### Documentation
+- Mpv engine notes and checklist ([`20a15d1`](https://github.com/maxcodl/PaperPlay/commit/20a15d1f4dc7393e08227471f042fe331fd48b65))
+
+### Other changes
+- Player: mpv output info reads the real exclusive setting and names the default device ([`0d62b75`](https://github.com/maxcodl/PaperPlay/commit/0d62b758316b1c82014131ccc68f758e94d5ec85))
+- Ui: PC settings for the mpv engine, exclusive output and correction profile ([`d915b89`](https://github.com/maxcodl/PaperPlay/commit/d915b89a27c6e2d0f449a12d7f48a1f2ed9b897c))
+- Player: mpv engine for the desktop with equalizer, bass, profiles and exclusive output ([`473e388`](https://github.com/maxcodl/PaperPlay/commit/473e3880d9df2c6186dc2087cd285c1882157b1c))
+
+**Full changes:** [v1.8.4...v1.8.5](https://github.com/maxcodl/PaperPlay/compare/v1.8.4...v1.8.5)
+
 ## [1.8.4] - 2026-11-16
 
 ### Documentation
