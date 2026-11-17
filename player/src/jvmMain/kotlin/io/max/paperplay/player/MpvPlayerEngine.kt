@@ -69,7 +69,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         val base = mapOf(
             "vo" to "null", "video" to "no", "audio-display" to "no", "idle" to "yes", "keep-open" to "no",
             "gapless-audio" to "yes", "audio-pitch-correction" to "yes", "replaygain" to "no", "volume-max" to "100",
-            "audio-client-name" to "PaperPlay", "terminal" to "no", "input-default-bindings" to "no", "load-scripts" to "no",
+            "audio-client-name" to "PaperPlay", "ytdl" to "no", "terminal" to "no", "input-default-bindings" to "no", "load-scripts" to "no",
             "cache-secs" to "30", "network-timeout" to "30",
         )
         (base + options).forEach { (k, v) -> val rc = lib.mpv_set_option_string(ctx, k, v); if (rc < 0) PlayLog.log("mpv", "option $k=$v: ${lib.mpv_error_string(rc)}") }
