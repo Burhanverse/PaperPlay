@@ -38,8 +38,9 @@ fun PermissionsPage() {
     }
     var items by remember { mutableStateOf(hooks.check()) }
     // The user can change a setting in another screen and come back, so the list is re-read while the page is open.
-    LaunchedEffect(hooks) {
-        while (true) { items = hooks.check(); delay(1000) }
+    val foreground = io.max.paperplay.ui.rememberAppForeground()
+    LaunchedEffect(hooks, foreground) {
+        while (foreground) { items = hooks.check(); delay(3000) }
     }
     PermissionsContent(items, hooks.request, hooks.openAppSettings)
 }

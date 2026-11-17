@@ -1,6 +1,7 @@
 ﻿package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
+import io.max.paperplay.ui.components.uniqueKeys
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -285,10 +286,11 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
 
 @Composable
 fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: ListActions) {
+    val keys = remember(songs) { songs.map { it.id }.uniqueKeys() }
     Column {
         Section(title)
         LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
-            items(songs.size) { i ->
+            items(songs.size, key = { keys[it] }) { i ->
                 val s = songs[i]
                 MediaCard(s.coverUri, s.id, s.title, s.artist, titleColor = if (s.id == currentId) MaterialTheme.colorScheme.primary else null) { actions.play(songs, i) }
             }

@@ -62,6 +62,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.components.AppIcon
+import io.max.paperplay.ui.components.uniqueKeys
 import io.max.paperplay.ui.components.CoverImage
 import io.max.paperplay.ui.logic.formatDuration
 import io.max.paperplay.ui.state.PlaybackUiState
@@ -215,13 +216,14 @@ fun HoverSeek(progress: () -> Float, durationMs: Long, onSeek: (Float) -> Unit, 
 private fun NowPlayingQueue(state: PlaybackUiState, backend: PlayerControls, modifier: Modifier) {
     val ink = MaterialTheme.colorScheme.onPrimaryContainer
     val list = rememberLazyListState()
-    LaunchedEffect(state.queueIndex) { if (state.queueIndex > 0) list.scrollToItem(state.queueIndex - 1) }
+    LaunchedEffect(state.queueIndex) { if (state.queueIndex > 0) list.animateScrollToItem(state.queueIndex - 1) }
+    val keys = remember(state.queue) { state.queue.map { it.id }.uniqueKeys() }
     Column(modifier) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
-            itemsIndexed(state.queue) { i, s ->
+            itemsIndexed(state.queue, key = { i, _ -> keys[i] }) { i, s ->
                 val on = i == state.queueIndex
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                    Modifier.animateItem().fillMaxWidth().clip(RoundedCornerShape(8.dp))
                         .background(if (on) ink.copy(alpha = 0.12f) else Color.Transparent)
                         .clickable { backend.playQueueIndex(i) }.padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,

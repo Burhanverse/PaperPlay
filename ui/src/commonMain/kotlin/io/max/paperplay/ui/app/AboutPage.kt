@@ -73,7 +73,7 @@ private fun InstallMethod(updates: UpdateService) {
         while (true) {
             status = shizukuStatus(shizuku)
             useShizuku = updates.prefs.shizuku // the install button can switch back to the system installer
-            kotlinx.coroutines.delay(1000)
+            kotlinx.coroutines.delay(3000)
         }
     }
     DropdownRow(

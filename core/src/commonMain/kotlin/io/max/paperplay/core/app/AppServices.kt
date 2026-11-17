@@ -196,6 +196,8 @@ class AppServices(
             var followTicks = 0
             while (true) {
                 kotlinx.coroutines.delay(500)
+                // No linked device and no other output: nothing to send or follow, so sleep longer.
+                if (lan.connected.value.isEmpty() && _activeOutput.value == null) { kotlinx.coroutines.delay(2_000); continue }
                 val started = playbackStarted
                 val np = if (started) playback.nowPlayingStatic.value else null
                 val uid = np?.song?.unique_id

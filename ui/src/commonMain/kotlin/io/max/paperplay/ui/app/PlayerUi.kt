@@ -1,6 +1,7 @@
 ﻿package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
+import io.max.paperplay.ui.components.uniqueKeys
 import io.max.paperplay.ui.components.toggleOnColor
 import io.max.paperplay.ui.theme.motionItem
 import kotlinx.coroutines.launch
@@ -471,7 +472,9 @@ fun CoverTinted(uri: String?, content: @Composable (ColorScheme?) -> Unit) {
 fun NowPlayingPanel(state: PlaybackUiState, backend: PlayerControls, actions: ListActions, onOpen: () -> Unit, onHide: () -> Unit, modifier: Modifier = Modifier) {
     val song = state.current ?: return
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+
     val next = remember(state.queue, state.queueIndex) { if (state.queueIndex < 0) emptyList() else state.queue.drop(state.queueIndex + 1).take(10) }
+    val nextKeys = remember(next) { next.map { it.id }.uniqueKeys() }
     LazyColumn(modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -502,9 +505,9 @@ fun NowPlayingPanel(state: PlaybackUiState, backend: PlayerControls, actions: Li
             ) { facts.forEach { io.max.paperplay.ui.components.FormatChip(it) } }
             if (next.isNotEmpty()) Text("Next up", Modifier.padding(top = 20.dp, bottom = 6.dp), style = MaterialTheme.typography.titleSmall)
         }
-        itemsIndexed(next) { i, s ->
+        itemsIndexed(next, key = { i, _ -> nextKeys[i] }) { i, s ->
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { backend.playQueueIndex(state.queueIndex + 1 + i) }.padding(vertical = 6.dp),
+                Modifier.animateItem().fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { backend.playQueueIndex(state.queueIndex + 1 + i) }.padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CoverImage(s.coverUri, s.id, size = 40.dp, radius = 6.dp)

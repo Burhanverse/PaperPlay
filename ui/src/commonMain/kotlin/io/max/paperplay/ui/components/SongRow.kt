@@ -91,8 +91,8 @@ fun SongRow(
                 .heightIn(min = 64.dp)
                 .hoverable(hover)
                 // A right click (mouse) opens the same menu as the three dots.
-                .pointerInput(actions != null) {
-                    if (actions == null) return@pointerInput
+                .pointerInput(actions != null && !io.max.paperplay.ui.isPhone) {
+                    if (actions == null || io.max.paperplay.ui.isPhone) return@pointerInput
                     awaitPointerEventScope {
                         while (true) {
                             val e = awaitPointerEvent(PointerEventPass.Initial)
@@ -410,4 +410,10 @@ private fun SongRowNarrowPreview() = io.max.paperplay.ui.PreviewFrame {
         song = previewSong.copy(title = "Arz Kiya Hai (Slowed and Reverb Extended)", artist = "Afusic & AliSoomroMusic", qualityLabel = "FLAC 24/96", lossless = true, sizeBytes = 104_000_000, durationSec = 300),
         onClick = {}, onLongClick = {},
     )
+}
+
+/** Lazy list keys from song ids; a song queued twice gets a suffix, so no two keys match. */
+fun List<String>.uniqueKeys(): List<String> {
+    val seen = HashMap<String, Int>()
+    return map { id -> val n = (seen[id] ?: 0) + 1; seen[id] = n; if (n == 1) id else "$id#$n" }
 }
