@@ -1,6 +1,7 @@
 package io.max.paperplay.core.app
 
 import io.max.paperplay.core.library.LibraryChat
+import io.max.paperplay.core.library.EnrichState
 import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdError
@@ -44,14 +45,47 @@ val audioExtensions = setOf(
 
 private val LEADING_NUMBER = Regex("^\\s*\\d{1,3}\\s*[.\\-)]\\s*")
 
-/** Splits `01. Artist - Title.mp3` into (artist, title); artist may be empty. */
-fun parseFileName(fileName: String): Pair<String, String> {
+private val VERSION_WORD = Regex(
+    "(?i)\\b(lo-?fi|remix|edit|version|mix|live|cover|remaster(ed)?|instrumental|acoustic|flip|slowed|reverb|sped up|rework|bootleg|demo|" +
+        "ambient|chill|sleep|rainy|reprise|unplugged|extended|radio|club|dub)\\b",
+)
+
+private fun cleanName(fileName: String): String {
     val dot = fileName.lastIndexOf('.')
-    val name = (if (dot > 0) fileName.substring(0, dot) else fileName)
+    return (if (dot > 0) fileName.substring(0, dot) else fileName)
         .replace('_', ' ').replaceFirst(LEADING_NUMBER, "").trim()
+}
+
+/** The plain split at the first " - ": the old rule, kept to recognise tags that were written with it. */
+fun parseFileNameFirst(fileName: String): Pair<String, String> {
+    val name = cleanName(fileName)
     val sep = name.indexOf(" - ")
     if (sep < 0) return "" to name
     return name.substring(0, sep).trim() to name.substring(sep + 3).trim()
+}
+
+/**
+ * Splits `01. Artist - Title.mp3` into (artist, title); artist may be empty. A name like `Song - Lofi - Artist & Artist` (the middle parts
+ * are version words such as Lofi, Remix or Cover, the last is not) is read as the song and version first and the artist last.
+ */
+fun parseFileName(fileName: String): Pair<String, String> {
+    val parts = cleanName(fileName).split(" - ").map { it.trim() }
+    if (parts.size >= 3 && !VERSION_WORD.containsMatchIn(parts.last()) && parts.subList(1, parts.size - 1).all { VERSION_WORD.containsMatchIn(it) }) {
+        return parts.last() to parts.dropLast(1).joinToString(" - ")
+    }
+    return parseFileNameFirst(fileName)
+}
+
+/**
+ * Songs saved with names split at the first " - " (song as the artist, "Version - Artists" as the title) are split again with the current
+ * rule, and looked up again for covers and info. Songs edited by hand are left alone. Returns how many changed.
+ */
+fun repairSplitNames(songs: List<Song>): List<Song> = songs.mapNotNull { s ->
+    if (s.user_edited) return@mapNotNull null
+    val (oldArtist, oldTitle) = parseFileNameFirst(s.file_name)
+    val (artist, title) = parseFileName(s.file_name)
+    if ((artist == oldArtist && title == oldTitle) || s.artist != oldArtist || s.title != oldTitle) null
+    else s.copy(artist = artist, title = title, enrich_state = EnrichState.PENDING)
 }
 
 internal fun JsonObject.obj(k: String) = this[k] as? JsonObject
@@ -92,8 +126,11 @@ fun songFromMessage(message: JsonObject): Song? {
     val fileName = payload.str("file_name") ?: ""
     val (nameArtist, nameTitle) = parseFileName(fileName)
     fun tag(k: String) = payload.str(k)?.trim().orEmpty()
-    val title = tag("title").ifEmpty { nameTitle }
-    val artist = tag("performer").ifEmpty { nameArtist }
+    // Tags that are only the filename split at its first " - " are replaced by the better split.
+    val (oldArtist, oldTitle) = parseFileNameFirst(fileName)
+    val oldSplit = tag("title") == oldTitle && tag("performer") == oldArtist
+    val title = if (oldSplit) nameTitle else tag("title").ifEmpty { nameTitle }
+    val artist = if (oldSplit) nameArtist else tag("performer").ifEmpty { nameArtist }
     val size = (file.long("size") ?: 0L).takeIf { it != 0L } ?: file.long("expected_size") ?: 0L
     return Song(
         chat_id = message.long("chat_id") ?: return null,

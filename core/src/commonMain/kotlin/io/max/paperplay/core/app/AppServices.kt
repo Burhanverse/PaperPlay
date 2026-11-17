@@ -475,6 +475,14 @@ class AppServices(
             return
         }
         _error.value = null
+        // Once: songs whose names were split badly ("Song - Lofi - Artist") get their title and artist right, and are looked up again.
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            if (library.pref("split_names_v1") == "done") return@launch
+            val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
+            if (fixed.isNotEmpty()) library.replaceSongs(fixed)
+            library.setPref("split_names_v1", "done")
+            activityLog("Library", "Fixed the title and artist of ${fixed.size} songs named like \"Song - Version - Artist\"")
+        }
         scope.launch {
             try {
                 val key = platform.secrets.get(Keys.TD_KEY) ?: (newUuid() + newUuid()).also { platform.secrets.put(Keys.TD_KEY, it) }
