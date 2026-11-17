@@ -2,6 +2,20 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.8] - 2026-11-17
+
+### Other changes
+- Ui: one details popup for the song and its sound ([`a1ac296`](https://github.com/maxcodl/PaperPlay/commit/a1ac296dca237823d92305fc05111edf6e7fadfd))
+- Ui: bit-perfect button in the PC player bar ([`d61d03a`](https://github.com/maxcodl/PaperPlay/commit/d61d03a113b75e1f0f97cc549fa25a5dfa77a991))
+- Player: mpv engine gives back exclusive output while paused and takes it again on play ([`2fcfdd7`](https://github.com/maxcodl/PaperPlay/commit/2fcfdd77ebf494f48dad8e95dfea683b59636f1b))
+- Memory: trim idle pages when the PC window is hidden, free decoded covers when the phone app is in the background ([`c051b1f`](https://github.com/maxcodl/PaperPlay/commit/c051b1f2ba025ed29935cbd1dd1abed9c3ef1618))
+- Ui, core: a picked cover is shrunk once when saved ([`e396023`](https://github.com/maxcodl/PaperPlay/commit/e3960236ad55520ebc4914aff78c5cd8568f9399))
+- Ui: the page under the full player is not composed while the player covers it ([`31e93be`](https://github.com/maxcodl/PaperPlay/commit/31e93be57991e04efd74e1bef6abef07d3f137c8))
+- Ui: Home keeps recently played on top and folds the other shelves into one row of cards ([`e51aba4`](https://github.com/maxcodl/PaperPlay/commit/e51aba44e4a5b6d9d7884e30f6c3fcbd384ef82f))
+- Installer: end the tray-hidden app before replacing files ([`9a8560f`](https://github.com/maxcodl/PaperPlay/commit/9a8560fdf236e36642e03ae684e1b85c59311077))
+
+**Full changes:** [v1.8.7...v1.8.8](https://github.com/maxcodl/PaperPlay/compare/v1.8.7...v1.8.8)
+
 ## [1.8.7] - 2026-11-17
 
 ### Other changes
