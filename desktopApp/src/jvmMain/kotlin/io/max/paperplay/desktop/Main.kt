@@ -116,6 +116,17 @@ private fun jvmMemoryLine(): String {
         "Threads: ${java.lang.management.ManagementFactory.getThreadMXBean().threadCount}"
 }
 
+/** "playpause", "next", "previous" or "stop" from the keyboard media keys or the taskbar buttons. */
+private fun handleMediaKey(key: String) {
+    val p = (liveServices ?: return).playback
+    when (key) {
+        "playpause" -> if (p.nowPlayingStatic.value.isPlaying) p.pause() else p.play()
+        "next" -> p.next()
+        "previous" -> p.previous()
+        "stop" -> p.pause()
+    }
+}
+
 fun main() {
     if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
         System.getProperty("skiko.renderApi") == null &&
@@ -176,16 +187,7 @@ fun main() {
             }
         }
     }
-    WindowsMedia.start { key ->
-        val s = liveServices ?: return@start
-        val p = s.playback
-        when (key) {
-            "playpause" -> if (p.nowPlayingStatic.value.isPlaying) p.pause() else p.play()
-            "next" -> p.next()
-            "previous" -> p.previous()
-            "stop" -> p.pause()
-        }
-    }
+    WindowsMedia.start(::handleMediaKey)
     application {
         val dir = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PaperPlay")
         val target = desktopRestoreTarget(dir)
@@ -347,6 +349,15 @@ fun main() {
             },
         ) {
             titleBarWindow = window
+            // Taskbar preview buttons (previous, play or pause, next); a switch in Settings turns them off, from the next start.
+            androidx.compose.runtime.LaunchedEffect(window) {
+                kotlinx.coroutines.delay(1_500)
+                if (liveServices?.platform?.settings?.get("taskbar_buttons") != "off") TaskbarButtons.install(window, ::handleMediaKey)
+                while (true) {
+                    kotlinx.coroutines.delay(400)
+                    liveServices?.let { TaskbarButtons.setPlaying(it.playback.nowPlayingStatic.value.isPlaying) }
+                }
+            }
             androidx.compose.runtime.DisposableEffect(window, mainVisible, mainState.isMinimized) {
                 fun update() {
                     val iconified = (window.extendedState and java.awt.Frame.ICONIFIED) != 0
