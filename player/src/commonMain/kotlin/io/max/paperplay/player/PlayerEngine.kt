@@ -111,6 +111,10 @@ interface PlayerEngine {
     fun setEqualizer(gainsDb: List<Float>?) {}
     /** Extra bass in dB (0 to 12) on top of the equalizer; only engines with a DSP stage use it. */
     fun setBass(db: Float) {}
+    /** Exclusive output for bit-perfect playback, where the engine supports it (the mpv engine on Windows). */
+    fun setExclusiveOutput(on: Boolean) {}
+    /** An earphone correction curve in AutoEq GraphicEQ text (see [CorrectionProfile]), or null; engines with a filter chain apply it. */
+    fun setCorrectionProfile(text: String?) {}
     /** Playback speed, 1 is normal. */
     fun setSpeed(speed: Float) {}
     /** Evens out loud and quiet songs. */

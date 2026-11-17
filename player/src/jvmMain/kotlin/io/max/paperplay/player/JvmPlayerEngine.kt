@@ -185,6 +185,7 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
             device = runCatching { mp.audio().outputDevice() }.getOrNull()?.takeIf { it.isNotBlank() } ?: "System default output",
             effects = effects,
             bitPerfect = false,
+            details = listOf("Engine" to "VLC"),
             note = "Windows mixes sound at the format set in Sound settings, so desktop playback is not bit-perfect even with no effects.",
         )
     }
@@ -202,4 +203,15 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     }
 }
 
-actual fun createPlayerEngine(): PlayerEngine = LazyPlayerEngine { JvmPlayerEngine() }
+/** Which engine the desktop uses; set before the player is created (from the saved choice). VLC is the default. */
+object PcEngine {
+    @Volatile var useMpv = false
+    /** Whether the mpv library was found, for a message in the settings. */
+    val mpvFound: Boolean get() = MpvLoader.available
+}
+
+actual fun createPlayerEngine(): PlayerEngine = LazyPlayerEngine {
+    val lib = if (PcEngine.useMpv) MpvLoader.lib else null
+    if (PcEngine.useMpv && lib == null) PlayLog.log("mpv", "the mpv library was not found, so VLC plays")
+    if (lib != null) MpvPlayerEngine(lib) else JvmPlayerEngine()
+}

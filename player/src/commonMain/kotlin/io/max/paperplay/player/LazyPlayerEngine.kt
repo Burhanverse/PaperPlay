@@ -42,6 +42,9 @@ class LazyPlayerEngine(
     private var pendingVolume: Float? = null
     private var pendingEq: List<Float>? = null
     private var pendingBass: Float? = null
+    private var pendingExclusive: Boolean? = null
+    private var pendingProfile: String? = null
+    private var profileSet = false
     private var pendingSpeed: Float? = null
     private var pendingNormalize: Boolean? = null
 
@@ -67,6 +70,8 @@ class LazyPlayerEngine(
             pendingVolume?.let { engine.setVolume(it) }
             pendingEq?.let { engine.setEqualizer(it) }
             pendingBass?.let { engine.setBass(it) }
+            pendingExclusive?.let { engine.setExclusiveOutput(it) }
+            if (profileSet) engine.setCorrectionProfile(pendingProfile)
             pendingSpeed?.let { engine.setSpeed(it) }
             pendingNormalize?.let { engine.setNormalize(it) }
 
@@ -149,6 +154,17 @@ class LazyPlayerEngine(
     override fun setVolume(volume: Float) {
         pendingVolume = volume
         real?.setVolume(volume)
+    }
+
+    override fun setExclusiveOutput(on: Boolean) {
+        pendingExclusive = on
+        real?.setExclusiveOutput(on)
+    }
+
+    override fun setCorrectionProfile(text: String?) {
+        pendingProfile = text
+        profileSet = true
+        real?.setCorrectionProfile(text)
     }
 
     override fun setBass(db: Float) {
