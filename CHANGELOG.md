@@ -2,6 +2,15 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.8.11] - 2026-11-17
+
+### Other changes
+- Player: bit-perfect opens the device at each song's own rate and takes exclusive output again on every new song ([`1b63230`](https://github.com/maxcodl/PaperPlay/commit/1b63230c59ec35b28b1c4a97d613f7d6fc1541d3))
+- Ui: toggle buttons show a fill when on ([`f2df8cb`](https://github.com/maxcodl/PaperPlay/commit/f2df8cb0644be4459c1e9c5a282913d9642b850e))
+- Ui: smaller logo and version text in the Profile About row ([`2dddafb`](https://github.com/maxcodl/PaperPlay/commit/2dddafb14d3433bcdd16652b8a8607c5c93edb77))
+
+**Full changes:** [v1.8.10...v1.8.11](https://github.com/maxcodl/PaperPlay/compare/v1.8.10...v1.8.11)
+
 ## [1.8.10] - 2026-11-17
 
 ### Documentation
