@@ -29,7 +29,10 @@ class DesktopPlatform(dir: File) : Platform {
         Executors.newSingleThreadExecutor { Thread(it, "td-receive").apply { isDaemon = true } }.asCoroutineDispatcher()
 
     override fun openDriver(path: String): SqlDriver = openLibraryDriver(path)
-    override fun createPlayer(): PlayerEngine = createPlayerEngine()
+    override fun createPlayer(): PlayerEngine {
+        io.max.paperplay.player.PcEngine.useMpv = settings.get("pc_engine") == "mpv"
+        return createPlayerEngine()
+    }
     override val deviceModel: String get() = System.getProperty("os.name") ?: "Desktop"
     override fun deleteAllData() {
         File(dataDir).listFiles()?.forEach { it.deleteRecursively() }

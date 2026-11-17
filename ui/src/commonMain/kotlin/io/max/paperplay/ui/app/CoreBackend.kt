@@ -543,6 +543,28 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     private val _outputInfo = MutableStateFlow<io.max.paperplay.player.OutputInfo?>(null)
     override val outputInfo: StateFlow<io.max.paperplay.player.OutputInfo?> = _outputInfo
 
+    /** PC only: which audio engine plays (vlc or mpv; read when the app starts, so a change applies after a restart). */
+    fun pcEngine(): String = services.platform.settings.get("pc_engine") ?: "vlc"
+    fun setPcEngine(engine: String) { services.platform.settings.put("pc_engine", engine) }
+
+    /** PC only (mpv engine): exclusive output for bit-perfect playback. */
+    val exclusiveOutput = MutableStateFlow(repo.pref("pc_exclusive") == "true")
+
+    fun setExclusiveOutput(on: Boolean) {
+        exclusiveOutput.value = on
+        repo.setPref("pc_exclusive", "$on")
+        if (playerStarted.value) player.setExclusiveOutput(on)
+    }
+
+    /** PC only (mpv engine): an earphone correction curve in AutoEq GraphicEQ text, empty for none. */
+    val correctionProfile = MutableStateFlow(repo.pref("pc_profile").orEmpty())
+
+    fun setCorrectionProfile(text: String) {
+        correctionProfile.value = text
+        repo.setPref("pc_profile", text)
+        if (playerStarted.value) player.setCorrectionProfile(text.takeIf { it.isNotBlank() })
+    }
+
     override val eqBass = MutableStateFlow(repo.pref("eq_bass")?.toFloatOrNull() ?: 0f)
 
     override fun setEqBass(db: Float) {
@@ -796,6 +818,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         services.playback.also { p ->
             scope.launch { p.outputInfo.collect { _outputInfo.value = it } }
             if (eqOn.value) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
+            if (exclusiveOutput.value) p.setExclusiveOutput(true)
+            correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)
             if (speed.value != 1f) p.setSpeed(speed.value)
             if (normalizeOn.value) p.setNormalize(true)

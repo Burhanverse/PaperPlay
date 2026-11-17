@@ -386,6 +386,20 @@ internal fun SettingsPage(
             val levelOn by backend.normalizeOn.collectAsState()
             SwitchRow("Even out loudness", levelOn, backend::setNormalize, Icons.Rounded.GraphicEq,
                 if (isPhone) "Pulls loud peaks down and lifts quiet songs. Needs Android 9 or newer" else "Evens out loud and quiet songs. Applies from the next song")
+            if (!isPhone) {
+                var engine by remember { mutableStateOf(backend.pcEngine()) }
+                SwitchRow("Use the mpv audio engine", engine == "mpv", { engine = if (it) "mpv" else "vlc"; backend.setPcEngine(engine) }, Icons.Rounded.GraphicEq,
+                    "Equalizer with bass, exclusive output and earphone profiles. Needs libmpv next to the app; without it the player stays on VLC. Restart to apply")
+                val exclusive by backend.exclusiveOutput.collectAsState()
+                SwitchRow("Exclusive output (bit-perfect)", exclusive, backend::setExclusiveOutput, Icons.Rounded.GraphicEq,
+                    "mpv engine only. Takes the sound device for itself so the samples reach it unchanged, with no equalizer or volume change. Other apps are silent meanwhile")
+                var profileOpen by remember { mutableStateOf(false) }
+                val profile by backend.correctionProfile.collectAsState()
+                SettingsRow("Earphone correction profile", icon = Icons.Rounded.Equalizer,
+                    subtitle = if (profile.isBlank()) "None. mpv engine only" else "On, ${io.max.paperplay.player.CorrectionProfile.parse(profile)?.size ?: 0} points",
+                    onClick = { profileOpen = true })
+                if (profileOpen) CorrectionProfileDialog(profile, { backend.setCorrectionProfile(it); profileOpen = false }) { profileOpen = false }
+            }
             var restore by remember { mutableStateOf(backend.sessionRestore) }
             SwitchRow("Restore last session", restore, { restore = it; backend.setSessionRestore(it) }, Icons.Rounded.Sync,
                 "Opens with the last queue and position, paused")

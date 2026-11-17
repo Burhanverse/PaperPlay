@@ -230,3 +230,28 @@ private fun ListenBrainzDesktopPreview() {
         Column(Modifier.size(1024.dp, 400.dp)) { ListenBrainzContent("maxcodl", {}, { null }) }
     }
 }
+
+/** Paste an AutoEq GraphicEQ line for the earphones in use; the mpv engine applies it as an exact response. */
+@Composable
+internal fun CorrectionProfileDialog(current: String, onSave: (String) -> Unit, onClose: () -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    val valid = text.isBlank() || io.max.paperplay.player.CorrectionProfile.parse(text) != null
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Earphone correction profile") },
+        text = {
+            Column {
+                Text(
+                    "Paste the GraphicEQ line from the AutoEq results for your earphones (a file ending in GraphicEQ.txt), or pick one below.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth().padding(top = 8.dp), maxLines = 6, isError = !valid, label = { Text("GraphicEQ: 20 -4.0; 21 -4.2; ...") })
+                if (!valid) Text("This does not look like a GraphicEQ line.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                androidx.compose.material3.TextButton({ text = io.max.paperplay.player.CorrectionProfile.MOONDROP_CHU_2 }) { Text("Use Moondrop Chu 2") }
+                androidx.compose.material3.TextButton({ text = "" }) { Text("Clear") }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton({ onSave(text.trim()) }, enabled = valid) { Text("Save") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClose) { Text("Cancel") } },
+    )
+}
