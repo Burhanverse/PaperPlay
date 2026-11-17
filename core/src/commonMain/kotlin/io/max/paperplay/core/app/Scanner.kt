@@ -339,14 +339,18 @@ class Scanner(
     }
 
     /**
-     * [via] reads through another client (an extra bot) and [owner] is that bot's id: it adds only songs the library lacks,
-     * marks them as that bot's (see [botRemote]) and never changes the saved scan position.
+     * [via] reads through another client (an extra bot) and [owner] is that bot's id: it adds the songs the library lacks and
+     * takes over the ones the library holds as account songs (nothing else is changed, so a song the main bot or another bot
+     * owns stays theirs), marks them as that bot's (see [botRemote]) and never changes the saved scan position.
      */
     suspend fun scanChat(chat: LibraryChat, full: Boolean = false, endHint: Long = 0, via: TdClient? = null, owner: Long = 0L): Set<Long>? {
         val client = via ?: td ?: return null
         val persist = owner == 0L
         val rows = repo.songsInChat(chat.id)
         val have = if (persist) emptySet() else rows.map { it.message_id }.toSet()
+        // Songs saved as account songs play only through the account; a bot that can read the post can own them instead.
+        val accountOnly = if (persist) emptySet() else rows.filter { it.remote_id == ACCOUNT_REMOTE }.map { it.message_id }.toSet()
+        var claimed = 0
         val last = chat.last_scanned_message_id
         var next = if (full || last == null) MESSAGE_ID_STEP else last + MESSAGE_ID_STEP
         var newest = last ?: 0
@@ -444,7 +448,8 @@ class Scanner(
                         val song = songFromMessage(m) ?: continue
                         seen += song.message_id
                         if (persist) { if (repo.repo.upsertBotSong(song)) added++ }
-                        else if (song.message_id !in have && repo.repo.upsertBotSong(song.copy(remote_id = botRemote(owner, song.remote_id)))) added++
+                        else if (song.message_id !in have) { if (repo.repo.upsertBotSong(song.copy(remote_id = botRemote(owner, song.remote_id)))) added++ }
+                        else if (song.message_id in accountOnly) { repo.repo.upsertBotSong(song.copy(remote_id = botRemote(owner, song.remote_id))); claimed++ }
                     }
                 }
                 repo.invalidate()
@@ -479,7 +484,7 @@ class Scanner(
                 if (window.isEmpty()) delay(pause)
             }
             if (persist) repo.setScan(chat.id, newest, true)
-            _report.value = "${chat.title}${if (persist) "" else " (extra bot)"}: ${seen.size} song posts read up to message ${newest / MESSAGE_ID_STEP}, $added new, $recovered found on a second ask, $holes ids held nothing"
+            _report.value = "${chat.title}${if (persist) "" else " (extra bot)"}: ${seen.size} song posts read up to message ${newest / MESSAGE_ID_STEP}, $added new${if (claimed > 0) ", $claimed taken over from the account" else ""}, $recovered found on a second ask, $holes ids held nothing"
             if (!full && persist) caughtUp.update { it + chat.id }
             return seen
         } catch (e: TdError) {
