@@ -57,8 +57,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Full-width page header with no box behind it. */
+/** The top bar of a page: plain on Material, a glass bar when the Top bars part is set to Glass on the Appearance page. */
 @Composable
-fun Modifier.barSurface(): Modifier = fillMaxWidth()
+fun Modifier.barSurface(): Modifier =
+    if (!glassLook(LookGroup.Bars)) fillMaxWidth()
+    else fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp).partSurface(LookGroup.Bars, MaterialTheme.colorScheme.surfaceContainerLow, appShape(20.dp))
 
 /** Large title with actions on the right, like the Flutter top bars. */
 @Composable

@@ -196,7 +196,14 @@ fun Sidebar(
         ) {
             icon()
             if (expanded) {
-                Text(label, Modifier.padding(start = 12.dp).weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge, fontWeight = if (selected) FontWeight.Bold else null)
+                Text(
+                    label, Modifier.padding(start = 12.dp).weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (selected) FontWeight.Bold else null,
+                    // The Text look marks the open page by colouring its name.
+                    color = if (selected && look == SelectionLook.Text) scheme.primary else Color.Unspecified,
+                )
+                // The Dot look marks it with a small dot.
+                if (selected && look == SelectionLook.Dot) Box(Modifier.padding(end = 4.dp).size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(scheme.primary))
                 trailing?.invoke()
             }
         }
