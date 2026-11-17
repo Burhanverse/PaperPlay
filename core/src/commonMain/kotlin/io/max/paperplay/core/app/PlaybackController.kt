@@ -303,32 +303,37 @@ class PlaybackController(
     }
 
     fun play() {
-        if (engine.state.value == PlayerState.Paused && baseVolume > 0f) {
+        if (!engine.bypassSoftwareFade && engine.state.value == PlayerState.Paused && baseVolume > 0f) {
             fadeJob?.cancel()
             engine.setVolume(0f)
             engine.play()
             fade(baseVolume, 0f)
         } else {
             fadeJob?.cancel()
-            engine.setVolume(baseVolume)
+            if (!engine.bypassSoftwareFade) {
+                engine.setVolume(baseVolume)
+            }
             engine.play()
         }
     }
 
     /** Pausing a playing song fades out over a fifth of a second, then pauses. */
     fun pause() {
-        if (engine.state.value == PlayerState.Playing && baseVolume > 0f) {
+        if (!engine.bypassSoftwareFade && engine.state.value == PlayerState.Playing && baseVolume > 0f) {
             fade(0f, baseVolume) { engine.pause(); engine.setVolume(baseVolume) }
         } else {
             fadeJob?.cancel()
             engine.pause()
-            engine.setVolume(baseVolume)
+            if (!engine.bypassSoftwareFade) {
+                engine.setVolume(baseVolume)
+            }
         }
         scope.launch { runCatching { resolver.pauseAll() } }
     }
     fun seek(positionMs: Long) = engine.seek(positionMs)
     fun setVolume(volume: Float) { baseVolume = volume; if (fadeJob?.isActive != true) engine.setVolume(volume) }
     val outputInfo get() = engine.outputInfo
+    val usbExclusiveStatus get() = engine.usbExclusiveStatus
     fun setEqualizer(gainsDb: List<Float>?) = engine.setEqualizer(gainsDb)
     fun setBass(db: Float) = engine.setBass(db)
     fun setExactLevel(on: Boolean) = engine.setExactLevel(on)
@@ -337,6 +342,17 @@ class PlaybackController(
     fun setEarphoneCorrection(text: String?) = engine.setEarphoneCorrection(text)
     fun setEngineOptions(bits: Int) = engine.setEngineOptions(bits)
     fun setExclusiveOutput(on: Boolean) = engine.setExclusiveOutput(on)
+    fun setUsbExclusive(on: Boolean) = engine.setUsbExclusive(on)
+    fun setSinkChain(mode: String) = engine.setSinkChain(mode)
+    fun getSinkChain(): String = engine.getSinkChain()
+    suspend fun runUsbProbe(): String = engine.runUsbProbe()
+    suspend fun runUsbPlaybackTest(): String = engine.runUsbPlaybackTest()
+    fun requestUsbPermission() = engine.requestUsbPermission()
+    suspend fun exportUsbDebugLog(): String = engine.exportUsbDebugLog()
+    fun triggerUsbPcmDump(enable: Boolean = true): String = engine.triggerUsbPcmDump(enable)
+    fun getUsbPcmDumpStatus(): String = engine.getUsbPcmDumpStatus()
+    fun getUsbPcmDumpPath(): String? = engine.getUsbPcmDumpPath()
+    fun getLastUsbFallbackLogPath(): String? = engine.getLastUsbFallbackLogPath()
     fun setCorrectionProfile(text: String?) = engine.setCorrectionProfile(text)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)
     fun setNormalize(on: Boolean) = engine.setNormalize(on)

@@ -65,7 +65,15 @@ internal class StreamDataSource(private val sources: Map<String, StreamSource>) 
         }
         val ms = (System.nanoTime() - t0) / 1_000_000
         reads++
-        if (firstRead) { firstRead = false; PlayLog.log("stream", "first read: ${chunk.size} bytes at $position took ${ms}ms") }
+        if (firstRead) {
+            firstRead = false
+            PlayLog.log("stream", "first read: ${chunk.size} bytes at $position took ${ms}ms")
+            io.max.paperplay.player.usb.UsbRingLog.record(
+                "StreamDataSource",
+                "first read: ${chunk.size} bytes at $position took ${ms}ms (uri=$uri)",
+                io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC
+            )
+        }
         else if (ms >= 1000) PlayLog.log("stream", "slow read: ${chunk.size} bytes at $position took ${ms}ms")
         if (chunk.isEmpty()) {
             PlayLog.log("stream", "EMPTY read at byte $position of ${source?.size} (wanted $want, $remaining still promised): the player takes this as the end of the song")

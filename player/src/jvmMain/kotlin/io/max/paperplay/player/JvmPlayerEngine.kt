@@ -215,3 +215,5 @@ actual fun createPlayerEngine(): PlayerEngine = LazyPlayerEngine {
     if (PcEngine.useMpv && lib == null) PlayLog.log("mpv", "the mpv library was not found, so VLC plays")
     if (lib != null) MpvPlayerEngine(lib) else JvmPlayerEngine()
 }
+
+actual fun persistUsbExclusivePreference(on: Boolean) {}

@@ -2,6 +2,18 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [Unreleased]
+
+### Added
+- Player: USB direct exclusive audio playback (UAC 1.0 & UAC 2.0) via raw usbfs ioctls and isochronous streaming
+- Player: Bit-perfect audio path bypassing software resamplers, DSP, and software volume scaling
+- Player: UAC Feature Unit hardware volume control with GET_CUR verification and zero digital attenuation
+- Player: Clean-room decoders for FLAC (claxon), WAV (hound), and Sony DSF / Philips DFF with DoP (DSD over PCM) and native DSD packing
+- Player: Screen-off and Doze CPU wakelock via Media3 C.WAKE_MODE_LOCAL and hot-unplug recovery with kernel driver reattachment (USBDEVFS_CONNECT)
+- Ui: Settings > Audio > "USB exclusive mode" page with bit-perfect indicator, device info, active rate/bit depth/endpoint mode, and live underrun diagnostics
+- Ui: Settings > Audio > "USB probe" on-device diagnostic spike with descriptor parsing, Android 14 mixer checks, and direct control transfer tests
+- Player: In-memory zero-allocation ring log (UsbRingLog), native streamer log export, automatic fallback log capture, and share sheet export
+
 ## [1.9.12] - 2026-11-19
 
 ### Documentation

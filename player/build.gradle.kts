@@ -13,13 +13,21 @@ kotlin {
     jvm()
     sourceSets {
         commonMain.dependencies { api(libs.coroutines.core) }
-        androidMain.dependencies {
-            api(libs.media3.exoplayer)
-            api(libs.media3.session)
+        commonTest.dependencies { implementation(kotlin("test")) }
+        val javaSrc = "src/javaMain/kotlin"
+        androidMain {
+            kotlin.srcDir(javaSrc)
+            dependencies {
+                api(libs.media3.exoplayer)
+                api(libs.media3.session)
+            }
         }
-        jvmMain.dependencies {
-            implementation(libs.vlcj)
-            implementation(libs.jna)
+        jvmMain {
+            kotlin.srcDir(javaSrc)
+            dependencies {
+                implementation(libs.vlcj)
+                implementation(libs.jna)
+            }
         }
         jvmTest.dependencies { implementation(kotlin("test")) }
     }

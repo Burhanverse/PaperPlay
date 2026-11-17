@@ -4,6 +4,27 @@ import kotlinx.coroutines.flow.StateFlow
 
 enum class PlayerState { Idle, Loading, Playing, Paused, Ended, Error }
 
+/** Developer option selecting the Android audio sink chain for delegate-path diagnostics. */
+enum class SinkChainMode(val id: String, val label: String) {
+    FULL("full", "Full"),
+    NO_DSP_FLOAT_ON("no_dsp_float_on", "No DSP (float on)"),
+    NO_DSP_FLOAT_OFF("no_dsp_float_off", "No DSP (float off)"),
+    PLAIN_FLOAT_OFF("plain_float_off", "Plain (float off)"),
+    PLAIN_FLOAT_ON("plain_float_on", "Plain (float on)");
+
+    val isPlain: Boolean get() = this == PLAIN_FLOAT_OFF || this == PLAIN_FLOAT_ON
+    val isNoDsp: Boolean get() = this == NO_DSP_FLOAT_ON || this == NO_DSP_FLOAT_OFF
+    val sinkFloatOutput: Boolean get() = this == FULL || this == NO_DSP_FLOAT_ON || this == PLAIN_FLOAT_ON
+
+    companion object {
+        fun fromId(id: String?): SinkChainMode = when (id) {
+            "no_dsp" -> NO_DSP_FLOAT_ON
+            "plain" -> PLAIN_FLOAT_OFF
+            else -> entries.firstOrNull { it.id == id } ?: FULL
+        }
+    }
+}
+
 /** Random-access byte source, e.g. a partially downloaded Telegram file. */
 interface StreamSource {
     /** Total size in bytes. */
@@ -81,6 +102,7 @@ data class OutputInfo(
 )
 
 internal val NoOutputInfo: StateFlow<OutputInfo?> = kotlinx.coroutines.flow.MutableStateFlow(null)
+internal val NoUsbExclusiveStatus: StateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?> = kotlinx.coroutines.flow.MutableStateFlow(null)
 
 interface PlayerEngine {
     val state: StateFlow<PlayerState>
@@ -105,8 +127,28 @@ interface PlayerEngine {
     fun seek(positionMs: Long)
     /** 0 to 1. */
     fun setVolume(volume: Float)
+    /** Whether the active audio output bypasses software fades (e.g. exclusive USB mode with native hardware gain ramps). */
+    val bypassSoftwareFade: Boolean get() = false
     /** Describes the current track's source format and output path; null until known. */
     val outputInfo: StateFlow<OutputInfo?> get() = NoOutputInfo
+    /** USB exclusive mode hardware and streaming diagnostics status. */
+    val usbExclusiveStatus: StateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?> get() = NoUsbExclusiveStatus
+    /** Runs hardware diagnostics and probe on a connected USB DAC. */
+    suspend fun runUsbProbe(): String = "USB probe is only supported on Android."
+    /** Runs end-to-end device playback test with two real files through the real renderer chain. */
+    open suspend fun runUsbPlaybackTest(): String = "USB playback test is only supported on Android."
+    /** Requests USB host runtime permission for the connected USB DAC if needed. */
+    open fun requestUsbPermission() {}
+    /** Exports full USB exclusive mode in-memory ring log and system logcat to a file in shared storage. */
+    suspend fun exportUsbDebugLog(): String = "USB debug log is only supported on Android."
+    /** Arms or disarms the 30-second raw USB PCM dumper for bit-perfect analysis. */
+    open fun triggerUsbPcmDump(enable: Boolean = true): String = "USB PCM dump is only supported on Android."
+    /** Returns current status of the USB PCM dumper. */
+    open fun getUsbPcmDumpStatus(): String = "Off"
+    /** Returns path to the last captured USB PCM dump if available. */
+    open fun getUsbPcmDumpPath(): String? = null
+    /** Returns the absolute path of the last automatic fallback log file if one exists. */
+    fun getLastUsbFallbackLogPath(): String? = null
     /** Gains in dB for the bands of [EQ_BANDS_HZ], or null to turn the equalizer off. */
     fun setEqualizer(gainsDb: List<Float>?) {}
     /** Extra bass in dB (0 to 12) on top of the equalizer; only engines with a DSP stage use it. */
@@ -123,6 +165,12 @@ interface PlayerEngine {
     fun setEngineOptions(bits: Int) {}
     /** Exclusive output for bit-perfect playback, where the engine supports it (the mpv engine on Windows). */
     fun setExclusiveOutput(on: Boolean) {}
+    /** USB exclusive output for bit-perfect playback (Android USB DAC). */
+    fun setUsbExclusive(on: Boolean) {}
+    /** Developer option: Android sink chain mode ("full", "no_dsp", "plain"). */
+    fun setSinkChain(mode: String) {}
+    /** Returns the currently configured Android sink chain mode id. */
+    fun getSinkChain(): String = SinkChainMode.FULL.id
     /** An earphone correction curve in AutoEq GraphicEQ text (see [CorrectionProfile]), or null; engines with a filter chain apply it. */
     fun setCorrectionProfile(text: String?) {}
     /** Playback speed, 1 is normal. */
@@ -135,3 +183,6 @@ interface PlayerEngine {
 }
 
 expect fun createPlayerEngine(): PlayerEngine
+
+/** Persists and applies the USB exclusive mode preference without starting the player engine. */
+expect fun persistUsbExclusivePreference(on: Boolean)

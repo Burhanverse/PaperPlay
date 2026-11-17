@@ -676,6 +676,43 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         if (playerStarted.value) player.setExclusiveOutput(on || bitPerfect.value)
     }
 
+    /** USB direct isochronous audio playback (bit-perfect exclusive mode). */
+    val usbExclusiveMode = MutableStateFlow((repo.pref("usb_exclusive_mode") ?: "true") == "true")
+    val usbExclusiveStatus: StateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?> get() = services.playback.usbExclusiveStatus
+
+    fun setUsbExclusiveMode(on: Boolean) {
+        usbExclusiveMode.value = on
+        repo.setPref("usb_exclusive_mode", "$on")
+        if (playerStarted.value) player.setUsbExclusive(on)
+        else services.playback.setUsbExclusive(on)
+    }
+
+    /** Hidden developer options (unlocked by 7 taps on version in About). */
+    val devOptionsUnlocked = MutableStateFlow(repo.pref("dev_options") == "true")
+    fun unlockDevOptions() {
+        devOptionsUnlocked.value = true
+        repo.setPref("dev_options", "true")
+    }
+
+    /** Developer option: Android audio sink chain ("full", "no_dsp", "plain"). */
+    val sinkChain = MutableStateFlow(repo.pref("sink_chain") ?: io.max.paperplay.player.SinkChainMode.FULL.id)
+    fun setSinkChain(mode: String) {
+        val valid = io.max.paperplay.player.SinkChainMode.fromId(mode).id
+        sinkChain.value = valid
+        repo.setPref("sink_chain", valid)
+        if (playerStarted.value) player.setSinkChain(valid)
+        else services.playback.setSinkChain(valid)
+    }
+
+    suspend fun runUsbProbe(): String = services.playback.runUsbProbe()
+    suspend fun runUsbPlaybackTest(): String = services.playback.runUsbPlaybackTest()
+    fun requestUsbPermission() = services.playback.requestUsbPermission()
+    suspend fun exportUsbDebugLog(): String = services.playback.exportUsbDebugLog()
+    fun triggerUsbPcmDump(enable: Boolean = true): String = services.playback.triggerUsbPcmDump(enable)
+    fun getUsbPcmDumpStatus(): String = services.playback.getUsbPcmDumpStatus()
+    fun getUsbPcmDumpPath(): String? = services.playback.getUsbPcmDumpPath()
+    fun getLastUsbFallbackLogPath(): String? = services.playback.getLastUsbFallbackLogPath()
+
     /** PC only (mpv engine): an earphone correction curve in AutoEq GraphicEQ text, empty for none. */
     val correctionProfile = MutableStateFlow(repo.pref("pc_profile").orEmpty())
 
@@ -835,6 +872,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     init {
         io.max.paperplay.core.app.MemoryProbe.start(scope) { "Jobs: ${tasks.running.value.size}" }
+        // Clean up legacy volume limit and calibration preferences
+        repo.setPref("usb_max_vol_limit_db", "")
     }
 
     fun addLog(source: String, message: String, error: Boolean = false) {
@@ -1059,6 +1098,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 p.setEngineOptions(eqOptions.value)
             }
             if (exclusiveOutput.value || bp) p.setExclusiveOutput(true)
+            p.setUsbExclusive(usbExclusiveMode.value)
+            p.setSinkChain(sinkChain.value)
             if (!bp) correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)
             if (speed.value != 1f) p.setSpeed(speed.value)
@@ -1287,8 +1328,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
     override fun setVolume(v: Float) {
         volume.value = v.coerceIn(0f, 1f)
-        if (systemVolume) {
+        val isUsb = usbExclusiveMode.value && (usbExclusiveStatus.value?.isConnected == true)
+        if (systemVolume && !isUsb) {
             scope.launch(Dispatchers.Default) { io.max.paperplay.player.SystemVolume.set(volume.value) }
+            return
+        }
+        if (systemVolume && isUsb) {
+            scope.launch(Dispatchers.Default) { io.max.paperplay.player.SystemVolume.set(volume.value) }
+            repo.setPref("player_volume", volume.value.toString())
             return
         }
         if (playerStarted.value) player.setVolume(volume.value)
@@ -1581,10 +1628,17 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 if (first) {
                     first = false
                     systemVolume = true
-                    // The engine plays at full level; the system volume is the only one.
-                    if (playerStarted.value) player.setVolume(1f)
+                    // The engine plays at full level; the system volume is the only one (except when USB exclusive is active).
+                    val isUsb = usbExclusiveMode.value && (usbExclusiveStatus.value?.isConnected == true)
+                    if (playerStarted.value && !isUsb) player.setVolume(1f)
                 }
-                if (kotlin.math.abs(level - volume.value) > 0.004f) volume.value = level
+                if (kotlin.math.abs(level - volume.value) > 0.004f) {
+                    volume.value = level
+                    val isUsb = usbExclusiveMode.value && (usbExclusiveStatus.value?.isConnected == true)
+                    if (playerStarted.value && isUsb) {
+                        player.setVolume(level)
+                    }
+                }
                 if (!io.max.paperplay.ui.AppForegroundState.isVisible || !playbackMeta.value.playing) {
                     activeFlow.first { it }
                 } else {

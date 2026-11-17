@@ -4,6 +4,9 @@ pub mod features;
 mod extras;
 pub use eq::{Eq, BANDS_HZ};
 
+#[cfg(feature = "usb")]
+pub mod usb;
+
 use jni::objects::{JByteBuffer, JClass, JFloatArray};
 use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;

@@ -20,8 +20,11 @@ internal object PlaybackCore {
     const val EXTRA_EQ_GAINS = "gains"
     const val ACTION_SET_NORMALIZE = "io.max.paperplay.player.SET_NORMALIZE"
     const val EXTRA_NORMALIZE = "on"
+    const val ACTION_SET_SINK_CHAIN = "io.max.paperplay.player.SET_SINK_CHAIN"
+    const val EXTRA_SINK_CHAIN = "mode"
     val CMD_SET_NORMALIZE = SessionCommand(ACTION_SET_NORMALIZE, Bundle.EMPTY)
     val CMD_SET_EQUALIZER = SessionCommand(ACTION_SET_EQUALIZER, Bundle.EMPTY)
+    val CMD_SET_SINK_CHAIN = SessionCommand(ACTION_SET_SINK_CHAIN, Bundle.EMPTY)
 
     @Volatile var appContext: Context? = null
     @Volatile var upstream: DataSource.Factory? = null
@@ -46,18 +49,123 @@ internal object PlaybackCore {
     @Volatile var engineStats: FloatArray? = null
     @Volatile var normalize = false
     @Volatile var speed = 1f
+    @Volatile var usbExclusiveMode = false
+    @Volatile var sinkChainMode: SinkChainMode = SinkChainMode.FULL
+    @Volatile var usbActive = false
+    @Volatile var usbStatus: String? = null
+    @Volatile var onUsbReconfigurationRequested: (() -> Unit)? = null
+    @Volatile var activePlayer: ExoPlayer? = null
+    @Volatile var playerPlaybackState: Int = androidx.media3.common.Player.STATE_IDLE
+    @Volatile var playerPlayWhenReady: Boolean = false
+    @Volatile var playerIsPlaying: Boolean = false
+    @Volatile var playerHasError: Boolean = false
     val sources = ConcurrentHashMap<String, StreamSource>()
+
+    private const val PREFS_NAME = "paperplay_prefs"
+    private const val KEY_USB_EXCLUSIVE = "usb_exclusive_mode"
+    private const val KEY_SINK_CHAIN = "sink_chain"
+
+    fun loadPersistedSinkChain(context: Context): SinkChainMode {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (sp.contains(KEY_SINK_CHAIN)) {
+            val mode = SinkChainMode.fromId(sp.getString(KEY_SINK_CHAIN, SinkChainMode.FULL.id))
+            sinkChainMode = mode
+            return mode
+        }
+        try {
+            val dbFile = java.io.File(context.filesDir, "library.sqlite")
+            if (dbFile.exists()) {
+                android.database.sqlite.SQLiteDatabase.openDatabase(
+                    dbFile.path,
+                    null,
+                    android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+                ).use { db ->
+                    db.rawQuery("SELECT value FROM prefs WHERE \"key\" = ?", arrayOf(KEY_SINK_CHAIN)).use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val mode = SinkChainMode.fromId(cursor.getString(0))
+                            sp.edit().putString(KEY_SINK_CHAIN, mode.id).apply()
+                            sinkChainMode = mode
+                            return mode
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        sinkChainMode = SinkChainMode.FULL
+        return SinkChainMode.FULL
+    }
+
+    fun savePersistedSinkChain(context: Context, mode: SinkChainMode) {
+        sinkChainMode = mode
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        sp.edit().putString(KEY_SINK_CHAIN, mode.id).apply()
+    }
+
+    fun loadPersistedUsbExclusiveMode(context: Context): Boolean {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (sp.contains(KEY_USB_EXCLUSIVE)) {
+            val v = sp.getBoolean(KEY_USB_EXCLUSIVE, false)
+            usbExclusiveMode = v
+            return v
+        }
+        // Fallback: check library.sqlite if present from previous sessions
+        try {
+            val dbFile = java.io.File(context.filesDir, "library.sqlite")
+            if (dbFile.exists()) {
+                android.database.sqlite.SQLiteDatabase.openDatabase(
+                    dbFile.path,
+                    null,
+                    android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+                ).use { db ->
+                    db.rawQuery("SELECT value FROM prefs WHERE \"key\" = ?", arrayOf(KEY_USB_EXCLUSIVE)).use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val v = cursor.getString(0) == "true"
+                            sp.edit().putBoolean(KEY_USB_EXCLUSIVE, v).apply()
+                            usbExclusiveMode = v
+                            return v
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        val defaultVal = true
+        sp.edit().putBoolean(KEY_USB_EXCLUSIVE, defaultVal).apply()
+        usbExclusiveMode = defaultVal
+        return defaultVal
+    }
+
+    fun savePersistedUsbExclusiveMode(context: Context, enabled: Boolean) {
+        usbExclusiveMode = enabled
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(KEY_USB_EXCLUSIVE, enabled).apply()
+    }
+
+    fun requestReconfiguration() {
+        val player = activePlayer
+        val looper = player?.applicationLooper ?: android.os.Looper.getMainLooper()
+        if (android.os.Looper.myLooper() == looper) {
+            onUsbReconfigurationRequested?.invoke()
+        } else {
+            android.os.Handler(looper).post {
+                onUsbReconfigurationRequested?.invoke()
+            }
+        }
+    }
 
     @OptIn(UnstableApi::class)
     fun createPlayer(context: Context): ExoPlayer {
         val ctx = context.applicationContext
+        val savedPref = loadPersistedUsbExclusiveMode(ctx)
+        val savedChain = loadPersistedSinkChain(ctx)
+        PlayLog.log("usb", "createPlayer: usbExclusiveMode initial = $savedPref (pref=$savedPref), sinkChain = ${savedChain.id}")
+        io.max.paperplay.player.usb.UsbRingLog.record("PlaybackCore", "createPlayer: usbExclusiveMode initial = $savedPref (pref=$savedPref), sinkChain = ${savedChain.id}", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
         val up = upstream ?: DefaultDataSource.Factory(ctx)
         val factory = DataSource.Factory { RoutingDataSource(sources, StreamDataSource(sources), up.createDataSource()) }
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(15_000, 30_000, 1_500, 3_000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
-        return ExoPlayer.Builder(ctx, TapRenderersFactory(ctx))
+        val p = ExoPlayer.Builder(ctx, TapRenderersFactory(ctx))
             .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -68,6 +176,38 @@ internal object PlaybackCore {
                 true, // audio focus
             )
             .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+        p.addAnalyticsListener(PlaybackLogging.analytics)
+        p.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                val id = mediaItem?.mediaId ?: "none"
+                val reasonStr = when (reason) {
+                    androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
+                    androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "SEEK"
+                    androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
+                    androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> "REPEAT"
+                    else -> "REASON_$reason"
+                }
+                io.max.paperplay.player.usb.UsbRingLog.record("Player", "TRACK_SWITCH mediaId=$id reason=$reasonStr", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                playerPlaybackState = playbackState
+                if (playbackState == androidx.media3.common.Player.STATE_READY) {
+                    playerHasError = false
+                }
+            }
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                playerPlayWhenReady = playWhenReady
+            }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playerIsPlaying = isPlaying
+            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                playerHasError = true
+            }
+        })
+        activePlayer = p
+        return p
     }
 }

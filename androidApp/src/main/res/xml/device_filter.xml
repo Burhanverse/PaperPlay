@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB Audio Class (0x01) -->
+    <usb-device class="1" />
+    <usb-device class="1" subclass="1" />
+    <usb-device class="1" subclass="2" />
+    <!-- USB Interface Association (IAD) Composite Audio Devices (CX31993, XMOS, Savitech, ALC5686, etc.) -->
+    <usb-device class="239" subclass="2" protocol="1" />
+</resources>

@@ -1,4 +1,4 @@
-﻿@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package io.max.paperplay.ui.app
 
@@ -146,7 +146,7 @@ internal val LocalPageBottomPadding = androidx.compose.runtime.compositionLocalO
 internal val subTitles = mapOf(
     "channels" to "Channels and chats", "bots" to "Bots", "account" to "Your account", "log" to "Activity log",
     "repair" to "Scan library", "recover" to "Recover songs", "folders" to "Music folders", "exports" to "Saved export lists", "cache" to "Cache manager", "sort" to "Sort General", "dupes" to "Find duplicates", "missing" to "Song info left", "uploadhub" to "Upload songs", "mixlearn" to "Mixes and learning", "weather" to "Weather",
-    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile",
+    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB exclusive mode", "usb_probe" to "USB probe",
 )
 
 @Composable
@@ -421,6 +421,10 @@ internal fun SettingsPage(
         }
         "spotify" -> SpotifyPage(backend)
         "listening" -> {
+            NavRow("USB exclusive mode", if (isPhone) "Bit-perfect direct USB DAC playback" else "Exclusive audio output", Icons.Rounded.Usb) { stack.add("usb_audio") }
+            if (isPhone) {
+                NavRow("USB probe", "Hardware descriptor probe and bit-perfect mixer spike", Icons.Rounded.BugReport) { stack.add("usb_probe") }
+            }
             NavRow("Listening statistics", "Time listened, top songs and artists", Icons.Rounded.BarChart) { stack.add("stats") }
             NavRow("ListenBrainz", "Send what you listen to", Icons.Rounded.Sync) { stack.add("listenbrainz") }
             NavRow("Equalizer", icon = io.max.paperplay.ui.components.EqualizerBoardIcon) { stack.add("eq") }
@@ -448,10 +452,32 @@ internal fun SettingsPage(
             var restore by remember { mutableStateOf(backend.sessionRestore) }
             SwitchRow("Restore last session", restore, { restore = it; backend.setSessionRestore(it) }, Icons.Rounded.Sync,
                 "Opens with the last queue and position, paused")
+            val devUnlocked by backend.devOptionsUnlocked.collectAsState()
+            if (isPhone && devUnlocked) {
+                val chain by backend.sinkChain.collectAsState()
+                SectionLabel("Developer")
+                DropdownRow(
+                    title = "Sink chain",
+                    selected = io.max.paperplay.player.SinkChainMode.fromId(chain),
+                    options = io.max.paperplay.player.SinkChainMode.entries,
+                    label = { it.label },
+                    onSelect = { backend.setSinkChain(it.id) },
+                    icon = Icons.Rounded.Build,
+                    subtitle = when (io.max.paperplay.player.SinkChainMode.fromId(chain)) {
+                        io.max.paperplay.player.SinkChainMode.FULL -> "Full: UsbAudioSink + EngineAudioSink (float on) + DefaultAudioSink. Swipe close and reopen app to apply"
+                        io.max.paperplay.player.SinkChainMode.NO_DSP_FLOAT_ON -> "No DSP (float on): EngineAudioSink forced inactive, sinkFloat=true. Swipe close and reopen app to apply"
+                        io.max.paperplay.player.SinkChainMode.NO_DSP_FLOAT_OFF -> "No DSP (float off): EngineAudioSink forced inactive, sinkFloat=false. Swipe close and reopen app to apply"
+                        io.max.paperplay.player.SinkChainMode.PLAIN_FLOAT_OFF -> "Plain (float off): DefaultAudioSink only, sinkFloat=false (UsbAudioSink & EngineAudioSink bypassed). Restart app to apply"
+                        io.max.paperplay.player.SinkChainMode.PLAIN_FLOAT_ON -> "Plain (float on): DefaultAudioSink only, sinkFloat=true (UsbAudioSink & EngineAudioSink bypassed). Restart app to apply"
+                    },
+                )
+            }
         }
         "stats" -> StatsPage(backend)
         "listenbrainz" -> ListenBrainzPage(backend)
         "eq" -> EqualizerPage(backend)
+        "usb_audio" -> UsbAudioPage(backend, stack)
+        "usb_probe" -> UsbProbePage(backend)
         "devices" -> {
             if (isPhone) {
                 var keep by remember { mutableStateOf(pref("keep_running") == "true") }
