@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -75,6 +76,8 @@ class Uploader(
     private val pool: io.max.paperplay.core.telegram.BotPool? = null,
     /** Saves the queue so it survives a restart. */
     private val setPref: (String, String) -> Unit = { _, _ -> },
+    /** Gets the song a bot just posted, owned by that bot: the main bot cannot read posts of the others. */
+    private val onSent: (io.max.paperplay.core.library.Song) -> Unit = {},
 ) {
     private val _jobs = MutableStateFlow<List<UploadJob>>(emptyList())
     val jobs: StateFlow<List<UploadJob>> = _jobs
@@ -287,8 +290,13 @@ class Uploader(
             val c = picked?.client ?: client() ?: throw TdError(0, "The bot is not connected.")
             botId = picked?.id ?: 0L
             if (botId != 0L) runCatching { c.call(request("getChat") { put("chat_id", job.chatId) }) }
-            sendOne(c, job)
+            val posted = sendOne(c, job)
             pool?.recordSent(botId)
+            runCatching {
+                songFromMessage(posted ?: return@runCatching)?.let { s ->
+                    onSent(if (botId != 0L) s.copy(remote_id = botRemote(botId, s.remote_id)) else s)
+                }
+            }
             appLog("upload", "done ${job.name}")
             rememberSent(job)
             uploaded++
@@ -314,7 +322,7 @@ class Uploader(
         }
     }
 
-    private suspend fun sendOne(c: TdClient, job: UploadJob) {
+    private suspend fun sendOne(c: TdClient, job: UploadJob): JsonObject? {
         val sentId = CompletableDeferred<Long>()
         val fileId = CompletableDeferred<Long>()
         val outcome = scope.async(start = CoroutineStart.UNDISPATCHED) {
@@ -337,7 +345,9 @@ class Uploader(
         }
         try {
             val newApi = c.newApi()
-            val (artist, title) = parseFileName(job.name)
+            // The file's own tags first: "Song - Artist.flac" and "Artist - Song.flac" cannot be told apart by name.
+            val own = runCatching { io.max.paperplay.core.metadata.readEmbeddedTags(io.max.paperplay.core.metadata.TagSource(fileLength(job.path)) { off, n -> readRange(job.path, off, n) }) }.getOrNull()
+            val (artist, title) = if (own?.title != null && own.artist != null) own.artist to own.title else parseFileName(job.name)
             val seconds = runCatching { io.max.paperplay.core.metadata.readDurationSeconds(io.max.paperplay.core.metadata.TagSource(fileLength(job.path)) { off, n -> readRange(job.path, off, n) }) }.getOrDefault(0)
             appLog("upload", "duration ${job.name} = $seconds s")
             val sent = c.call(request("sendMessage") {
@@ -352,6 +362,7 @@ class Uploader(
                 val err = done.obj("error")
                 throw TdError(err?.long("code")?.toInt() ?: 0, err?.str("message") ?: "Telegram refused the file.")
             }
+            return done.obj("message")
         } finally {
             outcome.cancel()
         }

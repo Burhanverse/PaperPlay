@@ -231,7 +231,7 @@ class AppServices(
     val uploader: Uploader by lazy {
         Uploader(scope, { client }, library::pref, {
             library.repo.db.songsQueries.allSongs().executeAsList().mapTo(HashSet()) { it.file_name to it.size }
-        }, botPool, library::setPref)
+        }, botPool, library::setPref, { song -> library.upsertBotSong(song) })
     }
 
     /** The main bot plus extra bots that share uploads. Each extra bot has its own TDLib session. */
