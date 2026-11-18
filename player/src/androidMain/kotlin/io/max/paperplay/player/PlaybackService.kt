@@ -75,7 +75,20 @@ class PlaybackService : MediaSessionService() {
         // The media notification's small icon is the app's paper plane, not Media3's round play icon. The drawable
         // lives in the app module, so it is looked up by name.
         resources.getIdentifier("ic_stat_paperplay", "drawable", packageName).takeIf { it != 0 }?.let { icon ->
-            setMediaNotificationProvider(androidx.media3.session.DefaultMediaNotificationProvider.Builder(this).build().also { it.setSmallIcon(icon) })
+            val base = androidx.media3.session.DefaultMediaNotificationProvider.Builder(this).build().also { it.setSmallIcon(icon) }
+            // Posted ungrouped: as a child of Media3's group key with no summary the shade drew it as an empty card.
+            setMediaNotificationProvider(object : androidx.media3.session.MediaNotification.Provider by base {
+                override fun createNotification(
+                    mediaSession: MediaSession,
+                    mediaButtonPreferences: com.google.common.collect.ImmutableList<androidx.media3.session.CommandButton>,
+                    actionFactory: androidx.media3.session.MediaNotification.ActionFactory,
+                    onNotificationChangedCallback: androidx.media3.session.MediaNotification.Provider.Callback,
+                ): androidx.media3.session.MediaNotification {
+                    val n = base.createNotification(mediaSession, mediaButtonPreferences, actionFactory, onNotificationChangedCallback)
+                    val plain = android.app.Notification.Builder.recoverBuilder(this@PlaybackService, n.notification).setGroup(null).build()
+                    return androidx.media3.session.MediaNotification(n.notificationId, plain)
+                }
+            })
         }
         val exo = PlaybackCore.createPlayer(this)
         exo.addListener(playerListener)
