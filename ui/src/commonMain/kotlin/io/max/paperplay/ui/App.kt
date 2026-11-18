@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -120,8 +121,11 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
     }
     val backend = built
     if (backend == null || closing) {
+        // A spinner only if starting takes long (a first run): while the first screen is being built it would freeze half way round.
+        var slow by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { delay(2_000); slow = true }
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+            if (slow) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
         }
         return
     }

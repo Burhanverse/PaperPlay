@@ -83,6 +83,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     val favorites by backend.favorites.collectAsState()
     val recents by backend.recents.collectAsState()
     val home by backend.home.collectAsState()
+    val homeWarm by backend.homeWarm.collectAsState()
     val pb by backend.playbackMeta.collectAsState()
     // Position and scan text change every tick: keep them as State and read them only in draw lambdas and small leaf composables.
     val pos = backend.position.collectAsState()
@@ -314,7 +315,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 // The layer the nav bar blurs: the page colour (a still copy, so it costs no animation) with the page on top. Without the colour there
                 // would be almost nothing under the bar to blur or refract.
                 Box(if (navGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()) {
-                if (navGlass) AppBackground(prefs, pb.current?.coverUri, base, playing = false)
+                // The second copy of the background (for the glass bar to blur) joins after the page has animated in: drawing two blurred
+                // backgrounds in the first frames was a large part of their cost.
+                var navBackground by remember { mutableStateOf(false) }
+                LaunchedEffect(homeWarm) { if (homeWarm) { kotlinx.coroutines.delay(2_500); navBackground = true } }
+                if (navGlass && navBackground) AppBackground(prefs, pb.current?.coverUri, base, playing = false)
                 Box(Modifier.fillMaxSize().padding(top = top)) {
                     // Each page is drawn from its own key, so the page that is leaving keeps showing what it showed.
                     val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
@@ -331,7 +336,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     when {
                         k.settings -> CompositionLocalProvider(LocalSettingsInfo provides true) { SettingsHost(settingsStack, prefs, conn, songs.size, backend, onRestore, ::goBack, barsHeight, deep = settingsDeep) }
                         d != null -> DetailScreen(d, backend, currentId, actions, ::goBack, barsHeight)
-                        k.tab == 0 -> HomeScreen(lib, home, favorites, currentId, conn, scan, actions, { d2 -> navigate { detail = d2 } }, barsHeight, name = prefs.profileName)
+                        k.tab == 0 -> HomeScreen(lib, home, favorites, currentId, conn, scan, actions, { d2 -> navigate { detail = d2 } }, barsHeight, name = prefs.profileName, warm = homeWarm)
                         k.tab == 1 -> SearchScreen(backend::search, songs, currentId, actions, { d2 -> navigate { detail = d2 } }, barsHeight)
                         k.tab == 2 -> LibraryScreen(lib, favorites, currentId, actions, { d2 -> navigate { detail = d2 } }, { newPlaylist = true }, barsHeight, selectedTab = libraryTab,
                             recents = recents, onImportSpotify = { navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("spotify") } })
@@ -469,7 +474,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                 k.now -> DesktopNowPlayingView(pb, backend, actions, { showNow = false }, Modifier.fillMaxSize())
                                 k.settings -> CompositionLocalProvider(LocalSettingsInfo provides true) { DesktopSettings(settingsStack, prefs, conn, songs.size, backend, onRestore, ::goBack, Modifier.fillMaxSize()) }
                                 d != null -> DetailScreen(d, backend, currentId, actions, ::goBack, pad)
-                                k.page == "home" -> HomeScreen(lib, home, favorites, currentId, conn, scan, actions, { d2 -> navigate { detail = d2 } }, pad, name = prefs.profileName)
+                                k.page == "home" -> HomeScreen(lib, home, favorites, currentId, conn, scan, actions, { d2 -> navigate { detail = d2 } }, pad, name = prefs.profileName, warm = homeWarm)
                                 k.page == "search" -> SearchScreen(backend::search, songs, currentId, actions, { d2 -> navigate { detail = d2 } }, pad)
                                 k.page == "profile" -> ProfileScreen(
                                     songs.size, favorites.size, lib.playlists.size, conn, prefs,

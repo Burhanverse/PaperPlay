@@ -826,16 +826,23 @@ class CoreBackend(val services: AppServices) : PlayerControls {
      */
     fun warmUp() {
         scope.launch {
-            kotlinx.coroutines.withTimeoutOrNull(12_000) {
-                kotlinx.coroutines.coroutineScope {
-                    launch { home.first { it.shelves.isNotEmpty() || it.tiles.isNotEmpty() } }
-                    launch { library.first { it.songs !is Load.Loading } }
-                    launch { favorites.first(); recents.first() }
-                    launch { telegram.first() }
+            try {
+                kotlinx.coroutines.withTimeoutOrNull(12_000) {
+                    kotlinx.coroutines.coroutineScope {
+                        launch { home.first { it.shelves.isNotEmpty() || it.tiles.isNotEmpty() } }
+                        launch { library.first { it.songs !is Load.Loading } }
+                        launch { favorites.first(); recents.first() }
+                        launch { telegram.first() }
+                    }
                 }
+            } finally {
+                homeWarm.value = true
             }
         }
     }
+
+    /** True once everything Home shows has arrived, so Home draws once, complete, instead of changing under its own animation. */
+    val homeWarm = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** Records "does not fit" for [song] in the mix [moodId]; the next mix leaves it out. */
     fun rejectFromMix(song: SongUi, moodId: String) = voteMix(song, moodId, -1)

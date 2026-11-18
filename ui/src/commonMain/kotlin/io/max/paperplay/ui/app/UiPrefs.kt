@@ -142,6 +142,8 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
         private set
     /** Transitions become instant (see [io.max.paperplay.ui.theme.LocalReduceMotion]). */
     var reduceMotion by mutableStateOf(read("reduce_motion") == "true")
+    /** The tiles and cards flying in when Home first appears. On unless turned off. */
+    var homeAnimation by mutableStateOf(read("home_animation") != "false")
         private set
     var profileName by mutableStateOf(read("profile_name") ?: "Listener")
         private set
@@ -251,6 +253,7 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
     }
     fun putNowPlayingPanel(on: Boolean) { nowPlayingPanel = on; write("now_playing_panel", "$on") }
     fun putReduceMotion(on: Boolean) { reduceMotion = on; write("reduce_motion", "$on") }
+    fun putHomeAnimation(on: Boolean) { homeAnimation = on; write("home_animation", "$on") }
     fun setLook(g: LookGroup, l: Look) { looks[g] = l; write("look_${g.name.lowercase()}", l.name.lowercase()) }
 
     /** One value for every area, the sidebar and the player bar. */

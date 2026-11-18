@@ -84,6 +84,8 @@ fun HomeScreen(
     lib: LibraryUi, home: HomeUi, favorites: List<SongUi>, currentId: String?,
     conn: ConnectionUi, scan: State<ScanUi?>, actions: ListActions, onOpen: (Detail) -> Unit, bottomPadding: Dp, modifier: Modifier = Modifier,
     name: String = "",
+    /** False until the lists Home shows have all arrived; the page waits for it so it does not change while it animates in. */
+    warm: Boolean = true,
 ) {
     val songs = (lib.songs as? Load.Ready)?.value.orEmpty()
     val readTelegram = LocalTelegramLists.current
@@ -115,7 +117,7 @@ fun HomeScreen(
     var waited by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(4_000); waited = true }
     val hasPlan = home.tiles.isNotEmpty() || home.shelves.isNotEmpty()
-    val ready = hasPlan || waited
+    val ready = (hasPlan && warm) || waited
     // The fly-in plays for what is drawn in the first moments only; anything scrolled into view later just appears.
     androidx.compose.runtime.LaunchedEffect(ready) { if (ready) { kotlinx.coroutines.delay(2_200); introDone = true } }
     val message = remember { homeMessages.random() }
@@ -221,7 +223,7 @@ private fun QuickTile(g: GroupUi, click: () -> Unit, order: Int) {
 /** A section slides up a little and fades in, one after another by [order], the first time it is shown; scrolling back does not replay it. */
 @Composable
 private fun Modifier.staggerIn(order: Int): Modifier {
-    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current || LocalUiPrefs.current?.homeAnimation == false
     var shown by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(reduce) }
     val p = remember { androidx.compose.animation.core.Animatable(if (shown) 1f else 0f) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -242,7 +244,7 @@ private var introDone = false
  */
 @Composable
 private fun Modifier.snapIn(index: Int, startMs: Int): Modifier {
-    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current || LocalUiPrefs.current?.homeAnimation == false
     val play = remember { !introDone && !reduce }
     if (!play) return this
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
