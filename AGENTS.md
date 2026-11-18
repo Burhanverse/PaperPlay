@@ -16,6 +16,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 
 ## Build and test
 - Android: `JAVA_HOME=<JDK 17> ./gradlew :androidApp:assembleDebug --no-daemon -q`, filter output for `^e:` and `FAILED`.
+- After `adb install -r` run `adb -s <serial> shell cmd package compile -m speed -f io.max.paperplay.compose`. A freshly installed app is uncompiled and stutters badly (slowest 1% of frames 1 to 2 s against under 100 ms compiled); judge speed only on a compiled release build. Use the USB serial when `adb devices` lists the phone twice (USB and wifi).
 - Tests: `./gradlew :core:jvmTest --no-daemon -q`. They must pass before a commit.
 - Desktop run needs JDK 25.
 - One Gradle at a time. Do not build in a tree another person or agent is editing; use a separate worktree.
@@ -31,6 +32,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Never commit secrets (`local.properties`, keystores, tokens, Telegram sessions, logs with chat data).
 - Do not delete or overwrite user data: library rows, Telegram posts, phone files. Deleting posts is irreversible; a post counts as gone only when the owner's account confirms it.
 - Bots cannot see posts made by other bots. "Not found" from a bot proves nothing.
+- A bot deletes only posts younger than 48 hours (its own, or ones you sent); older posts need the logged-in account. Do not try bots on older posts; say that the account is needed.
 
 ## Audio engine
 - Own clean-room code only. Never copy, port or bundle code, binaries or assets from another app's APK; reading one to learn a technique is fine, the code is written from the technique.
@@ -52,6 +54,8 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Lay out for both phone and desktop widths; nothing may clip, overlap or need a horizontal scroll.
 - Buttons and actions say what they do in plain words; no emojis, and a long action is confirmed or can be undone.
 - UI changes: update `CHECKLIST.md` in the same change, and mark `[~]` until seen working.
+- Keep composition light: no grouping, sorting or database work on the main thread (build lists in a flow on `Dispatchers.Default`), and do not read fast-changing state (queue sizes, progress) in a large composable, which redraws everything below it.
+- Animations that move cards or covers use translation and fade only. A rotated or scaled layer that holds images uploads every cover to the graphics memory again each frame (measured: about 1,000 uploads in half a second, against about 100 without it).
 
 ## Behaviour that must hold
 - No touch goes through anything: a sheet, bar or overlay takes the touches that land on it (`Modifier.blockTouchesBehind()` in `ui/.../app/BlockTouches.kt`); a list behind the player must never react.
