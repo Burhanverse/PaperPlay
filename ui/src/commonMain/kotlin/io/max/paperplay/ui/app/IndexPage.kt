@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,6 +65,12 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
     var autoAdd by remember { mutableStateOf(backend.pref("index_auto_add") == "true") }
     var message by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
+    var removing by remember { mutableStateOf<ChatInfo?>(null) }
+    var libOnly by remember { mutableStateOf(backend.chatIndex.libraryOnlyCount()) }
+    var libCopying by remember { mutableStateOf(false) }
+    var libPaused by remember { mutableStateOf(false) }
+    var libStatus by remember { mutableStateOf<String?>(null) }
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
 
     if (!loggedIn) {
         Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -87,6 +94,15 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
     val rest = split.second
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
 
+    removing?.let { c ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { removing = null },
+            title = { Text("Remove from the index?") },
+            text = { Text("${c.title} is forgotten: its indexed songs are removed from the index. Songs already added to your library, and the chat itself in Telegram, are not touched.") },
+            confirmButton = { TextButton({ backend.chatIndex.forget(c.id); removing = null }) { Text("Remove") } },
+            dismissButton = { TextButton({ removing = null }) { Text("Cancel") } },
+        )
+    }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding)) {
         item(key = "auto") {
             Column {
@@ -98,11 +114,31 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
                 SwitchRow("Fetch songs automatically", autoCopy, { autoCopy = it; backend.setPref("index_auto_copy", "$it") }, Icons.Rounded.ContentCopy,
                     "Copies songs found in the index into your main chat when a Spotify playlist still waits for them")
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ scope.launch { runCatching { backend.chatIndex.refresh() }.onFailure { message = it.message } } }, enabled = indexed.isNotEmpty() && !indexing) {
-                        Text("Refresh index now")
+                    // A paused read keeps its place; the same button goes on from there.
+                    val unfinished = indexed.keys.any { backend.chatIndex.details(it)?.complete == false }
+                    if (indexing) OutlinedButton({ backend.chatIndex.stopRun() }) { Text("Pause indexing") }
+                    else OutlinedButton({ backend.refreshIndex { message = it } }, enabled = indexed.isNotEmpty()) {
+                        Text(if (unfinished) "Resume indexing" else "Refresh index now")
                     }
                     IndexProgressText(progressState)
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    // Songs added to the library with no copy in Telegram ("Bot can't reach"): copied into the main chat, then the bot owns them.
+                    if (libOnly > 0 || libCopying) {
+                        Text("$libOnly songs are only in your library, not in Telegram.", color = muted)
+                        if (!libCopying) OutlinedButton({
+                            libCopying = true; libPaused = false
+                            scope.launch {
+                                val rate = (backend.pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)
+                                backend.chatIndex.copyLibraryOnly(60_000L / rate, { libPaused }) { ok, bad, total, why ->
+                                    libStatus = (if (libPaused) "Paused: " else "") + "$ok of $total copied" + if (bad > 0) ", $bad failed. ${why.orEmpty()}" else ""
+                                }
+                                libOnly = backend.chatIndex.libraryOnlyCount()
+                                libCopying = false; libPaused = false
+                            }
+                        }) { Text("Copy them to Telegram") }
+                        else OutlinedButton({ libPaused = !libPaused }) { Text(if (libPaused) "Resume copy" else "Pause copy") }
+                        libStatus?.let { Text(it, color = muted) }
+                    }
                 }
                 OutlinedTextField(
                     search, { search = it }, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
@@ -113,11 +149,16 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
             }
         }
         items(done, key = { "d${it.id}" }) { c ->
-            SettingsRow(
+            androidx.compose.runtime.CompositionLocalProvider(LocalSettingsInfo provides false) { SettingsRow(
                 c.title, icon = if (c.isChannel) Icons.Rounded.Campaign else Icons.Rounded.Forum,
-                subtitle = if (c.isChannel) "Channel, indexed" else "Group, indexed",
+                subtitle = indexedSubtitle(c, backend.chatIndex.details(c.id), progressState.value?.takeIf { it.chatId == c.id }?.found),
                 onClick = { indexPageTitles["index:${c.id}"] = c.title; stack.add("index:${c.id}") },
-            ) { AppIcon(Icons.Rounded.ChevronRight, null) }
+            ) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    telegramLink(c.id)?.let { link -> IconButton({ uri.openUri(link) }) { AppIcon(Icons.Rounded.OpenInNew, "Open in Telegram") } }
+                    IconButton({ removing = c }) { AppIcon(Icons.Rounded.DeleteOutline, "Remove from the index") }
+                }
+            } }
         }
         item(key = "restHead") {
             Column {
@@ -133,10 +174,34 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
                 c.title, icon = if (c.isChannel) Icons.Rounded.Campaign else Icons.Rounded.Forum,
                 subtitle = if (c.isChannel) "Channel" else "Group",
             ) {
-                OutlinedButton({ scope.launch { runCatching { backend.chatIndex.indexChat(c) }.onFailure { message = it.message } } }, enabled = !indexing) { Text("Index") }
+                OutlinedButton({ backend.indexChat(c) { message = it } }, enabled = !indexing) { Text("Index") }
             }
         }
     }
+}
+
+/** "Channel, 1,234 songs, read 3 h ago" plus whether the whole history was read. */
+private fun indexedSubtitle(c: ChatInfo, d: io.max.paperplay.core.account.ChatIndexDetails?, readingNow: Int?): String {
+    val kind = if (c.isChannel) "Channel" else "Group"
+    if (d == null) return "$kind, indexed"
+    val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+    val m = if (d.refreshedAt > 0) (now - d.refreshedAt) / 60_000 else -1
+    val when_ = when {
+        readingNow != null -> "reading now"
+        m < 0 -> "never read"
+        m < 1 -> "read just now"
+        m < 60 -> "read $m min ago"
+        m < 60 * 24 -> "read ${m / 60} h ago"
+        else -> "read ${m / (60 * 24)} d ago"
+    }
+    val songs = readingNow ?: d.songs
+    return "$kind, $songs songs, $when_" + if (d.complete) "" else ", not fully read"
+}
+
+/** A link that opens the chat in Telegram: channels and supergroups (ids -100...) by their private link; small groups have none. */
+private fun telegramLink(chatId: Long): String? {
+    val s = chatId.toString()
+    return if (s.startsWith("-100") && s.length > 4) "https://t.me/c/${s.drop(4)}/1" else null
 }
 
 @Composable
@@ -144,7 +209,7 @@ private fun IndexProgressText(state: State<IndexProgress?>) {
     state.value?.let { Text("Indexing ${it.chatTitle}: ${it.found} songs", color = MaterialTheme.colorScheme.primary) }
 }
 
-private val reviewFilters = listOf("All", "New", "Better than yours", "Already have", "In your Spotify playlists")
+private val reviewFilters = listOf("All", "New", "Better than yours", "Already have", "Missing, in Spotify lists")
 
 private fun sizeText(b: Long) = if (b >= 1L shl 30) "${b / (1L shl 30)} GB" else "${b / (1L shl 20)} MB"
 
@@ -153,14 +218,18 @@ private fun formatOf(p: ChatPost) = io.max.paperplay.core.dupes.DefaultSongRules
 )
 
 @Immutable
+private class ChatView(val shown: List<IndexedSong>, val counts: List<Int>, val missing: Int)
+
+@Immutable
 private class PostRowModel(val id: Long, val title: String, val subtitle: String, val canAdd: Boolean, val song: IndexedSong)
 
 private fun IndexedSong.toRow(): PostRowModel {
     val label = when {
         copied -> "Copied"
-        better -> "Better than yours"
+        better -> "Better than yours: ${betterWhy ?: "higher quality"}"
         inMainChat -> "Already have"
-        wanted -> "In your Spotify playlists"
+        ownChat -> "In your main chat, not in your library"
+        wanted -> "Missing from your library, in your Spotify playlists"
         else -> null
     }
     return PostRowModel(
@@ -181,26 +250,42 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
     var selection by remember { mutableStateOf(IndexSelection()) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    // Copies per minute; the pause between two copies is a minute divided by this. Faster copying can run into Telegram's limits.
+    var copying by remember { mutableStateOf(false) }
+    var paused by remember { mutableStateOf(false) }
+    var copyRate by remember { mutableStateOf((backend.pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)) }
 
     fun inFilter(s: IndexedSong, f: Int) = when (f) {
         1 -> !s.inMainChat && !s.copied
         2 -> s.better
         3 -> s.inMainChat
-        4 -> s.wanted
+        4 -> s.wanted && !s.inMainChat && !s.copied
         else -> true
     }
-    val counts = remember(songs) { reviewFilters.indices.map { f -> songs.count { inFilter(it, f) } } }
-    val chipLabels = remember(counts) { reviewFilters.mapIndexed { i, l -> "$l ${counts[i]}" } }
-    val shown = remember(songs, query, filter) {
-        val q = query.trim().lowercase()
-        val found = songs.filter { inFilter(it, filter) && (q.isEmpty() || "${it.post.title} ${it.post.artist}".lowercase().contains(q)) }
-        // Songs that are not in the library come first; each group keeps its newest-first order.
-        found.sortedBy { it.inMainChat || it.copied }
+    // Counts, filtering and sorting of tens of thousands of posts run off the main thread, in one pass; rows are built only for what is on screen.
+    val view by produceState(ChatView(emptyList(), List(reviewFilters.size) { 0 }, 0), songs, query, filter) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val q = query.trim().lowercase()
+            val counts = IntArray(reviewFilters.size)
+            var missingCount = 0
+            val found = ArrayList<IndexedSong>()
+            for (s in songs) {
+                for (f in counts.indices) if (inFilter(s, f)) counts[f]++
+                if (!s.inMainChat && !s.copied) missingCount++
+                if (inFilter(s, filter) && (q.isEmpty() || "${s.post.title} ${s.post.artist}".lowercase().contains(q))) found += s
+            }
+            // Songs that are not in the library come first; each group keeps its newest-first order.
+            ChatView(found.sortedBy { it.inMainChat || it.copied }, counts.toList(), missingCount)
+        }
     }
-    val rows = remember(shown) { shown.map { it.toRow() } }
-    val missing = remember(songs) { songs.count { !it.inMainChat && !it.copied } }
+    val shown = view.shown
+    val counts = view.counts
+    val chipLabels = remember(counts) { reviewFilters.mapIndexed { i, l -> "$l ${counts[i]}" } }
+    val missing = view.missing
     val shownMissing = remember(shown) { shown.count { !it.inMainChat && !it.copied } }
     val running by remember { derivedStateOf { progressState.value?.chatId == chatId } }
+    // In the main chat itself nothing is copied (it would repeat the post): songs the library lacks are only added to it.
+    val own = songs.firstOrNull()?.ownChat == true
 
     var more by remember { mutableStateOf(false) }
     LaunchedEffect(status) { if (status != null) { delay(5_000); status = null } }
@@ -210,7 +295,8 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(pad.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     ChatLiveHeader(progressState, chatId, songs.size)
-                    IconButton({ scope.launch { runCatching { backend.chatIndex.refresh() } } }, enabled = !running) { AppIcon(Icons.Rounded.Refresh, "Refresh index") }
+                    if (running) IconButton({ backend.chatIndex.stopRun() }) { AppIcon(Icons.Rounded.Pause, "Pause indexing") }
+                    else IconButton({ backend.refreshIndex() }) { AppIcon(Icons.Rounded.Refresh, "Refresh index") }
                 }
                 ChipRow(chipLabels, filter, { filter = it }, Modifier.padding(horizontal = 4.dp))
                 Row(pad, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -221,9 +307,30 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                             val todo = if (selection.picked.isNotEmpty()) selection.toCopy(songs) else shown.filter { !it.inMainChat && !it.copied }.map { it.post }
                             busy = true
                             scope.launch {
-                                todo.forEach { runCatching { backend.chatIndex.addToLibrary(it) } }
-                                status = "Added ${todo.size} to your library. They play through your account."
+                                if (own) {
+                                    todo.forEach { runCatching { backend.chatIndex.addToLibrary(it) } }
+                                    status = "Added ${todo.size} to your library. They are already in your main chat."
+                                    selection = selection.clear()
+                                    busy = false
+                                    return@launch
+                                }
+                                // Copied one by one into the main chat. A song leaves these lists only once Telegram accepted its copy.
+                                var ok = 0
+                                var failed = 0
+                                var why: String? = null
+                                copying = true
+                                paused = false
+                                todo.forEachIndexed { i, p ->
+                                    // Paused between two copies: what is done stays done, and the rest waits here.
+                                    while (paused) { status = "Paused: $i of ${todo.size} copied"; delay(300) }
+                                    status = "Copying ${i + 1} of ${todo.size} to your main chat"
+                                    runCatching { backend.chatIndex.copyToMain(p) }.onSuccess { ok++ }.onFailure { failed++; if (why == null) why = it.message }
+                                    if (i < todo.size - 1) delay(60_000L / copyRate)
+                                }
+                                status = if (failed == 0) "Copied $ok to your main chat" else "Copied $ok, $failed failed. ${why.orEmpty()}"
                                 selection = selection.clear()
+                                copying = false
+                                paused = false
                                 busy = false
                             }
                         },
@@ -232,6 +339,14 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                         val n = if (selection.picked.isNotEmpty()) selection.picked.size else shownMissing
                         Text(if (selection.picked.isNotEmpty()) "Add $n" else "Add all shown ($n)")
                     }
+                }
+                if (copying) OutlinedButton({ paused = !paused }, pad) { Text(if (paused) "Resume copy" else "Pause copy") }
+                Column(pad) {
+                    Text("Copy speed: $copyRate per minute (a copy every ${"%.1f".format(60.0 / copyRate)} s)", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    androidx.compose.material3.Slider(
+                        copyRate.toFloat(), { copyRate = it.toInt().coerceIn(5, 120) },
+                        valueRange = 5f..120f, onValueChangeFinished = { backend.setPref("copy_rate", "$copyRate") },
+                    )
                 }
                 OutlinedTextField(query, { query = it }, pad.fillMaxWidth(), label = { Text("Search") }, singleLine = true)
                 Text("$missing of ${songs.size} are not in your library", pad, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -243,20 +358,14 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                             val todo = selection.toCopy(songs)
                             busy = true
                             scope.launch {
-                                var failed = 0
-                                var why: String? = null
-                                todo.forEachIndexed { i, p ->
-                                    status = "Copying ${i + 1} of ${todo.size}"
-                                    runCatching { backend.chatIndex.copyToMain(p) }.onFailure { failed++; if (why == null) why = it.message }
-                                    delay(3_000)
-                                }
-                                status = if (failed == 0) "Copied ${todo.size}" else "Copied ${todo.size - failed}, $failed failed. ${why.orEmpty()}"
+                                todo.forEach { runCatching { backend.chatIndex.addToLibrary(it) } }
+                                status = "Added ${todo.size} to your library only. Nothing is copied to Telegram; they play through your account."
                                 selection = selection.clear()
                                 busy = false
                             }
                         },
                         enabled = selection.picked.isNotEmpty() && !busy,
-                    ) { Text("Copy ${selection.picked.size} to main chat instead") }
+                    ) { Text("Add ${selection.picked.size} to library only (no copy in Telegram)") }
                     OutlinedButton({
                         val first = songs.firstOrNull { !it.inMainChat && !it.copied } ?: return@OutlinedButton
                         scope.launch { status = "Asking the bot about \"${first.post.title}\"..."; status = backend.services.botCheck(first.post.chatId, first.post.messageId) }
@@ -265,10 +374,14 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                 }
             }
         }
-        items(rows, key = { it.id }) { r ->
+        items(shown, key = { it.post.messageId }) { s ->
+            val r = remember(s) { s.toRow() }
             SongPostRow(r, r.id in selection.picked,
                 onToggle = { selection = selection.toggle(r.id) },
-                onCopy = { scope.launch { status = runCatching { backend.chatIndex.addToLibrary(r.song.post) }.fold({ "Added ${r.title} to your library" }, { "Could not add ${r.title}: ${it.message}" }) } })
+                onCopy = { scope.launch {
+                    status = if (own) runCatching { backend.chatIndex.addToLibrary(r.song.post) }.fold({ "Added ${r.title} to your library" }, { "Could not add ${r.title}: ${it.message}" })
+                    else runCatching { backend.chatIndex.copyToMain(r.song.post) }.fold({ "Copied ${r.title} to your main chat" }, { "Could not copy ${r.title}: ${it.message}" })
+                } })
         }
     }
 }
@@ -284,9 +397,12 @@ private fun ChatLiveHeader(progress: State<IndexProgress?>, chatId: Long, total:
 
 @Composable
 private fun SongPostRow(r: PostRowModel, picked: Boolean, onToggle: () -> Unit, onCopy: () -> Unit) {
-    SettingsRow(r.title, onClick = onToggle, subtitle = r.subtitle) {
-        Checkbox(picked, { onToggle() })
-        IconButton(onCopy, enabled = r.canAdd) { AppIcon(Icons.Rounded.Add, "Add to library") }
+    // Song details are long, but they are facts, not an explanation to hide behind an info button.
+    androidx.compose.runtime.CompositionLocalProvider(LocalSettingsInfo provides false) {
+        SettingsRow(r.title, onClick = onToggle, subtitle = r.subtitle) {
+            Checkbox(picked, { onToggle() })
+            IconButton(onCopy, enabled = r.canAdd) { AppIcon(Icons.Rounded.Add, "Copy to main chat") }
+        }
     }
 }
 

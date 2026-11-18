@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -146,7 +147,9 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
     val scope = rememberCoroutineScope()
     var post by remember(t.track_key) { mutableStateOf<ChatPost?>(null) }
     var state by remember(t.track_key) { mutableStateOf<String?>(null) }
-    LaunchedEffect(t.track_key) {
+    // Asked again when an index read ends, so songs indexed after the sheet opened show up.
+    val indexIdle = backend.chatIndex.progress.collectAsState().value == null
+    LaunchedEffect(t.track_key, indexIdle) {
         post = withContext(Dispatchers.Default) { runCatching { backend.chatIndex.matchesFor(t.title, t.artist, t.duration_sec.toInt()).firstOrNull() }.getOrNull() }
     }
     val p = post
@@ -166,36 +169,24 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
             }
         }
         CopyLinksButton(backend, t)
-        if (p != null && state == null && backend.pref("index_auto_copy") != "true") IconButton({
-            // Copying a post into the main chat is done by your own Telegram account; without it say so instead of doing nothing.
-            if (!backend.account.loggedIn.value) { state = "Log in your Telegram account to copy songs (Settings, Telegram, Your account)"; return@IconButton }
-            state = "Adding"
+        if (p != null && state == null) IconButton({
+            // A match in the chat index gets a + that copies it into the main chat (a post already in the main chat is only added to the library).
+            // Copying is done by your own Telegram account; without it say so instead of doing nothing.
+            val own = p.chatId == backend.mainChatId()
+            if (!own && !backend.account.loggedIn.value) { state = "Log in your Telegram account to copy songs (Settings, Telegram, Your account)"; return@IconButton }
+            state = if (own) "Adding" else "Copying"
             scope.launch {
                 val failure = withContext(Dispatchers.Default) {
                     runCatching {
-                        backend.chatIndex.copyToMain(p)
+                        if (own) backend.chatIndex.addToLibrary(p) else backend.chatIndex.copyToMain(p)
                         val song = store.songs().firstOrNull { it.chat_id == p.chatId && it.message_id == p.messageId }
                         if (song != null) acceptMatch(store, t, song) else reconcileImports(store)
                     }.exceptionOrNull()
                 }
-                state = if (failure == null) "Added" else "Could not add: ${failure.message ?: failure::class.simpleName}"
+                state = if (failure == null) (if (own) "Added" else "Copied to your main chat") else "Could not copy: ${failure.message ?: failure::class.simpleName}"
                 if (failure == null) onChanged()
             }
-        }) { AppIcon(Icons.Rounded.Add, "Copy to main chat") }
-        else if (p != null && state == null) TextButton({
-            state = "Adding"
-            scope.launch {
-                val failure = withContext(Dispatchers.Default) {
-                    runCatching {
-                        backend.chatIndex.addToLibrary(p)
-                        val song = store.songs().firstOrNull { it.chat_id == p.chatId && it.message_id == p.messageId }
-                        if (song != null) acceptMatch(store, t, song) else reconcileImports(store)
-                    }.exceptionOrNull()
-                }
-                state = if (failure == null) "Added" else "Could not add: ${failure.message ?: failure::class.simpleName}"
-                if (failure == null) onChanged()
-            }
-        }) { Text("Add") }
+        }) { AppIcon(Icons.Rounded.Add, if (p.chatId == backend.mainChatId()) "Add to library" else "Copy to main chat") }
     }
 }
 

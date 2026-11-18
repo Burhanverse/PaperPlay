@@ -1283,6 +1283,35 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
+    /** Reads the indexed chats for newer posts (or goes on with a stopped read). Runs on the app's scope, so it carries on when the page is left. */
+    fun refreshIndex(onError: (String) -> Unit = {}) {
+        scope.launch(Dispatchers.IO) { runCatching { chatIndex.refresh() }.onFailure { onError(it.message ?: "Indexing failed") } }
+    }
+
+    /** Indexes [chat] (only what is new when it is indexed already). Also keeps going when the page is left. */
+    fun indexChat(chat: io.max.paperplay.core.account.ChatInfo, onError: (String) -> Unit = {}) {
+        scope.launch(Dispatchers.IO) { runCatching { chatIndex.indexChat(chat) }.onFailure { onError(it.message ?: "Indexing failed") } }
+    }
+
+    /** Copies songs into the main chat so the bots can read them. Songs already there are skipped; a failed copy leaves the song as it was. */
+    fun copySongsToChat(ids: Collection<String>, say: (String) -> Unit) {
+        val list = ids.mapNotNull { byId[it] }
+        if (list.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            val rate = (repo.pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)
+            say("Copying ${list.size} songs to your main chat")
+            var last = Triple(0, 0, null as String?)
+            try {
+                chatIndex.copySongsToMain(list, 60_000L / rate, { false }) { ok, bad, _, why -> last = Triple(ok, bad, why) }
+                say(if (last.second == 0) "Copied ${last.first} to your main chat" else "Copied ${last.first}, ${last.second} failed. ${last.third.orEmpty()}")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                say("Could not copy: ${e.message}")
+            }
+        }
+    }
+
     /** Deletes several songs from Telegram (main chat only) and the library, one by one; progress shows on the Tasks page. */
     fun deleteSongs(ids: Collection<String>, say: (String) -> Unit) {
         val list = ids.mapNotNull { byId[it] }
