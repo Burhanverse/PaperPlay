@@ -93,7 +93,8 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                     launch {
                         val decoded = decoder.async { decodeImageFile(uri, maxSide) }.await() ?: return@launch
                         keep(key, decoded)
-                        kotlinx.coroutines.withContext(Dispatchers.Main) { CoverSeeds.setFromBitmap(uri, decoded) }
+                        // The colour seed needs the main thread, which is busy while the first screen is drawn; waiting for it made this wait run to its limit.
+                        ahead.launch { CoverSeeds.setFromBitmap(uri, decoded) }
                     }
                 }
             }

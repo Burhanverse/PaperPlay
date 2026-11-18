@@ -122,7 +122,9 @@ fun HomeScreen(
     // The fly-in plays for what is drawn in the first moments only; anything scrolled into view later just appears.
     androidx.compose.runtime.LaunchedEffect(ready) { if (ready) { kotlinx.coroutines.delay(2_200); introDone = true } }
     // All the placeholders show first and the whole page fades in once everything is ready, so nothing pops in piece by piece.
-    val reveal by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, androidx.compose.animation.core.tween(300), label = "home reveal")
+    // While the fly-in plays the placeholders go at once: cross-fading them out would show them under the tiles as these arrive.
+    val introPending = !introDone && !io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val reveal by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, androidx.compose.animation.core.tween(if (introPending) 0 else 300), label = "home reveal")
     // One greeting line for both layers, or the two would pick different ones while they cross-fade.
     val message = remember { homeMessages.random() }
     // The placeholders fade out as the page fades in, on top of each other, so nothing goes blank in between.
@@ -173,7 +175,7 @@ fun HomeScreen(
             Column(Modifier.staggerIn(2)) {
                 Section("Your daily mixes")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    items(home.mixes.size, key = { home.mixes[it].id }) { i -> val m = home.mixes[i]; MixCard(m, Modifier.snapIn(i, 260)) { onOpen(Detail.Mix(m.name, m.id, m.songs)) } }
+                    items(home.mixes.size, key = { home.mixes[it].id }) { i -> val m = home.mixes[i]; MixCard(m, Modifier.snapIn(i, 200)) { onOpen(Detail.Mix(m.name, m.id, m.songs)) } }
                 }
             }
         } else if (ready && songs.isNotEmpty()) item {
@@ -226,7 +228,7 @@ fun HomeScreen(
 @Composable
 private fun QuickTile(g: GroupUi, click: () -> Unit, order: Int) {
     Row(
-        Modifier.fillMaxWidth().height(56.dp).snapIn(order, 100).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, appShape(12.dp))
+        Modifier.fillMaxWidth().height(56.dp).snapIn(order, 0).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, appShape(12.dp))
             .clickable(onClick = click),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -364,7 +366,7 @@ fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: L
         LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
             items(songs.size, key = { keys[it] }) { i ->
                 val s = songs[i]
-                MediaCard(s.coverUri, s.id, s.title, s.artist, titleColor = if (s.id == currentId) MaterialTheme.colorScheme.primary else null, modifier = if (order < 99) Modifier.snapIn(i, 120 + order * 70) else Modifier, size = size) { actions.play(songs, i) }
+                MediaCard(s.coverUri, s.id, s.title, s.artist, titleColor = if (s.id == currentId) MaterialTheme.colorScheme.primary else null, modifier = if (order < 99) Modifier.snapIn(i, 40 + order * 60) else Modifier, size = size) { actions.play(songs, i) }
             }
         }
     }
