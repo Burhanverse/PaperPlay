@@ -126,7 +126,9 @@ fun HomeScreen(
     // One greeting line for both layers, or the two would pick different ones while they cross-fade.
     val message = remember { homeMessages.random() }
     // The placeholders fade out as the page fades in, on top of each other, so nothing goes blank in between.
-    androidx.compose.foundation.layout.Box(modifier) {
+    BoxWithConstraints(modifier) {
+    // A wide window (desktop) gets a denser top: tiles at a fixed width beside a compact recently played row.
+    val wide = maxWidth >= 900.dp
     if (reveal < 1f) LazyColumn(
         Modifier.fillMaxSize().graphicsLayer { alpha = 1f - reveal }, userScrollEnabled = false,
         contentPadding = PaddingValues(bottom = bottomPadding),
@@ -139,6 +141,21 @@ fun HomeScreen(
     }
     LazyColumn(Modifier.fillMaxSize().graphicsLayer { alpha = reveal }, contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name, message) }
+        if (ready && wide && (recentPlayed != null || tileRows.isNotEmpty())) item(key = "hero") {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Two columns of three tiles, each a set width, so they stay compact however wide the window is.
+                if (tileRows.isNotEmpty()) Row(Modifier.padding(start = 16.dp, top = 44.dp).staggerIn(1), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    tileRows.take(2).forEachIndexed { ci, column ->
+                        Column(Modifier.width(244.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            column.forEachIndexed { ri, (g, click) -> QuickTile(g, click, ci * 3 + ri) }
+                        }
+                    }
+                }
+                if (recentPlayed != null) Column(Modifier.weight(1f).staggerIn(0)) {
+                    SongShelf(recentPlayed.title, recentPlayed.songs, currentId, actions, order = 0, size = 120.dp)
+                }
+            }
+        } else {
         if (ready && recentPlayed != null) item(key = "recent_played") { Box(Modifier.staggerIn(0)) { SongShelf(recentPlayed.title, recentPlayed.songs, currentId, actions, order = 0) } }
         if (ready && tileRows.isNotEmpty()) item {
             // Each column holds three tiles; two columns fill the screen and the rest wait a swipe away.
@@ -146,19 +163,11 @@ fun HomeScreen(
                 items(tileRows) { column ->
                     val columnIndex = tileRows.indexOf(column)
                     Column(Modifier.fillParentMaxWidth(if (tileRows.size > 2) 0.46f else 0.485f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        column.forEachIndexed { rowIndex, (g, click) ->
-                            Row(
-                                Modifier.fillMaxWidth().height(56.dp).snapIn(columnIndex * 3 + rowIndex, 100).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, appShape(12.dp))
-                                    .clickable(onClick = click),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                CoverGrid(g.coverUris, g.id, 56.dp, 0.dp)
-                                Text(g.name, Modifier.padding(horizontal = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                            }
-                        }
+                        column.forEachIndexed { rowIndex, (g, click) -> QuickTile(g, click, columnIndex * 3 + rowIndex) }
                     }
                 }
             }
+        }
         }
         if (ready && home.mixes.isNotEmpty()) item {
             Column(Modifier.staggerIn(2)) {
@@ -210,6 +219,19 @@ fun HomeScreen(
             }
         }
     }
+    }
+}
+
+/** A quick tile: the cover mosaic and a name, flying in with the start-up animation. */
+@Composable
+private fun QuickTile(g: GroupUi, click: () -> Unit, order: Int) {
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).snapIn(order, 100).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, appShape(12.dp))
+            .clickable(onClick = click),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CoverGrid(g.coverUris, g.id, 56.dp, 0.dp)
+        Text(g.name, Modifier.padding(horizontal = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
     }
 }
 
@@ -335,14 +357,14 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
 }
 
 @Composable
-fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: ListActions, order: Int = 99) {
+fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: ListActions, order: Int = 99, size: Dp = cardSize) {
     val keys = remember(songs) { songs.map { it.id }.uniqueKeys() }
     Column {
         Section(title)
         LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
             items(songs.size, key = { keys[it] }) { i ->
                 val s = songs[i]
-                MediaCard(s.coverUri, s.id, s.title, s.artist, titleColor = if (s.id == currentId) MaterialTheme.colorScheme.primary else null, modifier = if (order < 99) Modifier.snapIn(i, 120 + order * 70) else Modifier) { actions.play(songs, i) }
+                MediaCard(s.coverUri, s.id, s.title, s.artist, titleColor = if (s.id == currentId) MaterialTheme.colorScheme.primary else null, modifier = if (order < 99) Modifier.snapIn(i, 120 + order * 70) else Modifier, size = size) { actions.play(songs, i) }
             }
         }
     }
@@ -350,10 +372,10 @@ fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: L
 
 /** A cover with a title and subtitle under it; round for artists. */
 @Composable
-fun MediaCard(coverUri: String?, key: String, title: String, subtitle: String?, circle: Boolean = false, titleColor: Color? = null, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun MediaCard(coverUri: String?, key: String, title: String, subtitle: String?, circle: Boolean = false, titleColor: Color? = null, modifier: Modifier = Modifier, size: Dp = cardSize, onClick: () -> Unit) {
     val align = if (circle) Alignment.CenterHorizontally else Alignment.Start
-    Column(modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp), horizontalAlignment = align) {
-        CoverImage(coverUri, key, size = cardSize, radius = if (circle) cardSize / 2 else 10.dp)
+    Column(modifier.width(size + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp), horizontalAlignment = align) {
+        CoverImage(coverUri, key, size = size, radius = if (circle) size / 2 else 10.dp)
         Text(
             title, Modifier.padding(top = 8.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall,
             color = titleColor ?: MaterialTheme.colorScheme.onSurface, textAlign = if (circle) TextAlign.Center else TextAlign.Start,

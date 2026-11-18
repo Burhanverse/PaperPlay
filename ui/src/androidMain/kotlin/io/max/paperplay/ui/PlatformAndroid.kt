@@ -90,7 +90,7 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+        return readyToDraw(BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }), maxSide)
     }
 
     val file = File(path)
@@ -106,7 +106,7 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
                     BitmapFactory.decodeByteArray(art, 0, art.size, bounds)
                     var sample = 1
                     while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-                    return BitmapFactory.decodeByteArray(art, 0, art.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+                    return readyToDraw(BitmapFactory.decodeByteArray(art, 0, art.size, BitmapFactory.Options().apply { inSampleSize = sample }), maxSide)
                 }
             } finally {
                 runCatching { retriever.release() }
@@ -118,8 +118,24 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
     BitmapFactory.decodeFile(path, bounds)
     var sample = 1
     while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-    BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+    readyToDraw(BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample }), maxSide)
 }.getOrNull()
+
+/**
+ * A decoded cover, scaled down to the size asked for (a power-of-two sample can leave it up to twice as big, which cost memory and a
+ * slow first draw) and uploaded to the graphics memory now, on the decoding thread, so the first frame that shows it does not stall.
+ */
+private fun readyToDraw(decoded: android.graphics.Bitmap?, maxSide: Int): ImageBitmap? {
+    decoded ?: return null
+    val longest = maxOf(decoded.width, decoded.height)
+    val out = if (longest > maxSide * 5 / 4) {
+        val k = maxSide.toFloat() / longest
+        android.graphics.Bitmap.createScaledBitmap(decoded, (decoded.width * k).toInt().coerceAtLeast(1), (decoded.height * k).toInt().coerceAtLeast(1), true)
+            .also { if (it !== decoded) decoded.recycle() }
+    } else decoded
+    out.prepareToDraw()
+    return out.asImageBitmap()
+}
 
 actual fun localTimeLabel(epochMs: Long): String =
     java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault())
