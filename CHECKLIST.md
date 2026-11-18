@@ -746,3 +746,7 @@ elease` must say Java 25 and the setup exe must start.
 - [ ] PC folder upload: reported broken, not found. The PC log shows a folder upload working at 16:13 and the folder picker script compiles; need the exact symptom (button, dialog, nothing after picking, or songs not uploading; "Choose folder" is disabled until an upload target is chosen).
 ### Repository
 - [x] `main` and `beta` were pushed together at the end of 16 Nov (both remote branches were already inside `main`, so both were fast-forwards).
+
+### Wrong title and artist (18 Nov)
+- [~] Files named `Song_Lofi_Artists.flac` came tagged with title and artist swapped (or title as "Lofi - Artists"). `fixSwappedTags` (`Scanner.kt`) swaps them back on scan and once over the library (pref `split_names_v3`), skipping edited songs; fixed songs are looked up again. Committed 48f11c6, debug installed on the phone, PC not restarted. Open: one phone row (Pichavecha Naal) kept the song as its artist after the repair; cause not found.
+- [~] Blank PaperPlay card in the notification shade: the music notification is now posted ungrouped (`PlaybackService.kt`, uncommitted). Not confirmed on the phone yet.
