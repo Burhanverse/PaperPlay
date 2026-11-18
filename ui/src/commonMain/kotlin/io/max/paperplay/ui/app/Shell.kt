@@ -441,7 +441,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 // The mouse back button goes back like the phone gesture.
                 // While the full now playing view is open the whole window takes the song's colours, so the sidebar and
                 // player bar sit on the same wash as the card instead of on the plain page background.
-                val nowSong = if (showNow) pb.current else null
+                // Only on the Plain and Cover backgrounds: a blurred cover, gradient, wallpaper or animation the user chose stays.
+                val nowSong = if (showNow && (prefs.background == BgMode.Plain || prefs.background == BgMode.Cover)) pb.current else null
                 val shell: @Composable () -> Unit = {
                 Column(Modifier.fillMaxSize().mouseBackButton(::handleBack).playerKeys(keys).then(backKey)) {
                     Row(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp)) {
