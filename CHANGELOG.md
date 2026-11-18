@@ -2,6 +2,25 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.8] - 2026-11-18
+
+### Other changes
+- Checklist: settings pages and stray songs ([`3bf3272`](https://github.com/maxcodl/PaperPlay/commit/3bf32729b91de19bd5a2594f1bf05ebb8eb08d3b))
+- Settings: rows keep icons and trailing content, Library and Telegram pages in cards, Clear deleted songs ([`803183b`](https://github.com/maxcodl/PaperPlay/commit/803183b241d818742233980c4a247aef271c274d))
+- Backend: clear deleted songs, clearer message when nothing needs copying ([`7b1c72e`](https://github.com/maxcodl/PaperPlay/commit/7b1c72e0471924c4f09c3a814ec9b1be6349fb4f))
+- Index: copy posts again that no bot can read, clear library-only songs whose post was deleted ([`1607537`](https://github.com/maxcodl/PaperPlay/commit/16075379ff81b9c22c80920682f6d23c81fbfd55))
+- Readme: chat index, copying and songs the bot can't read ([`30450bd`](https://github.com/maxcodl/PaperPlay/commit/30450bdde814aa5beefbfd25a66ab182b3e8dc55))
+- Checklist: chat index and copying ([`847ac13`](https://github.com/maxcodl/PaperPlay/commit/847ac134de29ed53459c1f9e21162cb1a09154e7))
+- Library: copy picked songs to the chat, select songs the bot can't read ([`023dcbd`](https://github.com/maxcodl/PaperPlay/commit/023dcbdcf17ffb1c368521835992e382af01adac))
+- Chats page: details, open and remove, pause and resume, copy speed, background indexing, + for Spotify matches ([`2be241f`](https://github.com/maxcodl/PaperPlay/commit/2be241f3453552dfe9baf8dbfc87f61e9f941d4e))
+- Index: resumes stopped reads, matches the whole library, copies into the main chat with a fallback, library-only songs move to their post ([`986161f`](https://github.com/maxcodl/PaperPlay/commit/986161f60601ba26112b69924c99a5a267654762))
+- Notifications: the first running task is the service notification, no standing card, service stops 20 s after work ([`d72c820`](https://github.com/maxcodl/PaperPlay/commit/d72c820bd3b1afd273baf86928c988dc05c81043))
+- Checklist: uploads, names and the desktop layout ([`7ab5616`](https://github.com/maxcodl/PaperPlay/commit/7ab56168edbd128e8088ea234235ecd528483a63))
+- Desktop: the now playing view keeps the chosen background instead of a cover colour wash ([`83241f3`](https://github.com/maxcodl/PaperPlay/commit/83241f37244bb8960252f65b840acadba2a5ce74))
+- Desktop: room for the now playing panel is kept from the first frame so the page does not re-lay out ([`756bd7b`](https://github.com/maxcodl/PaperPlay/commit/756bd7b8526fc9b5114754af531be6ccb55162e6))
+
+**Full changes:** [v1.9.7...v1.9.8](https://github.com/maxcodl/PaperPlay/compare/v1.9.7...v1.9.8)
+
 ## [1.9.7] - 2026-11-18
 
 ### Fixed
