@@ -636,6 +636,15 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         if (playerStarted.value) player.setExactLevel(on)
     }
 
+    /** Phone engine: stereo width above the bass, 0.5 to 1.6 (1 = as recorded). Applies while the equalizer is on. */
+    val eqWidth = MutableStateFlow(repo.pref("eq_width")?.toFloatOrNull() ?: 1f)
+
+    fun setEqWidth(width: Float) {
+        eqWidth.value = width
+        repo.setPref("eq_width", "$width")
+        pushBass()
+    }
+
     /** Phone engine A/B: plays the original at the processed level while held on. Not saved. */
     val eqDry = MutableStateFlow(false)
 
@@ -652,7 +661,12 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         pushBass()
     }
 
-    private fun pushBass() { if (playerStarted.value) player.setBass(if (eqOn.value && !bitPerfect.value) eqBass.value else 0f) }
+    private fun pushBass() {
+        if (!playerStarted.value) return
+        val on = eqOn.value && !bitPerfect.value
+        player.setBass(if (on) eqBass.value else 0f)
+        player.setStereoWidth(if (on) eqWidth.value else 1f)
+    }
 
     override fun setEqualizer(on: Boolean, gains: List<Float>) {
         eqOn.value = on
@@ -923,6 +937,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             val bp = bitPerfect.value
             if (eqOn.value && !bp) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
             p.setExactLevel(eqExact.value)
+            if (eqOn.value && !bp) p.setStereoWidth(eqWidth.value)
             if (exclusiveOutput.value || bp) p.setExclusiveOutput(true)
             if (!bp) correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)

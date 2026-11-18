@@ -38,8 +38,13 @@ import kotlinx.coroutines.launch
 // Ten octave bands, 32 Hz to 16 kHz, in dB. The shapes are deliberately far apart so a preset is heard and seen at once.
 private val eqPresets = linkedMapOf(
     "Flat" to listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f),
-    "Bass boost" to listOf(8f, 7f, 5f, 3f, 1f, 0f, 0f, 0f, 0f, 0f),
-    "Deep bass" to listOf(12f, 10f, 5f, 0f, -1f, 0f, 0f, 0f, 0f, 0f),
+    // Bass presets lift the low end but keep 125 to 500 Hz flat or slightly down: that range masks voices when lifted.
+    "Bass boost" to listOf(8f, 7f, 3f, 0f, -0.5f, 0f, 0f, 0f, 0f, 0f),
+    "Deep bass" to listOf(12f, 9f, 2f, -1f, -1f, 0f, 0f, 0f, 0f, 0f),
+    // Rumbling bass with clear mids and highs: low end up, low-mid boom down, a little presence for voices and attack.
+    "Clean bass" to listOf(7f, 6f, 1f, -1.5f, -1f, 0f, 1f, 1.5f, 1f, 0f),
+    // Voices forward without thinning the music: low-mid boom down, presence up, no treble boost (no extra sibilance).
+    "Vocal clarity" to listOf(0f, 0f, -1f, -2f, -0.5f, 0f, 1.5f, 2f, 0.5f, 0f),
     // Earphone presets. Chu 2: the AutoEq correction (crinacle, 711 coupler) sampled at our ten centres and rounded.
     // ZSN Pro 2: a gentle treble cut for the upper-mid resonance reviewers report, not a measured correction.
     "Moondrop Chu 2" to listOf(0f, 0f, -2f, -1f, 1f, 2f, 0f, 0f, 3f, -2f),
@@ -76,6 +81,21 @@ internal fun EqualizerPage(backend: CoreBackend) {
     if (io.max.paperplay.ui.isPhone) {
         val exact by backend.eqExact.collectAsState()
         val dry by backend.eqDry.collectAsState()
+        val width by backend.eqWidth.collectAsState()
+        val on by backend.eqOn.collectAsState()
+        SectionLabel("Stereo width")
+        Text(
+            "${kotlin.math.round(width * 100).toInt()}%" + when {
+                width > 1.005f -> ", instruments spread further apart; bass stays centred"
+                width < 0.995f -> ", narrower, softer on hard-panned recordings"
+                else -> ", as recorded"
+            },
+            Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+        )
+        androidx.compose.material3.Slider(
+            value = width, onValueChange = { backend.setEqWidth(kotlin.math.round(it * 20) / 20f) }, valueRange = 0.5f..1.6f, steps = 21,
+            enabled = on, modifier = Modifier.padding(horizontal = 20.dp),
+        )
         SectionLabel("Listening check")
         SwitchRow(
             "Exact level", exact, backend::setEqExact, null,

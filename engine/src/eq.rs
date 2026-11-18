@@ -42,6 +42,8 @@ const TP_LAG: usize = TP_TAPS - 1 - TP_CENTRE;
 const SWITCH_MS: f64 = 5.0;
 /// Crossfade from the old filters to the new ones on any change, and between processed and dry.
 const FADE_MS: f64 = 20.0;
+/// Filters in the bass stage.
+const BASS_F: usize = 4;
 /// Time constant of the level trims.
 const TRIM_MS: f64 = 10.0;
 /// Loudness window of the A/B level match.
@@ -66,11 +68,14 @@ fn kweight(k: &[Coef; 2], st: &mut [State; 2], x: f64) -> f64 {
     biquad(&k[1], s1, biquad(&k[0], s0, x))
 }
 
-/// RBJ peaking filter.
-fn peaking(rate: f64, hz: f64, gain_db: f64) -> Coef {
+/// RBJ peaking filter, one octave wide.
+fn peaking(rate: f64, hz: f64, gain_db: f64) -> Coef { peaking_q(rate, hz, gain_db, Q) }
+
+/// RBJ peaking filter with its own Q.
+fn peaking_q(rate: f64, hz: f64, gain_db: f64, q: f64) -> Coef {
     let a = 10f64.powf(gain_db / 40.0);
     let w = 2.0 * PI * hz / rate;
-    let alpha = w.sin() / (2.0 * Q);
+    let alpha = w.sin() / (2.0 * q);
     let cw = w.cos();
     let a0 = 1.0 + alpha / a;
     Coef {
@@ -309,8 +314,8 @@ struct Chain {
     active: [bool; N],
     state: [[State; N]; MAX_CH],
     bass_on: bool,
-    bass: [Coef; 3],
-    bass_state: [[State; 3]; MAX_CH],
+    bass: [Coef; BASS_F],
+    bass_state: [[State; BASS_F]; MAX_CH],
 }
 
 impl Chain {
@@ -320,8 +325,8 @@ impl Chain {
             active: [false; N],
             state: [[State::default(); N]; MAX_CH],
             bass_on: false,
-            bass: [Coef::default(); 3],
-            bass_state: [[State::default(); 3]; MAX_CH],
+            bass: [Coef::default(); BASS_F],
+            bass_state: [[State::default(); BASS_F]; MAX_CH],
         }
     }
 
@@ -330,14 +335,14 @@ impl Chain {
             if self.active[b] { x = biquad(&self.coefs[b], &mut self.state[c][b], x); }
         }
         if self.bass_on {
-            for b in 0..3 { x = biquad(&self.bass[b], &mut self.bass_state[c][b], x); }
+            for b in 0..BASS_F { x = biquad(&self.bass[b], &mut self.bass_state[c][b], x); }
         }
         x
     }
 
     fn clear(&mut self) {
         self.state = [[State::default(); N]; MAX_CH];
-        self.bass_state = [[State::default(); 3]; MAX_CH];
+        self.bass_state = [[State::default(); BASS_F]; MAX_CH];
     }
 }
 
@@ -352,6 +357,9 @@ pub struct Eq {
     bass_db: f64,
     peak_db: f64,
     exact: bool,
+    /// Stereo width above the split (1 = as recorded); `cur_width` glides to it.
+    width: f64,
+    cur_width: f64,
     // Linkwitz-Riley 4th order split: two cascaded 2nd-order low-pass and two high-pass per channel.
     xo_lp: Coef,
     xo_hp: Coef,
@@ -404,6 +412,8 @@ impl Eq {
             bass_db: 0.0,
             peak_db: 0.0,
             exact: false,
+            width: 1.0,
+            cur_width: 1.0,
             xo_lp: low_pass(rate, CROSSOVER_HZ),
             xo_hp: high_pass(rate, CROSSOVER_HZ),
             xo_state: [[State::default(); 4]; MAX_CH],
@@ -450,16 +460,22 @@ impl Eq {
         }
     }
 
-    /// Extra low-end boost on top of the bands, 0 to 12 dB: a shelf below 100 Hz plus a lift around 45 Hz,
-    /// with a high-pass at 22 Hz so the inaudible range below it is not boosted.
+    /// Extra low-end boost on top of the bands, 0 to 12 dB: a shelf below 100 Hz plus a lift around 45 Hz, with a high-pass
+    /// at 22 Hz so the inaudible range below it is not boosted, and a wide cut around 125 Hz so the rumble and kick
+    /// (25 to 60 Hz) keep their full lift while the boom above them, which muddies the mids, is pulled back.
     pub fn set_bass(&mut self, db: f32) {
         self.begin_fade();
         self.bass_db = (db as f64).clamp(0.0, 12.0);
         let on = self.bass_db >= 0.05;
         if on {
-            self.chain.bass = [low_shelf(self.rate, 100.0, self.bass_db), peaking(self.rate, 45.0, 0.4 * self.bass_db), high_pass(self.rate, 22.0)];
+            self.chain.bass = [
+                low_shelf(self.rate, 100.0, self.bass_db),
+                peaking(self.rate, 45.0, 0.4 * self.bass_db),
+                high_pass(self.rate, 22.0),
+                peaking_q(self.rate, 125.0, -0.35 * self.bass_db, 1.2),
+            ];
         } else {
-            self.chain.bass_state = [[State::default(); 3]; MAX_CH];
+            self.chain.bass_state = [[State::default(); BASS_F]; MAX_CH];
         }
         self.chain.bass_on = on;
         self.refresh();
@@ -471,11 +487,18 @@ impl Eq {
         self.refresh();
     }
 
+    /// Stereo width of everything above 180 Hz, 0.5 to 1.6 (1 = as recorded). Wider spreads instruments apart; the bass
+    /// below the split stays as it is, so it keeps its weight and centre. Stereo only.
+    pub fn set_width(&mut self, w: f32) {
+        self.width = (w as f64).clamp(0.5, 1.6);
+        self.refresh();
+    }
+
     /// Plays the input (delayed to the processed timing, at the processed loudness) instead of the processed sound.
     pub fn set_dry(&mut self, dry: bool) { self.dry = dry; }
 
     fn refresh(&mut self) {
-        self.want_on = self.bands_on || self.chain.bass_on;
+        self.want_on = self.bands_on || self.chain.bass_on || (self.channels == 2 && (self.width - 1.0).abs() > 0.005);
         if !self.want_on { return; }
         // Peak of the response below and above the split, separately: each half is trimmed only for its own boost.
         let top = self.rate * 0.45;
@@ -558,6 +581,7 @@ impl Eq {
         self.reset();
         self.cur_low = self.gain_low;
         self.cur_high = self.gain_high;
+        self.cur_width = self.width;
     }
 
     /// In place, interleaved. While the equalizer is on the output is delayed by the limiters' look-ahead (about 2 ms).
@@ -598,6 +622,15 @@ impl Eq {
                 let hi = biquad(&self.xo_hp, &mut self.xo_state[c][3], h1);
                 low[c] = (lo * self.cur_low) as f32;
                 high[c] = (hi * self.cur_high) as f32;
+            }
+            if ch == 2 {
+                self.cur_width += (self.width - self.cur_width) * self.trim_k;
+                if (self.cur_width - 1.0).abs() > 1e-6 {
+                    let (l, r) = (high[0] as f64, high[1] as f64);
+                    let (mid, side) = ((l + r) * 0.5, (l - r) * 0.5 * self.cur_width);
+                    high[0] = (mid + side) as f32;
+                    high[1] = (mid - side) as f32;
+                }
             }
             self.lim_low.process(&mut low, ch);
             self.lim_high.process(&mut high, ch);
@@ -779,6 +812,47 @@ mod tests {
     }
 
     #[test]
+    fn bass_keeps_the_rumble_and_clears_the_boom() {
+        let mut e = Eq::new(48000, 2);
+        e.set_bass(12.0);
+        for hz in [30.0, 40.0, 50.0] { assert!(e.response_db(hz) > 12.0, "{hz} Hz only {}", e.response_db(hz)); }
+        assert!(e.response_db(100.0) < 4.0, "100 Hz {}", e.response_db(100.0));
+        for hz in [160.0, 200.0, 250.0, 315.0] { assert!(e.response_db(hz) < 0.0, "{hz} Hz {}", e.response_db(hz)); }
+        assert!(e.response_db(1000.0).abs() < 0.2);
+    }
+
+    #[test]
+    fn width_spreads_the_sides_and_leaves_bass_and_centre() {
+        let rate = 48000.0;
+        let n = 96000;
+        // Left only at 1 kHz (a hard-panned instrument), both channels at 60 Hz (bass) and 2 kHz (centre vocal).
+        let mut a = vec![0f32; n * 2];
+        for i in 0..n {
+            let t = i as f64 / rate;
+            let (b, v, s) = (0.2 * (2.0 * PI * 60.0 * t).sin(), 0.1 * (2.0 * PI * 2000.0 * t).sin(), 0.1 * (2.0 * PI * 1000.0 * t).sin());
+            a[2 * i] = (b + v + s) as f32;
+            a[2 * i + 1] = (b + v) as f32;
+        }
+        let input = a.clone();
+        let mut e = Eq::new(48000, 2);
+        e.set_exact(true);
+        e.set_width(1.5);
+        e.process(&mut a);
+        let ch = |x: &[f32], c: usize| x.iter().skip(c).step_by(2).skip(n / 2).copied().collect::<Vec<f32>>();
+        let (l, r) = (ch(&a, 0), ch(&a, 1));
+        let (il, ir) = (ch(&input, 0), ch(&input, 1));
+        // Panned part: wider means louder on its side and out of phase on the other (side = 1.5 x).
+        assert!((amp_at(&l, 1000.0, rate) / amp_at(&il, 1000.0, rate) - 1.25).abs() < 0.03);
+        assert!((amp_at(&r, 1000.0, rate) - 0.025).abs() < 0.004, "right {}", amp_at(&r, 1000.0, rate));
+        // Centre and bass unchanged.
+        for hz in [60.0, 2000.0] {
+            assert!(db(amp_at(&l, hz, rate) / amp_at(&il, hz, rate)).abs() < 0.2, "{hz} left");
+            assert!(db(amp_at(&r, hz, rate) / amp_at(&ir, hz, rate)).abs() < 0.2, "{hz} right");
+        }
+        let _ = ir;
+    }
+
+    #[test]
     fn loud_bass_does_not_duck_the_highs() {
         // Same curve, with and without a loud 60 Hz bass under a quiet 3 kHz tone: the 3 kHz level must not change.
         let rate = 48000.0;
@@ -822,7 +896,7 @@ mod tests {
         let ratio_before = amp_at(&mix[48000..], 55.0, rate) / amp_at(&mix[48000..], 1000.0, rate);
         let ratio_after = amp_at(&a[48000..], 55.0, rate) / amp_at(&a[48000..], 1000.0, rate);
         let gain_db = 20.0 * (ratio_after / ratio_before).log10();
-        assert!(gain_db > 8.0, "bass only gained {gain_db} dB over the mids");
+        assert!(gain_db > 7.5, "bass only gained {gain_db} dB over the mids");
         let st = e.take_stats();
         assert!(st[3] > -1.0, "bass limiter reduced {} dB", st[3]);
     }

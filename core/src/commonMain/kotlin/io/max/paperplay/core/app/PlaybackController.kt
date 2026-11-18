@@ -297,6 +297,7 @@ class PlaybackController(
     fun setBass(db: Float) = engine.setBass(db)
     fun setExactLevel(on: Boolean) = engine.setExactLevel(on)
     fun setDryCompare(on: Boolean) = engine.setDryCompare(on)
+    fun setStereoWidth(width: Float) = engine.setStereoWidth(width)
     fun setExclusiveOutput(on: Boolean) = engine.setExclusiveOutput(on)
     fun setCorrectionProfile(text: String?) = engine.setCorrectionProfile(text)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)

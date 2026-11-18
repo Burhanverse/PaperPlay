@@ -104,6 +104,12 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setBass(_env: J
     if let Some(eq) = eq(handle) { eq.set_bass(db); }
 }
 
+/// Stereo width above 180 Hz, 0.5 to 1.6 (1 = as recorded).
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setWidth(_env: JNIEnv, _c: JClass, handle: jlong, w: jni::sys::jfloat) {
+    if let Some(eq) = eq(handle) { eq.set_width(w); }
+}
+
 /// Exact level mode (the heard balance is the drawn curve) instead of Loud.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setExact(_env: JNIEnv, _c: JClass, handle: jlong, on: jboolean) {

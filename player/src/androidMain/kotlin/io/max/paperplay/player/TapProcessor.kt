@@ -27,6 +27,7 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
     private var appliedBass = 0f
     private var appliedExact = false
     private var appliedDry = false
+    private var appliedWidth = 1f
     private var pending: ByteBuffer? = null
     private var out: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
     private var calls = 0
@@ -47,6 +48,7 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         appliedBass = 0f
         appliedExact = false
         appliedDry = false
+        appliedWidth = 1f
         val floatFormat = f.buildUpon().setPcmEncoding(C.ENCODING_PCM_FLOAT).build()
         super.configure(
             AudioSink.AudioSinkConfig.Builder(floatFormat)
@@ -83,9 +85,11 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         val bass = PlaybackCore.bassDb
         if (bass != appliedBass) { EngineNative.setBass(handle, bass); appliedBass = bass }
         val exact = PlaybackCore.exactLevel
-        if (exact != appliedExact) { EngineNative.setExact(handle, exact); appliedExact = exact }
+        if (exact != appliedExact) { EngineNative.setExact(handle, exact); appliedExact = exact; PlayLog.log("engine", "exact level $exact") }
         val dry = PlaybackCore.dryCompare
-        if (dry != appliedDry) { EngineNative.setDry(handle, dry); appliedDry = dry }
+        if (dry != appliedDry) { EngineNative.setDry(handle, dry); appliedDry = dry; PlayLog.log("engine", "compare with original $dry") }
+        val width = PlaybackCore.width
+        if (width != appliedWidth) { EngineNative.setWidth(handle, width); appliedWidth = width; PlayLog.log("engine", "width $width") }
         val kind = when (enc) { C.ENCODING_PCM_16BIT -> 0; C.ENCODING_PCM_24BIT -> 1; C.ENCODING_PCM_FLOAT -> 3; else -> 2 }
         // Decoder buffers are direct, so Rust reads them in place; anything else is converted here first.
         if (!src.isDirect || EngineNative.processPcm(handle, src, src.position(), kind, samples, out) != samples) {

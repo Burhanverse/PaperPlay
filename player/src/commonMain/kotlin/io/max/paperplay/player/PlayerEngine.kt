@@ -115,6 +115,8 @@ interface PlayerEngine {
     fun setExactLevel(on: Boolean) {}
     /** A/B check: plays the untouched sound at the processed level, where the engine can. */
     fun setDryCompare(on: Boolean) {}
+    /** Stereo width above the bass, 0.5 to 1.6 (1 = as recorded), where the engine can. */
+    fun setStereoWidth(width: Float) {}
     /** Exclusive output for bit-perfect playback, where the engine supports it (the mpv engine on Windows). */
     fun setExclusiveOutput(on: Boolean) {}
     /** An earphone correction curve in AutoEq GraphicEQ text (see [CorrectionProfile]), or null; engines with a filter chain apply it. */

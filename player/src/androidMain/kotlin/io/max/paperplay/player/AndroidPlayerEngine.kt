@@ -401,6 +401,8 @@ class AndroidPlayerEngine : PlayerEngine {
 
     override fun setDryCompare(on: Boolean) { PlaybackCore.dryCompare = on }
 
+    override fun setStereoWidth(width: Float) { PlaybackCore.width = width }
+
     override fun setEqualizer(gainsDb: List<Float>?) {
         PlaybackCore.eqGains = gainsDb
         onMain {
@@ -446,6 +448,7 @@ class AndroidPlayerEngine : PlayerEngine {
         val effects = buildList {
             if (eqOn) add(if (PlaybackCore.engineActive) "Equalizer (engine)" else "Equalizer (system)")
             if (eqOn && PlaybackCore.engineActive && PlaybackCore.bassDb >= 0.05f) add("Bass +${"%.1f".format(PlaybackCore.bassDb)} dB")
+            if (PlaybackCore.engineActive && kotlin.math.abs(PlaybackCore.width - 1f) > 0.005f) add("Width ${(PlaybackCore.width * 100).toInt()}%")
             if (PlaybackCore.normalize) add("Normalise")
             if (PlaybackCore.speed != 1f) add("Speed ${PlaybackCore.speed}x")
             if (volumeLevel < 0.995f) add("Volume ${(volumeLevel * 100).toInt()}%")
