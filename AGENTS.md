@@ -13,6 +13,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Reproduce or prove the cause (log line, test, stack trace) before fixing. A fix with no evidence is a guess.
 - One change per commit. Keep diffs small; no drive-by refactors, no new dependencies without a reason.
 - Never invent API fields (TDLib, Bot API). Check the schema or a live answer.
+- A bug on the phone or PC can be proven from real data: copy `%APPDATA%\PaperPlay\library.sqlite` and query the copy, or run `adb shell dumpsys notification --noredact` for notifications. Do not write to the live file.
 - A speed or smoothness claim needs a measurement before and after (`dumpsys gfxinfo` frame percentiles, a screen recording cut into frames, or a perfetto trace with `view gfx am input` categories). Several "fixes" this way changed nothing; the trace found the real cause.
 - Do not commit a change until the build for it has finished and passed. If files you did not edit change under you (another session is working), leave them alone and commit only your own files.
 
@@ -70,6 +71,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - A song in a credit "A, B & C" is several artists; use `splitArtists` (core `metadata/Text.kt`) wherever artists are listed, linked or matched.
 - A cover or album match is never taken from a compilation ("Bravo Hits", "Top 100"): use `isCompilationAlbum` and `pickExternal(..., allowCompilation = false)` for covers.
 - Data that two devices both have is merged by one pure rule that gives the same answer on both sides (`remoteTagsWin`, `remoteLyricsWin`, `mergeSongData`); what was made by hand wins over what was found.
+- Tags from Telegram can be wrong (title and artist swapped, "Version - Artists" as the title). Fix them in `fixSwappedTags` and `repairSplitNames` (`Scanner.kt`), never by hand in the DB; a repair that must run again on existing libraries gets a new pref key (`split_names_vN`) and bumps `tags_at` so it wins the sync.
 - Rewind: one press restarts the song, a second within 2.5 s goes back, the first song only restarts.
 
 ## Git
