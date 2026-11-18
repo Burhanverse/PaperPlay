@@ -96,6 +96,12 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
     val main = backend.mainChatId()
     val scope = backend.services.scope
     val active = jobs.any { it.status == DeleteStatus.Queued || it.status == DeleteStatus.Deleting }
+    // Telegram lets a bot delete only posts younger than 48 hours; older ones go through your own account, so say so before anything is tried.
+    val accountOn by backend.account.loggedIn.collectAsState()
+    val oldTicked = remember(ticked, groups) {
+        val limit = kotlin.time.Clock.System.now().epochSeconds - 47 * 3600L
+        groups.orEmpty().flatMap { postsOf(it) }.distinctBy { it.key }.count { it.key in ticked && it.date in 1..limit }
+    }
 
     LaunchedEffect(reload) {
         val repo = backend.services.library.repo
@@ -156,6 +162,14 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                         Text(
                             "${found.size} songs appear more than once in your main chat. Tick the posts to delete from Telegram. One copy of every song always stays.",
                             Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (oldTicked > 0) item {
+                        Text(
+                            if (accountOn) "$oldTicked of the ticked posts are older than 48 hours. Your account deletes those."
+                            else "$oldTicked of the ticked posts are older than 48 hours. Telegram lets only your own account delete those: log in under Settings, Library. The others are deleted as usual.",
+                            Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                            color = if (accountOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                         )
                     }
                     item {
@@ -290,7 +304,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
         AlertDialog(
             onDismissRequest = { confirm = false },
             title = { Text("Delete ${ticked.size} posts?") },
-            text = { Text("They are removed from Telegram for everyone and cannot be brought back. Playlists and favorites move to the copy that stays.") },
+            text = { Text("They are removed from Telegram for everyone and cannot be brought back. Playlists and favorites move to the copy that stays." + (if (oldTicked > 0 && !accountOn) " $oldTicked older than 48 hours will not be deleted until your account is logged in." else "")) },
             confirmButton = {
                 TextButton(onClick = {
                     confirm = false

@@ -87,7 +87,7 @@ fun HomeScreen(
 ) {
     val songs = (lib.songs as? Load.Ready)?.value.orEmpty()
     val readTelegram = LocalTelegramLists.current
-    val telegram = remember(readTelegram, lib.playlists.size) { readTelegram() }
+    val telegram = readTelegram()
     // Quick tiles: favorites, every playlist, then generated collections to make at least six. Three stack in a column; swipe sideways for more.
     val tileRows = remember(favorites, lib.playlists, home.tiles, actions) {
         buildList<Pair<GroupUi, () -> Unit>> {

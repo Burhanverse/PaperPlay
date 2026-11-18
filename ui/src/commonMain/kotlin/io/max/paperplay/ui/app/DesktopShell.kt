@@ -159,7 +159,7 @@ fun Sidebar(
     onTelegram: (CoreBackend.TelegramList) -> Unit = {},
 ) {
     val readTelegram = LocalTelegramLists.current
-    val telegram = remember(readTelegram, playlists.size) { readTelegram() }
+    val telegram = readTelegram()
     var toolsOpen by remember { mutableStateOf(false) }
     var playlistsOpen by remember { mutableStateOf(true) }
     var telegramOpen by remember { mutableStateOf(true) }

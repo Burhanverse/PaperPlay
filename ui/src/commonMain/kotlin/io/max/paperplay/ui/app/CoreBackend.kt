@@ -186,6 +186,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         .flowOn(Dispatchers.Default)
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), LibraryUi())
 
+    /** Topic and starred-channel lists, rebuilt after the library is (it groups every song, so never on the main thread). */
+    val telegram: StateFlow<List<TelegramList>> = library.map { telegramLists() }.conflate()
+        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val favorites: StateFlow<List<SongUi>> = repo.favorites()
         .onEach { if (it.isNotEmpty()) services.covers.prioritize(it.take(20)) }
         .map { it.map(Song::toUi) }

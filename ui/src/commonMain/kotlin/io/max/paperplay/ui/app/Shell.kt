@@ -289,13 +289,17 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
 
     val lanSync = rememberLanSync(backend)
-    val coversQueued by backend.services.covers.queued.collectAsState()
+    // The topic and channel lists are built off the main thread; only the screens that show them read this state.
+    val telegramState = backend.telegram.collectAsState()
     // Placeholder covers only while the app starts up. After that a cover fetched while scrolling must not turn the others into placeholders.
+    // The queue size changes many times a second at startup, so it is read in an effect, not in composition (which redrew the whole shell each time).
     var coversStarting by remember { mutableStateOf(true) }
-    var sawCoverQueue by remember { mutableStateOf(false) }
-    LaunchedEffect(coversQueued) { if (coversQueued > 0) sawCoverQueue = true else if (sawCoverQueue) coversStarting = false }
+    LaunchedEffect(Unit) {
+        var saw = false
+        backend.services.covers.queued.collect { q -> if (q > 0) saw = true else if (saw) coversStarting = false }
+    }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(10_000); coversStarting = false }
-    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides remember(lib) { { backend.telegramLists() } }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput) { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } } }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides remember(telegramState) { { telegramState.value } }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput) { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } } }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
