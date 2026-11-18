@@ -750,3 +750,25 @@ elease` must say Java 25 and the setup exe must start.
 ### Wrong title and artist (18 Nov)
 - [~] Files named `Song_Lofi_Artists.flac` came tagged with title and artist swapped (or title as "Lofi - Artists"). `fixSwappedTags` (`Scanner.kt`) swaps them back on scan and once over the library (pref `split_names_v3`), skipping edited songs; fixed songs are looked up again. Committed 48f11c6, debug installed on the phone, PC not restarted. Open: one phone row (Pichavecha Naal) kept the song as its artist after the repair; cause not found.
 - [~] Blank PaperPlay card in the notification shade: the music notification is now posted ungrouped (`PlaybackService.kt`, uncommitted). Not confirmed on the phone yet.
+## Update 2026-11-18 (duplicates and deletes, start-up and Home). Key: [x] seen working on the phone, [~] built and installed but not tried, [ ] open
+### Deleting posts and duplicates
+- [x] Why deletes were refused (found by calling the Bot API by hand): a bot sees and edits only the posts it sent itself; a post sent by you can be deleted by any admin bot only while it is under 48 hours old; nothing old can be deleted by a bot. Only a logged-in account deletes old posts. Counted in the main chat: 2,197 posts sent by the four bots, 1,201 more sent by the user and visible to a bot (not editable), against 3,278 songs in the app.
+- [~] The delete queue asks the bot that sent the post first, then the main bot and the account, in groups of five so progress shows; the keeper check runs only when the account is logged in; a post older than 48 hours is not tried through bots and says to log in the account.
+- [~] Duplicates page: a notice before deleting says how many ticked posts are older than 48 hours (account needed); "Open in Telegram" in the three-dot menu; each row names the bot the library holds the post under; "All but the best"; Refresh drops posts no bot can see.
+- [~] Songs the bot cannot reach are greyed out with a warning icon and can be filtered ("Only songs the bot can't reach").
+- [ ] Not tried: deleting old duplicates with the account logged in. The library does not record which bot sent each copy (`post_copies` has no sender column); a sender column recorded at scan time is proposed, not built.
+### Start-up and Home
+- [x] Start-up measured on a Nothing A015 with the release build compiled (`cmd package compile -m speed`): slowest 1% of frames about 40 to 80 ms (was 350 to 500 ms), median frame 9 to 13 ms, content about 1.6 s after the tap. A build installed with `adb install -r` is uncompiled until Android compiles it, and then the slowest 1% was 1.1 to 2.0 s; always compile after installing before judging speed.
+- [x] Home draws the page saved at the last launch at once (song ids in the `home_snapshot_v1` preference, covers decoded first), then swaps in the real plan. The plan no longer waits for the whole library, nor restarts when the scan, covers, weather or taste settings change. Songs, albums and artists are built only when shown (`LazySongs`; albums and artists load with their tab). The topic lists are built off the main thread.
+- [x] No skeleton and no spinner at start (a spinner shows only after 2 s); Home waits until its lists have arrived, so it does not change under its own animation; the second blurred background behind the glass bar is added after 2.5 s.
+- [x] Home animation: tiles and cards fly in from the left, right and bottom and snap into place, once per launch. No tilt: a rotated layer made every cover be uploaded to the graphics memory again each frame (about 1,000 uploads in half a second against about 100). Seen smooth on the phone.
+- [~] Settings > Style > Home animation turns it off (on by default); Reduce motion also turns it off.
+- [~] PC: windows 900 dp or wider get fixed-width quick tiles in two columns beside a compact Recently played row; the shared changes above apply but nothing was measured on the PC.
+- [x] "Update available" no longer comes back after "Skip this version" (the skip saves the release the dialog showed).
+### Notifications, names, other
+- [~] Each running task is its own live notification; the service's own notification no longer counts tasks ("Working in the background" when keep running is on, nothing when it is off).
+- [~] A file named "Song - Version - Artist" keeps the version in the title; a repair run fixes titles split the old way once (`split_names_v1`).
+- [~] Upload page shows speed, time left and totals; Profile has an Upload songs row.
+- [~] The glass nav bar blurs the page colour as well as the page.
+- [~] The Shizuku button finds the app by its launcher entry.
+- [ ] Still open: first screen takes about 400 ms to compose and about 400 ms to draw its first frame (blurred backgrounds); the PC was not run or measured; the glass look beyond the nav bar was not reviewed.
