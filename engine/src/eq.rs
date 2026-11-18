@@ -9,12 +9,18 @@
 //! Every change glides (filters crossfade, trims ramp, switching on and off fades), so nothing clicks. A dry mode plays the
 //! untouched input at the processed level and timing, for a fair A/B.
 
+use crate::extras::{Crossfeed, DeEsser, DynBass};
 use std::f64::consts::PI;
+
+/// `set_options` bits.
+pub const OPT_DYNAMIC_BASS: u32 = 1;
+pub const OPT_DE_ESSER: u32 = 2;
+pub const OPT_CROSSFEED: u32 = 4;
 
 pub const BANDS_HZ: [f64; 10] = [32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
 const N: usize = BANDS_HZ.len();
 const Q: f64 = 1.41; // one octave wide
-const MAX_CH: usize = 8;
+pub(crate) const MAX_CH: usize = 8;
 const MAX_FIT_DB: f64 = 18.0;
 /// Loud mode: net lift the bass half keeps (dB), so the limiter stays a safety net and bass keeps its punch.
 const BASS_NET_DB: f64 = 4.0;
@@ -45,6 +51,7 @@ const FADE_MS: f64 = 20.0;
 /// Most filters an earphone correction may have.
 pub const MAX_CORR: usize = 16;
 /// Correction filter kinds, as in AutoEq's ParametricEQ.txt: peaking, low shelf, high shelf.
+#[allow(dead_code)] // any kind other than the shelves is a peak
 pub const CORR_PK: u8 = 0;
 pub const CORR_LSC: u8 = 1;
 pub const CORR_HSC: u8 = 2;
@@ -56,12 +63,12 @@ const TRIM_MS: f64 = 10.0;
 const MATCH_S: f64 = 3.0;
 
 #[derive(Clone, Copy, Default)]
-struct Coef { b0: f64, b1: f64, b2: f64, a1: f64, a2: f64 }
+pub(crate) struct Coef { pub b0: f64, pub b1: f64, pub b2: f64, pub a1: f64, pub a2: f64 }
 
 #[derive(Clone, Copy, Default)]
-struct State { z1: f64, z2: f64 }
+pub(crate) struct State { z1: f64, z2: f64 }
 
-fn biquad(k: &Coef, st: &mut State, x: f64) -> f64 {
+pub(crate) fn biquad(k: &Coef, st: &mut State, x: f64) -> f64 {
     let y = k.b0 * x + st.z1;
     st.z1 = k.b1 * x - k.a1 * y + st.z2;
     st.z2 = k.b2 * x - k.a2 * y;
@@ -143,7 +150,7 @@ fn high_pass(rate: f64, hz: f64) -> Coef {
 }
 
 /// RBJ low-pass, Q = 0.707.
-fn low_pass(rate: f64, hz: f64) -> Coef {
+pub(crate) fn low_pass(rate: f64, hz: f64) -> Coef {
     let w = 2.0 * PI * hz / rate;
     let (sw, cw) = (w.sin(), w.cos());
     let alpha = sw / (2.0 * std::f64::consts::FRAC_1_SQRT_2);
@@ -331,6 +338,8 @@ struct Chain {
     corr: [Coef; MAX_CORR],
     corr_n: usize,
     corr_state: [[State; MAX_CORR]; MAX_CH],
+    /// Share of the bass stage mixed in (dynamic bass); 1 = all of it.
+    bass_mix: f64,
 }
 
 impl Chain {
@@ -345,6 +354,7 @@ impl Chain {
             corr: [Coef::default(); MAX_CORR],
             corr_n: 0,
             corr_state: [[State::default(); MAX_CORR]; MAX_CH],
+            bass_mix: 1.0,
         }
     }
 
@@ -354,7 +364,9 @@ impl Chain {
             if self.active[b] { x = biquad(&self.coefs[b], &mut self.state[c][b], x); }
         }
         if self.bass_on {
+            let dry = x;
             for b in 0..BASS_F { x = biquad(&self.bass[b], &mut self.bass_state[c][b], x); }
+            if self.bass_mix < 1.0 { x = dry + (x - dry) * self.bass_mix; }
         }
         x
     }
@@ -377,6 +389,10 @@ pub struct Eq {
     bass_db: f64,
     peak_db: f64,
     exact: bool,
+    opts: u32,
+    dyn_bass: DynBass,
+    de_esser: DeEsser,
+    crossfeed: Crossfeed,
     /// Stereo width above the split (1 = as recorded); `cur_width` glides to it.
     width: f64,
     cur_width: f64,
@@ -432,6 +448,10 @@ impl Eq {
             bass_db: 0.0,
             peak_db: 0.0,
             exact: false,
+            opts: 0,
+            dyn_bass: DynBass::new(rate),
+            de_esser: DeEsser::new(rate),
+            crossfeed: Crossfeed::new(rate),
             width: 1.0,
             cur_width: 1.0,
             xo_lp: low_pass(rate, CROSSOVER_HZ),
@@ -537,8 +557,16 @@ impl Eq {
     /// Plays the input (delayed to the processed timing, at the processed loudness) instead of the processed sound.
     pub fn set_dry(&mut self, dry: bool) { self.dry = dry; }
 
+    /// `OPT_*` bits: dynamic bass (eases the Bass lift on already loud bass), de-esser, crossfeed (stereo).
+    pub fn set_options(&mut self, bits: u32) {
+        self.opts = bits;
+        if bits & OPT_DYNAMIC_BASS == 0 { self.chain.bass_mix = 1.0; self.old.bass_mix = 1.0; }
+        self.refresh();
+    }
+
     fn refresh(&mut self) {
-        self.want_on = self.bands_on || self.chain.bass_on || self.chain.corr_n > 0 || (self.channels == 2 && (self.width - 1.0).abs() > 0.005);
+        self.want_on = self.bands_on || self.chain.bass_on || self.chain.corr_n > 0 || self.opts & OPT_DE_ESSER != 0
+            || (self.channels == 2 && self.opts & OPT_CROSSFEED != 0) || (self.channels == 2 && (self.width - 1.0).abs() > 0.005);
         if !self.want_on { return; }
         // Peak of the response below and above the split, separately: each half is trimmed only for its own boost.
         let top = self.rate * 0.45;
@@ -650,12 +678,25 @@ impl Eq {
             let mut low = [0f32; MAX_CH];
             let mut high = [0f32; MAX_CH];
             let mut p_in = 0.0;
+            if self.opts & OPT_DYNAMIC_BASS != 0 && self.chain.bass_on {
+                let mono = frame.iter().map(|v| *v as f64).sum::<f64>() / ch as f64;
+                let mix = self.dyn_bass.mix(mono, self.bass_db);
+                self.chain.bass_mix = mix;
+                self.old.bass_mix = mix;
+            }
+            let mut vs = [0f64; MAX_CH];
             for c in 0..ch {
                 let x = frame[c] as f64;
                 let w = kweight(&self.kw, &mut self.kw_in[c], x);
                 p_in += w * w;
                 let mut v = self.chain.run(c, x);
                 if a < 1.0 { v = a * v + (1.0 - a) * self.old.run(c, x); }
+                vs[c] = v;
+            }
+            if self.opts & OPT_DE_ESSER != 0 { self.de_esser.process(&mut vs, ch); }
+            if ch == 2 && self.opts & OPT_CROSSFEED != 0 { self.crossfeed.process(&mut vs); }
+            for c in 0..ch {
+                let v = vs[c];
                 let l1 = biquad(&self.xo_lp, &mut self.xo_state[c][0], v);
                 let lo = biquad(&self.xo_lp, &mut self.xo_state[c][1], l1);
                 let h1 = biquad(&self.xo_hp, &mut self.xo_state[c][2], v);
@@ -724,6 +765,9 @@ impl Eq {
         self.dry_pos = 0;
         self.kw_in = [[State::default(); 2]; MAX_CH];
         self.kw_out = [[State::default(); 2]; MAX_CH];
+        self.dyn_bass.clear();
+        self.de_esser.clear();
+        self.crossfeed.clear();
     }
 }
 
@@ -918,6 +962,42 @@ mod tests {
         let c = b.clone();
         e.process(&mut b);
         assert_eq!(b, c);
+    }
+
+    #[test]
+    fn options_switch_the_engine_and_stay_clean() {
+        // Crossfeed alone turns the engine on; with no option and a flat curve it is untouched again.
+        let mut e = Eq::new(48000, 2);
+        e.set_options(OPT_CROSSFEED | OPT_DE_ESSER);
+        let mut a = sine(48000.0, 440.0, 0.3, 9600);
+        let b = a.clone();
+        e.process(&mut a);
+        assert_ne!(a, b);
+        e.set_options(0);
+        let mut fade = sine(48000.0, 440.0, 0.3, 4800);
+        e.process(&mut fade);
+        let mut c = sine(48000.0, 440.0, 0.3, 4800);
+        let d = c.clone();
+        e.process(&mut c);
+        assert_eq!(c, d);
+        // Dynamic bass on loud bass: lower lift, no added distortion.
+        let rate = 48000.0;
+        let lift = |dynamic: bool| {
+            let mut e = Eq::new(48000, 1);
+            e.set_exact(true);
+            e.set_bass(12.0);
+            if dynamic { e.set_options(OPT_DYNAMIC_BASS); }
+            let mut a = sine(rate, 50.0, 0.5, 96000 * 2);
+            e.process(&mut a);
+            let t = &a[96000..];
+            let f = amp_at(t, 50.0, rate);
+            let worst = [100.0, 150.0, 200.0].iter().map(|h| db(amp_at(t, *h, rate) / f)).fold(f64::MIN, f64::max);
+            (db(f / 0.5), worst)
+        };
+        let (on, harm) = lift(true);
+        let (off, _) = lift(false);
+        assert!(off - on > 2.0, "dynamic bass eased only {} dB", off - on);
+        assert!(harm < -50.0, "dynamic bass harmonics {harm} dB");
     }
 
     #[test]

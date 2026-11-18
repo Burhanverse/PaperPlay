@@ -17,6 +17,7 @@ internal object EngineNative {
     external fun setDry(handle: Long, on: Boolean)
     external fun setWidth(handle: Long, width: Float)
     external fun setCorrection(handle: Long, filters: FloatArray)
+    external fun setOptions(handle: Long, bits: Int)
     /** Converts [samples] PCM samples of [kind] (0 = 16-bit, 1 = 24-bit, 2 = 32-bit, 3 = float) from direct [src] at byte [offset] into [out] as float and processes them; returns the samples written. */
     external fun processPcm(handle: Long, src: ByteBuffer, offset: Int, kind: Int, samples: Int, out: ByteBuffer): Int
     external fun stats(handle: Long, out: FloatArray)

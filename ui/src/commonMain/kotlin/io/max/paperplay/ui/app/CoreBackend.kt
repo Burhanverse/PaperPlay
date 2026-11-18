@@ -84,6 +84,10 @@ data class ScanUi(val text: String, val fraction: Double?)
  * No Telegram or database types leave this class except [LibraryChat].
  */
 /** What the player screens need from the backend. Lets them be previewed with fake data. */
+const val EQ_DYNAMIC_BASS = 1
+const val EQ_DE_ESSER = 2
+const val EQ_CROSSFEED = 4
+
 interface PlayerControls {
     val position: StateFlow<PositionUi>
     val sleepAt: StateFlow<Long?>
@@ -114,6 +118,11 @@ interface PlayerControls {
     /** Name of a built-in earphone correction ([io.max.paperplay.player.CorrectionProfile.EARPHONES]), empty for none. */
     val eqEarphone: StateFlow<String> get() = MutableStateFlow("")
     fun setEqEarphone(name: String) {}
+    /** Engine option bits (see [EQ_DYNAMIC_BASS], [EQ_DE_ESSER], [EQ_CROSSFEED]). */
+    val eqOptions: StateFlow<Int> get() = MutableStateFlow(0)
+    fun setEqOption(bit: Int, on: Boolean) {}
+    /** The output the equalizer settings belong to (they are kept per output), or null before anything played. */
+    val eqOutput: StateFlow<String?> get() = MutableStateFlow(null)
     /** True where the engine in use has a Bass control: the phone, and the PC with the mpv engine. */
     val hasBass: Boolean get() = io.max.paperplay.ui.isPhone
     fun removeFromQueue(index: Int)
@@ -643,7 +652,50 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     override fun setEqExact(on: Boolean) {
         eqExact.value = on
         repo.setPref("eq_exact", "$on")
+        saveForOutput()
         if (playerStarted.value) player.setExactLevel(on)
+    }
+
+    override val eqOptions = MutableStateFlow(repo.pref("eq_options")?.toIntOrNull() ?: 0)
+
+    override fun setEqOption(bit: Int, on: Boolean) {
+        eqOptions.value = if (on) eqOptions.value or bit else eqOptions.value and bit.inv()
+        repo.setPref("eq_options", "${eqOptions.value}")
+        pushBass()
+    }
+
+    override val eqOutput = MutableStateFlow<String?>(null)
+
+    /** The equalizer settings as one line, kept per output under `eq_out:<name>`. */
+    private fun eqSnapshot(): String = listOf(
+        "on=${eqOn.value}", "gains=${eqGains.value.joinToString(",")}", "bass=${eqBass.value}", "width=${eqWidth.value}",
+        "earphone=${eqEarphone.value}", "exact=${eqExact.value}", "options=${eqOptions.value}",
+    ).joinToString(";")
+
+    private fun saveForOutput() { eqOutput.value?.let { repo.setPref("eq_out:$it", eqSnapshot()) } }
+
+    /** Phone: the output changed (earbuds, DAC, speaker). Its saved settings come back; a new output starts from the current ones. */
+    private fun onOutput(name: String) {
+        if (!io.max.paperplay.ui.isPhone || name == eqOutput.value) return
+        eqOutput.value = name
+        val saved = repo.pref("eq_out:$name")
+        if (saved == null) { saveForOutput(); return }
+        val m = saved.split(';').mapNotNull { kv -> kv.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+        m["on"]?.let { eqOn.value = it == "true"; repo.setPref("eq_on", it) }
+        m["gains"]?.split(',')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == eqGains.value.size }?.let {
+            eqGains.value = it
+            repo.setPref("eq_gains", it.joinToString(",", "[", "]"))
+        }
+        m["bass"]?.toFloatOrNull()?.let { eqBass.value = it; repo.setPref("eq_bass", "$it") }
+        m["width"]?.toFloatOrNull()?.let { eqWidth.value = it; repo.setPref("eq_width", "$it") }
+        m["earphone"]?.let { eqEarphone.value = it; repo.setPref("eq_earphone", it) }
+        m["exact"]?.let { eqExact.value = it == "true"; repo.setPref("eq_exact", it) }
+        m["options"]?.toIntOrNull()?.let { eqOptions.value = it; repo.setPref("eq_options", "$it") }
+        if (playerStarted.value) {
+            player.setEqualizer(if (eqOn.value && !bitPerfect.value) eqGains.value else null)
+            player.setExactLevel(eqExact.value)
+        }
+        pushBass()
     }
 
     /** Phone engine: stereo width above the bass, 0.5 to 1.6 (1 = as recorded). Applies while the equalizer is on. */
@@ -680,11 +732,13 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
 
     private fun pushBass() {
+        saveForOutput()
         if (!playerStarted.value) return
         val on = eqOn.value && !bitPerfect.value
         player.setBass(if (on) eqBass.value else 0f)
         player.setStereoWidth(if (on) eqWidth.value else 1f)
         player.setEarphoneCorrection(if (on) io.max.paperplay.player.CorrectionProfile.EARPHONES[eqEarphone.value] else null)
+        player.setEngineOptions(if (on) eqOptions.value else 0)
     }
 
     override fun setEqualizer(on: Boolean, gains: List<Float>) {
@@ -952,13 +1006,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     private val playerLazy = lazy {
         services.playback.also { p ->
-            scope.launch { p.outputInfo.collect { _outputInfo.value = it } }
+            scope.launch { p.outputInfo.collect { _outputInfo.value = it; it?.device?.let { d -> onOutput(d) } } }
             val bp = bitPerfect.value
             if (eqOn.value && !bp) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
             p.setExactLevel(eqExact.value)
             if (eqOn.value && !bp) {
                 p.setStereoWidth(eqWidth.value)
                 p.setEarphoneCorrection(io.max.paperplay.player.CorrectionProfile.EARPHONES[eqEarphone.value])
+                p.setEngineOptions(eqOptions.value)
             }
             if (exclusiveOutput.value || bp) p.setExclusiveOutput(true)
             if (!bp) correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }

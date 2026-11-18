@@ -38,6 +38,8 @@ internal object PlaybackCore {
     @Volatile var width = 1f
     /** Earphone correction filters, 4 floats each (kind, Hz, Q, dB), or null. */
     @Volatile var correction: FloatArray? = null
+    /** Engine option bits: 1 dynamic bass, 2 de-esser, 4 crossfeed. */
+    @Volatile var options = 0
     /** What the Rust engine reads and writes, and its meters, for the output info. Set by the sink wrapper. */
     @Volatile var engineIn: String? = null
     @Volatile var engineOut: String? = null

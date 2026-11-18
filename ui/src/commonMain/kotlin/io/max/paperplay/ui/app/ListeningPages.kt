@@ -79,6 +79,13 @@ internal fun EngineExtras(backend: PlayerControls) {
     val width by backend.eqWidth.collectAsState()
     val on by backend.eqOn.collectAsState()
     val earphone by backend.eqEarphone.collectAsState()
+    val options by backend.eqOptions.collectAsState()
+    val output by backend.eqOutput.collectAsState()
+    Text(
+        output?.let { "Settings for $it. Each output (earbuds, DAC, speaker) keeps its own and switches by itself." }
+            ?: "Each output (earbuds, DAC, speaker) keeps its own settings once something has played on it.",
+        Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     SectionLabel("Earphone correction")
     val names = listOf("None") + io.max.paperplay.player.CorrectionProfile.EARPHONES.keys
     ChoiceRow(names, earphone.ifEmpty { "None" }, { it }, { backend.setEqEarphone(if (it == "None") "" else it) })
@@ -98,6 +105,19 @@ internal fun EngineExtras(backend: PlayerControls) {
     androidx.compose.material3.Slider(
         value = width, onValueChange = { backend.setEqWidth(kotlin.math.round(it * 20) / 20f) }, valueRange = 0.5f..1.6f, steps = 21,
         enabled = on, modifier = Modifier.padding(horizontal = 20.dp),
+    )
+    SectionLabel("Extras")
+    SwitchRow(
+        "Dynamic bass", options and EQ_DYNAMIC_BASS != 0, { backend.setEqOption(EQ_DYNAMIC_BASS, it) }, null,
+        "Full Bass lift in quiet parts, less where the bass is already heavy, so it stays clean when loud",
+    )
+    SwitchRow(
+        "De-esser", options and EQ_DE_ESSER != 0, { backend.setEqOption(EQ_DE_ESSER, it) }, null,
+        "Softens sharp s and t sounds in voices; leaves cymbals and normal treble alone",
+    )
+    SwitchRow(
+        "Crossfeed", options and EQ_CROSSFEED != 0, { backend.setEqOption(EQ_CROSSFEED, it) }, null,
+        "Blends a little of each side into the other, like speakers; eases hard-panned old recordings",
     )
     SectionLabel("Listening check")
     SwitchRow(

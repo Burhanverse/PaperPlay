@@ -119,6 +119,8 @@ interface PlayerEngine {
     fun setStereoWidth(width: Float) {}
     /** Earphone correction in AutoEq ParametricEQ text (see [CorrectionProfile.EARPHONES]), or null; phone engine only. */
     fun setEarphoneCorrection(text: String?) {}
+    /** Engine options as bits: 1 dynamic bass, 2 de-esser, 4 crossfeed; phone engine only. */
+    fun setEngineOptions(bits: Int) {}
     /** Exclusive output for bit-perfect playback, where the engine supports it (the mpv engine on Windows). */
     fun setExclusiveOutput(on: Boolean) {}
     /** An earphone correction curve in AutoEq GraphicEQ text (see [CorrectionProfile]), or null; engines with a filter chain apply it. */

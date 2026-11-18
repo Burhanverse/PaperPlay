@@ -1,5 +1,6 @@
 //! PaperPlay audio engine: float DSP for the Android player. JNI entry points at the bottom.
 mod eq;
+mod extras;
 pub use eq::{Eq, BANDS_HZ};
 
 use jni::objects::{JByteBuffer, JClass, JFloatArray};
@@ -120,6 +121,12 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setCorrection(e
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setWidth(_env: JNIEnv, _c: JClass, handle: jlong, w: jni::sys::jfloat) {
     if let Some(eq) = eq(handle) { eq.set_width(w); }
+}
+
+/// Option bits: 1 dynamic bass, 2 de-esser, 4 crossfeed.
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setOptions(_env: JNIEnv, _c: JClass, handle: jlong, bits: jint) {
+    if let Some(eq) = eq(handle) { eq.set_options(bits.max(0) as u32); }
 }
 
 /// Exact level mode (the heard balance is the drawn curve) instead of Loud.

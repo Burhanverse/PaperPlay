@@ -299,6 +299,7 @@ class PlaybackController(
     fun setDryCompare(on: Boolean) = engine.setDryCompare(on)
     fun setStereoWidth(width: Float) = engine.setStereoWidth(width)
     fun setEarphoneCorrection(text: String?) = engine.setEarphoneCorrection(text)
+    fun setEngineOptions(bits: Int) = engine.setEngineOptions(bits)
     fun setExclusiveOutput(on: Boolean) = engine.setExclusiveOutput(on)
     fun setCorrectionProfile(text: String?) = engine.setCorrectionProfile(text)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)
