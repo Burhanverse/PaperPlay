@@ -397,6 +397,10 @@ class AndroidPlayerEngine : PlayerEngine {
         PlaybackCore.bassDb = db
     }
 
+    override fun setExactLevel(on: Boolean) { PlaybackCore.exactLevel = on }
+
+    override fun setDryCompare(on: Boolean) { PlaybackCore.dryCompare = on }
+
     override fun setEqualizer(gainsDb: List<Float>?) {
         PlaybackCore.eqGains = gainsDb
         onMain {
@@ -493,11 +497,13 @@ class AndroidPlayerEngine : PlayerEngine {
         return buildList {
             PlaybackCore.engineIn?.let { add("Engine input" to it) }
             PlaybackCore.engineOut?.let { add("Engine output" to it) }
-            if (eqOn && st != null && st.size == 6) {
+            if (eqOn && st != null && st.size == 7) {
                 add("Curve peak" to db(st[5]))
                 add("Level trim" to "bass ${db(st[0])}, rest ${db(st[1])}")
                 fun lim(v: Float) = if (v < -0.05f) "up to ${"%.1f".format(-v)} dB" else "idle"
                 add("Limiter" to "bass ${lim(st[3])}, rest ${lim(st[4])}")
+                add("Level mode" to if (PlaybackCore.exactLevel) "exact curve" else "loud")
+                if (PlaybackCore.dryCompare) add("A/B" to "original, matched ${db(st[6])}")
             }
         }
     }

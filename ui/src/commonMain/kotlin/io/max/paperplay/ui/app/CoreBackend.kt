@@ -627,6 +627,23 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         if (playerStarted.value) player.setCorrectionProfile(text.takeIf { it.isNotBlank() && !bitPerfect.value })
     }
 
+    /** Phone engine: true plays the drawn curve exactly (everything lowered by its peak), false keeps the music loud. */
+    val eqExact = MutableStateFlow(repo.pref("eq_exact") == "true")
+
+    fun setEqExact(on: Boolean) {
+        eqExact.value = on
+        repo.setPref("eq_exact", "$on")
+        if (playerStarted.value) player.setExactLevel(on)
+    }
+
+    /** Phone engine A/B: plays the original at the processed level while held on. Not saved. */
+    val eqDry = MutableStateFlow(false)
+
+    fun setEqDry(on: Boolean) {
+        eqDry.value = on
+        if (playerStarted.value) player.setDryCompare(on)
+    }
+
     override val eqBass = MutableStateFlow(repo.pref("eq_bass")?.toFloatOrNull() ?: 0f)
 
     override fun setEqBass(db: Float) {
@@ -905,6 +922,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             scope.launch { p.outputInfo.collect { _outputInfo.value = it } }
             val bp = bitPerfect.value
             if (eqOn.value && !bp) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
+            p.setExactLevel(eqExact.value)
             if (exclusiveOutput.value || bp) p.setExclusiveOutput(true)
             if (!bp) correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)

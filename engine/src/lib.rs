@@ -3,8 +3,42 @@ mod eq;
 pub use eq::{Eq, BANDS_HZ};
 
 use jni::objects::{JByteBuffer, JClass, JFloatArray};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
+
+/// Sample formats `convert_pcm` reads: 16-bit, 24-bit packed, 32-bit integer, 32-bit float (native endian).
+pub const PCM_16: i32 = 0;
+pub const PCM_24: i32 = 1;
+pub const PCM_32: i32 = 2;
+pub const PCM_FLOAT: i32 = 3;
+
+/// Bytes per sample of a `PCM_*` kind, or 0 for an unknown one.
+pub fn pcm_bytes(kind: i32) -> usize {
+    match kind { PCM_16 => 2, PCM_24 => 3, PCM_32 | PCM_FLOAT => 4, _ => 0 }
+}
+
+/// Converts interleaved PCM bytes to float in -1..1. Writes `min(src samples, out.len())` samples and returns that count.
+pub fn convert_pcm(src: &[u8], kind: i32, out: &mut [f32]) -> usize {
+    let step = pcm_bytes(kind);
+    if step == 0 { return 0; }
+    let n = (src.len() / step).min(out.len());
+    for (i, s) in src.chunks_exact(step).take(n).enumerate() {
+        out[i] = match kind {
+            PCM_16 => i16::from_ne_bytes([s[0], s[1]]) as f32 / 32768.0,
+            PCM_24 => {
+                let b = if cfg!(target_endian = "little") { [0, s[0], s[1], s[2]] } else { [s[0], s[1], s[2], 0] };
+                (i32::from_ne_bytes(b) >> 8) as f32 / 8388608.0
+            }
+            PCM_32 => i32::from_ne_bytes([s[0], s[1], s[2], s[3]]) as f32 / 2147483648.0,
+            _ => f32::from_ne_bytes([s[0], s[1], s[2], s[3]]),
+        };
+    }
+    n
+}
+
+fn eq<'a>(handle: jlong) -> Option<&'a mut Eq> {
+    if handle == 0 { None } else { Some(unsafe { &mut *(handle as *mut Eq) }) }
+}
 
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_create(_env: JNIEnv, _c: JClass, rate: jint, channels: jint) -> jlong {
@@ -19,8 +53,7 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_destroy(_env: J
 /// An empty or wrong-sized array turns the equalizer off.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setEq(env: JNIEnv, _c: JClass, handle: jlong, gains: JFloatArray) {
-    if handle == 0 { return; }
-    let eq = unsafe { &mut *(handle as *mut Eq) };
+    let Some(eq) = eq(handle) else { return };
     let n = env.get_array_length(&gains).unwrap_or(0).max(0) as usize;
     let mut v = vec![0f32; n];
     if env.get_float_array_region(&gains, 0, &mut v).is_err() { v.clear(); }
@@ -30,29 +63,94 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setEq(env: JNIE
 /// `buf` is a direct buffer of interleaved native-endian f32; processed in place.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_process(env: JNIEnv, _c: JClass, handle: jlong, buf: JByteBuffer, samples: jint) {
-    if handle == 0 || samples <= 0 { return; }
+    if samples <= 0 { return; }
+    let Some(eq) = eq(handle) else { return };
     let (Ok(ptr), Ok(cap)) = (env.get_direct_buffer_address(&buf), env.get_direct_buffer_capacity(&buf)) else { return };
     let n = (samples as usize).min(cap / 4);
     if ptr.is_null() || (ptr as usize) % 4 != 0 { return; }
-    let eq = unsafe { &mut *(handle as *mut Eq) };
     eq.process(unsafe { std::slice::from_raw_parts_mut(ptr as *mut f32, n) });
+}
+
+/// Reads `samples` PCM samples of `kind` (a `PCM_*` value) from direct buffer `src` at byte `offset`, writes them as float
+/// to direct buffer `out` and processes them there. Returns the number of samples written, 0 on any problem.
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_processPcm(
+    env: JNIEnv, _c: JClass, handle: jlong, src: JByteBuffer, offset: jint, kind: jint, samples: jint, out: JByteBuffer,
+) -> jint {
+    let step = pcm_bytes(kind);
+    if samples <= 0 || offset < 0 || step == 0 { return 0; }
+    let Some(eq) = eq(handle) else { return 0 };
+    let (Ok(sp), Ok(scap)) = (env.get_direct_buffer_address(&src), env.get_direct_buffer_capacity(&src)) else { return 0 };
+    let (Ok(op), Ok(ocap)) = (env.get_direct_buffer_address(&out), env.get_direct_buffer_capacity(&out)) else { return 0 };
+    if sp.is_null() || op.is_null() || (op as usize) % 4 != 0 { return 0; }
+    let offset = offset as usize;
+    let n = (samples as usize).min(scap.saturating_sub(offset) / step).min(ocap / 4);
+    if n == 0 { return 0; }
+    let src = unsafe { std::slice::from_raw_parts(sp.add(offset), n * step) };
+    let out = unsafe { std::slice::from_raw_parts_mut(op as *mut f32, n) };
+    let n = convert_pcm(src, kind, out);
+    eq.process(&mut out[..n]);
+    n as jint
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_reset(_env: JNIEnv, _c: JClass, handle: jlong) {
-    if handle != 0 { unsafe { &mut *(handle as *mut Eq) }.reset(); }
+    if let Some(eq) = eq(handle) { eq.reset(); }
 }
 
 /// Extra bass in dB, 0 to 12.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setBass(_env: JNIEnv, _c: JClass, handle: jlong, db: jni::sys::jfloat) {
-    if handle != 0 { unsafe { &mut *(handle as *mut Eq) }.set_bass(db); }
+    if let Some(eq) = eq(handle) { eq.set_bass(db); }
 }
 
-/// Writes `[preamp dB, bass dB, limiter reduction dB, peak boost dB]` into `out` (4 floats) and restarts the limiter meter.
+/// Exact level mode (the heard balance is the drawn curve) instead of Loud.
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setExact(_env: JNIEnv, _c: JClass, handle: jlong, on: jboolean) {
+    if let Some(eq) = eq(handle) { eq.set_exact(on != 0); }
+}
+
+/// A/B: plays the untouched input at the processed level and timing.
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setDry(_env: JNIEnv, _c: JClass, handle: jlong, on: jboolean) {
+    if let Some(eq) = eq(handle) { eq.set_dry(on != 0); }
+}
+
+/// Writes the 7 values of [`Eq::take_stats`] into `out` and restarts the limiter meters.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_stats(env: JNIEnv, _c: JClass, handle: jlong, out: JFloatArray) {
-    if handle == 0 { return; }
-    let st = unsafe { &mut *(handle as *mut Eq) }.take_stats();
-    let _ = env.set_float_array_region(&out, 0, &st);
+    let Some(eq) = eq(handle) else { return };
+    let st = eq.take_stats();
+    let n = env.get_array_length(&out).unwrap_or(0).clamp(0, st.len() as i32) as usize;
+    let _ = env.set_float_array_region(&out, 0, &st[..n]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pcm_converts_every_format() {
+        let mut out = [0f32; 3];
+        let s16: Vec<u8> = [-32768i16, 0, 16384].iter().flat_map(|v| v.to_ne_bytes()).collect();
+        assert_eq!(convert_pcm(&s16, PCM_16, &mut out), 3);
+        assert_eq!(out, [-1.0, 0.0, 0.5]);
+
+        let s24: Vec<u8> = [-8388608i32, 0, 4194304].iter().flat_map(|v| {
+            let b = v.to_le_bytes();
+            [b[0], b[1], b[2]]
+        }).collect();
+        assert_eq!(convert_pcm(&s24, PCM_24, &mut out), 3);
+        assert_eq!(out, [-1.0, 0.0, 0.5]);
+
+        let s32: Vec<u8> = [i32::MIN, 0, 1 << 30].iter().flat_map(|v| v.to_ne_bytes()).collect();
+        assert_eq!(convert_pcm(&s32, PCM_32, &mut out), 3);
+        assert_eq!(out, [-1.0, 0.0, 0.5]);
+
+        let f: Vec<u8> = [-1.0f32, 0.0, 0.5].iter().flat_map(|v| v.to_ne_bytes()).collect();
+        assert_eq!(convert_pcm(&f, PCM_FLOAT, &mut out), 3);
+        assert_eq!(out, [-1.0, 0.0, 0.5]);
+
+        assert_eq!(convert_pcm(&f, 9, &mut out), 0);
+    }
 }

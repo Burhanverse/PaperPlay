@@ -73,6 +73,20 @@ internal fun EqualizerPage(backend: CoreBackend) {
     val bass by backend.eqBass.collectAsState()
     BitPerfectRow(backend)
     EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
+    if (io.max.paperplay.ui.isPhone) {
+        val exact by backend.eqExact.collectAsState()
+        val dry by backend.eqDry.collectAsState()
+        SectionLabel("Listening check")
+        SwitchRow(
+            "Exact level", exact, backend::setEqExact, null,
+            if (exact) "Plays the curve as drawn; quieter by the curve's peak, so raise the volume"
+            else "Keeps the music loud; big bass boosts are heard a little smaller than drawn",
+        )
+        SwitchRow(
+            "Compare with original", dry, backend::setEqDry, null,
+            "Plays the untouched sound at the same loudness, so only the tuning differs",
+        )
+    }
 }
 
 @Composable

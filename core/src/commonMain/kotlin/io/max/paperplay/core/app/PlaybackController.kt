@@ -295,6 +295,8 @@ class PlaybackController(
     val outputInfo get() = engine.outputInfo
     fun setEqualizer(gainsDb: List<Float>?) = engine.setEqualizer(gainsDb)
     fun setBass(db: Float) = engine.setBass(db)
+    fun setExactLevel(on: Boolean) = engine.setExactLevel(on)
+    fun setDryCompare(on: Boolean) = engine.setDryCompare(on)
     fun setExclusiveOutput(on: Boolean) = engine.setExclusiveOutput(on)
     fun setCorrectionProfile(text: String?) = engine.setCorrectionProfile(text)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)

@@ -30,6 +30,10 @@ internal object PlaybackCore {
     @Volatile var engineActive = false
     /** Extra bass in dB for the Rust engine, 0 when the equalizer is off. */
     @Volatile var bassDb = 0f
+    /** Engine level mode: true = exact curve (lowered by its peak), false = loud. */
+    @Volatile var exactLevel = false
+    /** A/B: true plays the untouched input at the processed level. */
+    @Volatile var dryCompare = false
     /** What the Rust engine reads and writes, and its meters, for the output info. Set by the sink wrapper. */
     @Volatile var engineIn: String? = null
     @Volatile var engineOut: String? = null

@@ -13,6 +13,10 @@ internal object EngineNative {
     external fun setEq(handle: Long, gains: FloatArray)
     external fun process(handle: Long, buf: ByteBuffer, samples: Int)
     external fun setBass(handle: Long, db: Float)
+    external fun setExact(handle: Long, on: Boolean)
+    external fun setDry(handle: Long, on: Boolean)
+    /** Converts [samples] PCM samples of [kind] (0 = 16-bit, 1 = 24-bit, 2 = 32-bit, 3 = float) from direct [src] at byte [offset] into [out] as float and processes them; returns the samples written. */
+    external fun processPcm(handle: Long, src: ByteBuffer, offset: Int, kind: Int, samples: Int, out: ByteBuffer): Int
     external fun stats(handle: Long, out: FloatArray)
     external fun reset(handle: Long)
 }

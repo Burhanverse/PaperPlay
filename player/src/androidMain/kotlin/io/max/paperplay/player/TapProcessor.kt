@@ -25,6 +25,8 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
     private var enc = C.ENCODING_INVALID
     private var applied: List<Float>? = null
     private var appliedBass = 0f
+    private var appliedExact = false
+    private var appliedDry = false
     private var pending: ByteBuffer? = null
     private var out: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
     private var calls = 0
@@ -43,6 +45,8 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         handle = EngineNative.create(f.sampleRate, f.channelCount)
         applied = null
         appliedBass = 0f
+        appliedExact = false
+        appliedDry = false
         val floatFormat = f.buildUpon().setPcmEncoding(C.ENCODING_PCM_FLOAT).build()
         super.configure(
             AudioSink.AudioSinkConfig.Builder(floatFormat)
@@ -74,23 +78,31 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         val bytes = samples * 4
         if (out.capacity() < bytes) out = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
         out.clear()
-        val s = src.duplicate().order(ByteOrder.nativeOrder())
-        repeat(samples) {
-            out.putFloat(when (enc) {
-                C.ENCODING_PCM_FLOAT -> s.getFloat()
-                C.ENCODING_PCM_16BIT -> s.getShort() / 32768f
-                C.ENCODING_PCM_24BIT -> (((s.get().toInt() and 0xff) or ((s.get().toInt() and 0xff) shl 8) or (s.get().toInt() shl 16)) / 8388608f)
-                else -> s.getInt() / 2147483648f
-            })
-        }
-        src.position(src.position() + samples * step)
         val gains = PlaybackCore.eqGains
         if (gains !== applied) { EngineNative.setEq(handle, gains?.toFloatArray() ?: FloatArray(0)); applied = gains }
         val bass = PlaybackCore.bassDb
         if (bass != appliedBass) { EngineNative.setBass(handle, bass); appliedBass = bass }
-        EngineNative.process(handle, out, samples)
+        val exact = PlaybackCore.exactLevel
+        if (exact != appliedExact) { EngineNative.setExact(handle, exact); appliedExact = exact }
+        val dry = PlaybackCore.dryCompare
+        if (dry != appliedDry) { EngineNative.setDry(handle, dry); appliedDry = dry }
+        val kind = when (enc) { C.ENCODING_PCM_16BIT -> 0; C.ENCODING_PCM_24BIT -> 1; C.ENCODING_PCM_FLOAT -> 3; else -> 2 }
+        // Decoder buffers are direct, so Rust reads them in place; anything else is converted here first.
+        if (!src.isDirect || EngineNative.processPcm(handle, src, src.position(), kind, samples, out) != samples) {
+            val s = src.duplicate().order(ByteOrder.nativeOrder())
+            repeat(samples) {
+                out.putFloat(when (enc) {
+                    C.ENCODING_PCM_FLOAT -> s.getFloat()
+                    C.ENCODING_PCM_16BIT -> s.getShort() / 32768f
+                    C.ENCODING_PCM_24BIT -> (((s.get().toInt() and 0xff) or ((s.get().toInt() and 0xff) shl 8) or (s.get().toInt() shl 16)) / 8388608f)
+                    else -> s.getInt() / 2147483648f
+                })
+            }
+            EngineNative.process(handle, out, samples)
+        }
+        src.position(src.position() + samples * step)
         if (calls++ % 20 == 0) {
-            val st = PlaybackCore.engineStats?.takeIf { it.size == 6 } ?: FloatArray(6)
+            val st = PlaybackCore.engineStats?.takeIf { it.size == 7 } ?: FloatArray(7)
             EngineNative.stats(handle, st)
             PlaybackCore.engineStats = st.copyOf()
         }
