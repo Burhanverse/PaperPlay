@@ -13,12 +13,15 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Reproduce or prove the cause (log line, test, stack trace) before fixing. A fix with no evidence is a guess.
 - One change per commit. Keep diffs small; no drive-by refactors, no new dependencies without a reason.
 - Never invent API fields (TDLib, Bot API). Check the schema or a live answer.
+- A speed or smoothness claim needs a measurement before and after (`dumpsys gfxinfo` frame percentiles, a screen recording cut into frames, or a perfetto trace with `view gfx am input` categories). Several "fixes" this way changed nothing; the trace found the real cause.
+- Do not commit a change until the build for it has finished and passed. If files you did not edit change under you (another session is working), leave them alone and commit only your own files.
 
 ## Build and test
 - Android: `JAVA_HOME=<JDK 17> ./gradlew :androidApp:assembleDebug --no-daemon -q`, filter output for `^e:` and `FAILED`.
 - After `adb install -r` run `adb -s <serial> shell cmd package compile -m speed -f io.max.paperplay.compose`. A freshly installed app is uncompiled and stutters badly (slowest 1% of frames 1 to 2 s against under 100 ms compiled); judge speed only on a compiled release build. Use the USB serial when `adb devices` lists the phone twice (USB and wifi).
 - Tests: `./gradlew :core:jvmTest --no-daemon -q`. They must pass before a commit.
 - Desktop run needs JDK 25.
+- If you are told not to build or install, stop any build you started: stopping the task leaves its Gradle JVM running, so end that process too (only the one you started).
 - One Gradle at a time. Do not build in a tree another person or agent is editing; use a separate worktree.
 - Run `git status` before a build or release: a build copies every changed file, so another editor's unsaved work would be in it.
 - `scripts\release.ps1` builds the Android release (installed on the phone when one is connected) and the Windows installer.
@@ -26,7 +29,12 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Do not stop Gradle or Java processes you did not start; another agent may be building.
 - Before trusting a release script run, check `adb devices`: with no phone connected the script skips the phone install and says so.
 
+## Testing on the phone
+- `adb install -r` only; never uninstall the app (it holds the library and sessions). Launch it, record the screen or read device state only when the user asks or has asked you to measure; the phone locks itself during tests (`svc power stayon usb`, then `stayon false` afterwards).
+- Telegram tests by hand (Bot API) use tokens from the git-ignored `.secrets/`; never print or commit a token, and delete or edit only the posts the user named.
+
 ## Code
+- Files mix LF and CRLF line endings. A script that edits a file must keep the file's own endings (read, normalise, edit, restore), and backslash escapes (a tab, a regex word boundary) written through a shell heredoc can be mangled: use the Edit tool for those and build to check.
 - Previews use `org.jetbrains.compose.ui.tooling.preview.Preview`; never add androidx `ui-tooling` to `commonMain`.
 - No GPL code. No emojis in UI text.
 - Never commit secrets (`local.properties`, keystores, tokens, Telegram sessions, logs with chat data).
