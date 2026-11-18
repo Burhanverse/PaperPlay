@@ -731,15 +731,16 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     @Volatile private var lastMixes: List<DailyMix> = emptyList()
     private fun sizeBucket(n: Int) = if (n < 200) n else 200 + n / 100
     private val homePlan: Flow<HomePlanState> = combine(
-        repo.allSongs(), repo.recents(30), repo.favorites(), library,
+        repo.allSongs(), repo.recents(30), repo.favorites(), repo.playlistSummaries(),
         combine(taste, weather, services.scanner.progress.map { it != null }, services.covers.queued.map { it > 0 }) { t, w, scanning, covering ->
             Triple(t, w, scanning || covering)
         },
-    ) { songs, recent, fav, lib, tw ->
-        HomeInput(songs, recent, fav, minOf(lib.playlists.size, 3) + if (fav.isEmpty()) 0 else 1, tw.first, tw.second, tw.third)
+    ) { songs, recent, fav, lists, tw ->
+        // Only the playlist count is needed, so the plan no longer waits for the whole library (all songs, albums, artists) to be built.
+        HomeInput(songs, recent, fav, minOf(lists.size, 3) + if (fav.isEmpty()) 0 else 1, tw.first, tw.second, tw.third)
     }
         .distinctUntilChangedBy {
-            "${it.favorites.size}:${it.reserved}:${it.taste.at}:${it.taste.showMixes}:${it.weather}:${if (homePlanned) it.busy.toString() else "-"}:${sizeBucket(it.songs.size)}:${nowMoment().dayKey}"
+            "${it.favorites.size}:${it.reserved}:${if (homePlanned) it.taste.at.toString() else "-"}:${it.taste.showMixes}:${if (homePlanned) "${it.weather}:${it.busy}" else "-"}:${sizeBucket(it.songs.size)}:${nowMoment().dayKey}"
         }
         .transformLatest { input ->
             if (input.songs.isEmpty()) { emit(HomePlanState()); return@transformLatest }
