@@ -70,6 +70,9 @@ interface AccountApi {
      */
     fun songsIn(chatId: Long, afterMessageId: Long = 0): Flow<List<ChatPost>>
 
+    /** Like [songsIn], but a full read starts where [checkpoint] says and keeps it current, so a stopped read can go on instead of starting over. */
+    fun songsIn(chatId: Long, afterMessageId: Long, checkpoint: ReadCheckpoint?): Flow<List<ChatPost>> = songsIn(chatId, afterMessageId)
+
     /** Copies one post into [toChat] without a "forwarded" label. */
     suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long)
 
@@ -89,8 +92,12 @@ data class IndexedSong(
     val copied: Boolean,
     /** The main chat already has this song, but this file is better quality. */
     val better: Boolean = false,
+    /** Why [better] holds, such as "FLAC instead of your MP3" or the two sizes; null otherwise. */
+    val betterWhy: String? = null,
     /** An imported Spotify playlist still waits for this song. */
     val wanted: Boolean = false,
+    /** The post is in the main chat itself. Copying it there would repeat it; it only needs adding to the library. */
+    val ownChat: Boolean = false,
 )
 
 /** Progress of an index run, for screens and the notification. */
@@ -100,7 +107,28 @@ data class IndexProgress(val chatId: Long, val chatTitle: String, val found: Int
 /** What [ChatIndexApi.addPostsNotInLibrary] found: posts the account saw in the main chat, how many it added, and how many repeat posts of a file the library keeps as copies (the Duplicates page lists them). */
 data class MainChatAdd(val seen: Int, val added: Int, val repeats: Int = 0)
 
+/** Where a read of a chat's history has got to: the search [filter] (0 audio, 1 documents) and the page cursor [from] inside it. */
+class ReadCheckpoint(var filter: Int = 0, var from: Long = 0L)
+
+/** What the index holds for one chat: songs read, when it was last read (epoch ms, 0 if never) and whether the whole history was read. */
+data class ChatIndexDetails(val songs: Int, val refreshedAt: Long, val complete: Boolean)
+
 interface ChatIndexApi {
+    /** How many library songs exist only through the account (no post in a bot-readable chat), outside the main chat. */
+    fun libraryOnlyCount(): Int = 0
+
+    /**
+     * Copies those songs into the main chat one by one, waiting [delayMs] between copies and while [paused] is true. [onStep] gets
+     * (copied, failed, total, first failure reason) after each one. A song stays library-only until Telegram accepted its copy.
+     */
+    suspend fun copyLibraryOnly(delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) {}
+
+    /** Copies [songs] that are not in the main chat into it, like [copyLibraryOnly]. */
+    suspend fun copySongsToMain(songs: List<io.max.paperplay.core.library.Song>, delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) {}
+
+    /** Details of an indexed chat, or null when it is not indexed. */
+    fun details(chatId: Long): ChatIndexDetails? = null
+
     /** Chats that are indexed: id to title. */
     val indexedChats: StateFlow<Map<Long, String>>
     val progress: StateFlow<IndexProgress?>

@@ -12,7 +12,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -67,7 +69,7 @@ class ChatIndex(
     private val account: AccountApi,
     private val store: IndexStore,
     private val library: LibraryRepository,
-    private val mainChat: () -> Long?,
+    private val configuredMain: () -> Long?,
     private val clock: () -> Long,
 ) : ChatIndexApi {
     init {
@@ -76,6 +78,18 @@ class ChatIndex(
             store.clearCopied()
             library.setPref("index_copied_reset", "1")
         }
+    }
+
+    /**
+     * The main chat: the one the user chose, else the library chat that is also indexed (the one with most library songs). When it is found
+     * this way it is saved as the choice, so indexing the main channel is enough for the app to know it.
+     */
+    private fun mainChat(): Long? {
+        configuredMain()?.let { return it }
+        val indexed = store.chats().map { it.id }.toSet()
+        val pick = library.chatList().map { it.id }.filter { it in indexed }.maxByOrNull { library.songsInChat(it).size } ?: return null
+        library.setPref(io.max.paperplay.core.filing.MAIN_CHAT_KEY, """{"id":$pick,"at":${clock()}}""")
+        return pick
     }
 
     private val _chats = MutableStateFlow(store.chats().associate { it.id to it.title })
@@ -90,9 +104,12 @@ class ChatIndex(
 
     override suspend fun indexChat(chat: ChatInfo) {
         runLock.withLock {
+            val had = store.chat(chat.id)
             store.saveChat(chat.id, chat.title)
             _chats.value = store.chats().associate { it.id to it.title }
-            read(chat.id, chat.title, after = 0, complete = true)
+            // Already indexed: only what is new, or the rest of a stopped read; never the whole chat again.
+            readFromCheckpoint(had ?: IndexedChat(chat.id, chat.title, 0, 0, false))
+            mainChat() // finds and saves the main chat when this was it
         }
         onRunFinished?.invoke()
     }
@@ -108,30 +125,50 @@ class ChatIndex(
             val gen = stopGen
             for (c in store.chats()) {
                 if (stopGen != gen) break
-                // A chat whose first read never finished is read again from the start; the rest only for newer posts.
-                if (c.complete) read(c.id, c.title, after = c.newestMessageId, complete = true)
-                else read(c.id, c.title, after = 0, complete = true)
+                readFromCheckpoint(c)
             }
         }
         onRunFinished?.invoke()
     }
 
+    private fun ckptKey(chatId: Long) = "index_ckpt:$chatId"
+
+    /** A finished chat is read for newer posts only; one whose read was stopped goes on from its saved page cursor. */
+    private suspend fun readFromCheckpoint(c: IndexedChat) {
+        if (c.complete) { read(c.id, c.title, after = c.newestMessageId, complete = true); return }
+        val saved = library.pref(ckptKey(c.id))?.split(":")
+        // No saved cursor (a read made by an older build) but posts are stored: go on below the oldest stored post instead of starting over.
+        val oldest = if (c.newestMessageId > 0) store.oldestMessageId(c.id) else 0L
+        val cp = when {
+            saved?.size == 2 && c.newestMessageId > 0 -> ReadCheckpoint(saved[0].toIntOrNull() ?: 0, saved[1].toLongOrNull() ?: 0L)
+            oldest > 0 -> ReadCheckpoint(0, oldest)
+            else -> null
+        }
+        // Newer posts that arrived since the stop are caught first, then the stopped read goes on from where it ended.
+        if (cp != null) {
+            read(c.id, c.title, after = c.newestMessageId, complete = false)
+            read(c.id, c.title, after = 0, complete = true, resume = cp)
+        } else read(c.id, c.title, after = 0, complete = true)
+    }
+
     /** Message ids the last full read of each chat saw in this session. */
     @kotlin.concurrent.Volatile private var fullRead: Map<Long, Set<Long>> = emptyMap()
 
-    private suspend fun read(chatId: Long, title: String, after: Long, complete: Boolean) {
+    private suspend fun read(chatId: Long, title: String, after: Long, complete: Boolean, resume: ReadCheckpoint? = null) {
         var found = 0
         val ids = HashSet<Long>()
         var newest = 0L
         _progress.value = IndexProgress(chatId, title, 0, true)
         // A new full read replaces the old snapshot; if it is stopped or fails, no snapshot remains and nothing is reconciled.
-        if (after == 0L) fullRead = fullRead - chatId
+        if (after == 0L && resume == null) fullRead = fullRead - chatId
+        // A full read keeps its page cursor, so stopping it (or closing the app) loses no work.
+        val cp = resume ?: if (after == 0L) ReadCheckpoint() else null
         val gen = stopGen
         try {
             kotlinx.coroutines.coroutineScope {
                 // The shown count is the real count, updated as each batch lands; an estimate between batches ran ahead and then dropped back.
                 run {
-                    account.songsIn(chatId, after).collect { batch ->
+                    account.songsIn(chatId, after, cp).collect { batch ->
                         if (stopGen != gen) throw StopRun()
                         if (batch.isEmpty()) return@collect
                         store.upsertPosts(batch)
@@ -141,11 +178,13 @@ class ChatIndex(
                         // Newest is saved at once but the chat only counts as complete when the whole read ends.
                         store.setState(chatId, newest, clock(), complete = after > 0 && complete)
                         _progress.value = IndexProgress(chatId, title, found, true)
+                        cp?.let { library.setPref(ckptKey(chatId), "${it.filter}:${it.from}") }
                     }
                 }
             }
             store.setState(chatId, newest, clock(), complete)
-            if (after == 0L) fullRead = fullRead + (chatId to ids)
+            if (cp != null) library.setPref(ckptKey(chatId), "")
+            if (after == 0L && resume == null) fullRead = fullRead + (chatId to ids)
         } catch (_: StopRun) {
             // Stopped by the owner; what was read is kept and the chat stays marked as not complete.
         } finally {
@@ -169,9 +208,20 @@ class ChatIndex(
         return Main(songs.map { it.unique_id }.toSet() + copies.map { it.unique_id }, songs.groupBy { looseTitleKey(it.title, it.artist) })
     }
 
+    /** The whole library, not only the main chat: a song added from any chat counts as already there. */
+    private fun libraryMain(): Main {
+        // A library-only entry (played through the account, no post in Telegram) is not "had": it stays listed until it is really copied.
+        val all = library.repo.db.songsQueries.allSongs().executeAsList().filter { it.remote_id != io.max.paperplay.core.app.ACCOUNT_REMOTE }
+        val copies = library.repo.db.filingQueries.allPostCopies().executeAsList()
+        return Main(all.map { it.unique_id }.toSet() + copies.map { it.unique_id }, all.groupBy { looseTitleKey(it.title, it.artist) })
+    }
+
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
     override fun songs(chatId: Long): Flow<List<IndexedSong>> =
-        combine(store.changes, library.changes) { _, _ ->
-            val main = main()
+        // While a chat is being read the index changes every batch; the list is rebuilt at most about twice a second, not on each one.
+        combine(store.changes, library.changes) { _, _ -> }.debounce(400).map {
+            val main: Main? = libraryMain()
+            val mainId = mainChat()
             val copied = store.copiedIds()
             // Tracks that imported Spotify playlists still wait for, by loose title and artist.
             val lists = library.repo.db.playlistsQueries
@@ -181,17 +231,39 @@ class ChatIndex(
             store.posts(chatId).map { p ->
                 val have = main?.has(p) == true
                 val mine = if (have && p.uniqueId !in (main?.ids ?: emptySet())) main?.match(p) else null
-                val better = mine != null && io.max.paperplay.core.dupes.DefaultSongRules.compareQuality(p.asSong(), mine) < 0
-                IndexedSong(p, inMainChat = have, copied = p.uniqueId in copied, better = better, wanted = looseTitleKey(p.title, p.artist) in wantedKeys)
+                val own = p.chatId == mainId
+                // A post in the main chat is already in your channel; comparing it with a library copy is not a "better" file to fetch.
+                val better = !own && mine != null && io.max.paperplay.core.dupes.DefaultSongRules.compareQuality(p.asSong(), mine) < 0
+                IndexedSong(p, inMainChat = have, copied = p.uniqueId in copied, better = better, betterWhy = if (better && mine != null) betterReason(p.asSong(), mine) else null,
+                    wanted = looseTitleKey(p.title, p.artist) in wantedKeys, ownChat = own)
             }
         }.flowOn(Dispatchers.Default)
 
-    private var keyed: Pair<Long, Map<String, List<ChatPost>>>? = null
+    /** What makes [post] better than [mine], following the order [DefaultSongRules.compareQuality] uses. */
+    private fun betterReason(post: Song, mine: Song): String {
+        val rules = io.max.paperplay.core.dupes.DefaultSongRules
+        val a = rules.format(post)
+        val b = rules.format(mine)
+        fun mb(n: Long) = if (n >= 1L shl 20) "${n / (1L shl 20)} MB" else "${n / 1024} KB"
+        return when {
+            rules.isLossless(a) && !rules.isLossless(b) -> "$a instead of your $b"
+            else -> "$a, ${mb(post.size)} vs your $b, ${mb(mine.size)}" +
+                (mine.bit_depth?.let { ", yours is $it-bit" } ?: "") + (mine.sample_rate?.let { ", ${it / 1000.0} kHz" } ?: "")
+        }
+    }
 
+    private var keyed: Triple<Long, Long, Map<String, List<ChatPost>>>? = null
+
+    /**
+     * Posts by loose title and artist. While a chat is being read the index changes every batch, so a map is reused for 15 seconds
+     * even when it has changed, and only one caller builds it (the missing-songs sheet asks once per row).
+     */
+    @Synchronized
     private fun byKey(): Map<String, List<ChatPost>> {
         val stamp = store.changes.value
-        keyed?.takeIf { it.first == stamp }?.let { return it.second }
-        return store.allPosts().groupBy { looseTitleKey(it.title, it.artist) }.also { keyed = stamp to it }
+        val now = clock()
+        keyed?.takeIf { it.first == stamp || now - it.second < 15_000 }?.let { return it.third }
+        return store.allPosts().groupBy { looseTitleKey(it.title, it.artist) }.also { keyed = Triple(stamp, now, it) }
     }
 
     override suspend fun matchesFor(title: String, artist: String, durationSec: Int): List<ChatPost> {
@@ -213,6 +285,8 @@ class ChatIndex(
     }
 
     override suspend fun addToLibrary(post: ChatPost) {
+        // Already in the library (this file, listed or as another post): nothing is added twice.
+        if (library.songByUniqueId(post.uniqueId) != null) return
         library.upsertBotSong(post.asSong().copy(remote_id = io.max.paperplay.core.app.ACCOUNT_REMOTE))
     }
 
@@ -260,6 +334,40 @@ class ChatIndex(
         missing.forEach { addToLibrary(it) }
         return missing.size
     }
+
+    private fun libraryOnly(): List<Song> {
+        val main = mainChat()
+        return library.repo.db.songsQueries.allSongs().executeAsList().filter { it.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE && it.chat_id != main }
+    }
+
+    override fun libraryOnlyCount(): Int = libraryOnly().size
+
+    override suspend fun copyLibraryOnly(delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) =
+        copyAll(libraryOnly(), delayMs, paused, onStep)
+
+    override suspend fun copySongsToMain(songs: List<Song>, delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) {
+        val main = mainChat()
+        copyAll(songs.filter { it.chat_id != main }, delayMs, paused, onStep)
+    }
+
+    private suspend fun copyAll(todo: List<Song>, delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) {
+        var done = 0
+        var failed = 0
+        var why: String? = null
+        todo.forEachIndexed { i, s ->
+            while (paused()) { onStep(done, failed, todo.size, why); kotlinx.coroutines.delay(300) }
+            val post = ChatPost(
+                chatId = s.chat_id, messageId = s.message_id, uniqueId = s.unique_id, title = s.title, artist = s.artist,
+                durationSec = s.duration_sec.toInt(), size = s.size, mime = s.mime, fileName = s.file_name, date = s.date,
+            )
+            runCatching { copyToMain(post) }.onSuccess { done++ }.onFailure { failed++; if (why == null) why = it.message }
+            onStep(done, failed, todo.size, why)
+            if (i < todo.size - 1) kotlinx.coroutines.delay(delayMs)
+        }
+    }
+
+    override fun details(chatId: Long): ChatIndexDetails? =
+        store.chat(chatId)?.let { ChatIndexDetails(store.count(chatId), it.lastRefreshAt, it.complete) }
 
     override fun forget(chatId: Long) {
         store.deleteChat(chatId)

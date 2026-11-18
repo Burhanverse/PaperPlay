@@ -88,9 +88,16 @@ class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
             songs.refreshPost(s.remote_id, s.topic_id, s.chat_id, s.message_id)
             return@transactionWithResult false
         }
-        if (songs.songByUniqueId(s.unique_id).executeAsOneOrNull() == null) {
+        val same = songs.songByUniqueId(s.unique_id).executeAsOneOrNull()
+        if (same == null) {
             songs.insertSong(s)
             return@transactionWithResult true
+        }
+        // A library-only entry (played through the account) whose file has now been posted by a bot: the entry moves to that post.
+        if (same.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE && s.remote_id != io.max.paperplay.core.app.ACCOUNT_REMOTE) {
+            songs.repointPost(s.chat_id, s.message_id, s.remote_id, s.topic_id, same.chat_id, same.message_id)
+            moveEntries(same.chat_id, same.message_id, s.chat_id, s.message_id, keepOrder = true)
+            return@transactionWithResult false
         }
         misc.insertPostCopy(PostCopy(s.chat_id, s.message_id, s.unique_id, s.file_name, s.size, s.topic_id, s.date))
         false

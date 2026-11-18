@@ -269,7 +269,9 @@ class UserSession(
     @kotlin.concurrent.Volatile override var lastReadNotes: String = ""
         private set
 
-    override fun songsIn(chatId: Long, afterMessageId: Long): Flow<List<ChatPost>> = flow {
+    override fun songsIn(chatId: Long, afterMessageId: Long): Flow<List<ChatPost>> = songsIn(chatId, afterMessageId, null)
+
+    override fun songsIn(chatId: Long, afterMessageId: Long, checkpoint: ReadCheckpoint?): Flow<List<ChatPost>> = flow {
         if (!_loggedIn.value) return@flow
         val skipped = HashMap<String, Int>()
         var small = 0
@@ -279,8 +281,9 @@ class UserSession(
         val seen = HashSet<Long>()
         val found = LinkedHashMap<String, Int>()
         val totals = HashMap<String, Long>()
-        for (filter in listOf("searchMessagesFilterAudio", "searchMessagesFilterDocument")) {
-            var from = 0L
+        for ((fi, filter) in listOf("searchMessagesFilterAudio", "searchMessagesFilterDocument").withIndex()) {
+            if (checkpoint != null && fi < checkpoint.filter) continue
+            var from = if (checkpoint != null && fi == checkpoint.filter) checkpoint.from else 0L
             var emptyPages = 0
             while (true) {
                 val page = call(c, request("searchChatMessages") {
@@ -318,10 +321,11 @@ class UserSession(
                 val next = page.long("next_from_message_id") ?: 0L
                 // TDLib may answer a page with fewer posts than asked, even none, while more follow; only the end marker or several empty pages in a row stop the read.
                 emptyPages = if (messages.isEmpty()) emptyPages + 1 else 0
-                if (reached || next == 0L || next == from) break
+                if (reached || next == 0L || next == from) { checkpoint?.let { it.filter = fi + 1; it.from = 0L }; break }
                 // A cursor that still moves means more may follow; ending here would record a partial read as whole.
                 if (emptyPages > 3) throw TdError(0, "Telegram stopped returning posts before the end of the chat. Try the read again.")
                 from = next
+                checkpoint?.let { it.filter = fi; it.from = next }
                 pause(60_000L / readingRate())
             }
         }
@@ -396,17 +400,41 @@ class UserSession(
     override suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long) {
         val c = ready()
         knowChat(c, toChat, loadList = false)
-        val sent = call(c, request("forwardMessages") {
-            put("chat_id", toChat)
-            put("from_chat_id", fromChat)
-            put("message_ids", buildJsonArray { add(messageId) })
-            put("send_copy", true)
-            put("remove_caption", false)
-        })
+        // send_copy posts it as a new message with no "forwarded from" line.
+        val sent = runCatching {
+            call(c, request("forwardMessages") {
+                put("chat_id", toChat)
+                put("from_chat_id", fromChat)
+                put("message_ids", buildJsonArray { add(messageId) })
+                put("send_copy", true)
+                put("remove_caption", false)
+            })
+        }
         // Telegram answers with an empty entry for a post it will not copy, for example when the chat blocks saving content.
-        val first = (sent["messages"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
-        if (first !is kotlinx.serialization.json.JsonObject) {
-            throw IllegalStateException("Telegram did not copy this post. The chat may block copying or forwarding.")
+        val first = (sent.getOrNull()?.get("messages") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
+        if (first is kotlinx.serialization.json.JsonObject) return
+        // Refused: the account downloads the song and sends it again as its own upload, which has no forward line either.
+        reupload(c, fromChat, messageId, toChat)
+    }
+
+    private suspend fun reupload(c: TdClient, fromChat: Long, messageId: Long, toChat: Long) {
+        val message = call(c, request("getMessage") { put("chat_id", fromChat); put("message_id", messageId) })
+        val song = io.max.paperplay.core.app.songFromMessage(message)
+            ?: throw IllegalStateException("Telegram did not copy this post, and it holds no song to send again.")
+        val (path, fileId) = downloadPost(fromChat, messageId)
+            ?: throw IllegalStateException("Telegram did not copy this post, and the file could not be downloaded to send it again.")
+        try {
+            val newApi = c.newApi()
+            val sentAgain = call(c, request("sendMessage") {
+                put("chat_id", toChat)
+                put("input_message_content", io.max.paperplay.core.telegram.audioContent(
+                    kotlinx.serialization.json.buildJsonObject { put("@type", "inputFileLocal"); put("path", path) },
+                    newApi, song.title, song.artist, song.duration_sec.toInt(),
+                ))
+            }, 600)
+            if (sentAgain.long("id") == null) throw IllegalStateException("Telegram did not accept the song.")
+        } finally {
+            releaseFile(fileId)
         }
     }
 

@@ -88,6 +88,10 @@ class IndexStore(private val driver: SqlDriver) {
 
     fun allPosts(): List<ChatPost> = query("SELECT $postColumns FROM index_posts ORDER BY date DESC", read = ::post)
 
+    /** The oldest post saved for [chatId], or 0 when none is. */
+    fun oldestMessageId(chatId: Long): Long =
+        query("SELECT COALESCE(MIN(message_id), 0) FROM index_posts WHERE chat_id = ?", 1, { bindLong(0, chatId) }) { it.getLong(0)!! }.first()
+
     fun count(chatId: Long): Int = query("SELECT COUNT(*) FROM index_posts WHERE chat_id = ?", 1, { bindLong(0, chatId) }) { it.getLong(0)!!.toInt() }.first()
 
     fun deleteChat(id: Long) {
