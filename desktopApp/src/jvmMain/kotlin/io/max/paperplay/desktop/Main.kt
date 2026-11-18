@@ -128,6 +128,8 @@ private fun handleMediaKey(key: String) {
 }
 
 fun main() {
+    // GitHub's asset host rotates addresses and one of them can be unreachable here; Java uses the first and caches it, so a retry hit the same dead one.
+    java.security.Security.setProperty("networkaddress.cache.ttl", "0")
     if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
         System.getProperty("skiko.renderApi") == null &&
         System.getenv("SKIKO_RENDER_API") == null

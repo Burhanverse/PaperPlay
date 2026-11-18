@@ -35,6 +35,8 @@ class AndroidUpdateInstaller(
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.setRequestProperty("User-Agent", "PaperPlay")
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000
             if (conn.responseCode != 200) throw IllegalStateException("The download answered ${conn.responseCode}")
             val total = conn.contentLengthLong
             val digest = MessageDigest.getInstance("SHA-256")

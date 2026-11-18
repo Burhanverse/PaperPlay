@@ -119,9 +119,9 @@ class UpdateService(
             val sums = s.release.assets.firstOrNull { it.name == ReleaseFeed.CHECKSUMS }
                 ?: throw IllegalStateException("This release has no checksum list")
             if (!ReleaseFeed.isTrusted(sums.url)) throw IllegalStateException("The checksum list is not from this project's releases")
-            val expected = ReleaseFeed.parseChecksums(http.send(HttpRequest(sums.url)).text)[asset.name]
+            val expected = retryConnect { ReleaseFeed.parseChecksums(http.send(HttpRequest(sums.url)).text)[asset.name] }
                 ?: throw IllegalStateException("No checksum for ${asset.name}")
-            val file = inst.download(asset.url, asset.name) { _state.value = UpdateState.Downloading(s.release, it) }
+            val file = retryConnect { inst.download(asset.url, asset.name) { _state.value = UpdateState.Downloading(s.release, it) } }
             if (!file.sha256.equals(expected, ignoreCase = true)) {
                 inst.delete(file.path)
                 throw IllegalStateException("The downloaded file does not match its checksum")
@@ -136,6 +136,14 @@ class UpdateService(
     suspend fun install(): InstallBlocked? {
         val s = _state.value as? UpdateState.Ready ?: return null
         return installer?.install(s.path)
+    }
+
+    /** A connect timeout is often one dead address of several; try again a few times. */
+    private suspend fun <T> retryConnect(block: suspend () -> T): T {
+        repeat(3) {
+            try { return block() } catch (e: Exception) { if (e.message?.contains("connect timed out", ignoreCase = true) != true) throw e }
+        }
+        return block()
     }
 
     private companion object {
