@@ -739,13 +739,12 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         HomeInput(songs, recent, fav, minOf(lib.playlists.size, 3) + if (fav.isEmpty()) 0 else 1, tw.first, tw.second, tw.third)
     }
         .distinctUntilChangedBy {
-            "${it.favorites.size}:${it.reserved}:${it.taste.at}:${it.taste.showMixes}:${it.weather}:${it.busy}:${sizeBucket(it.songs.size)}:${nowMoment().dayKey}"
+            "${it.favorites.size}:${it.reserved}:${it.taste.at}:${it.taste.showMixes}:${it.weather}:${if (homePlanned) it.busy.toString() else "-"}:${sizeBucket(it.songs.size)}:${nowMoment().dayKey}"
         }
         .transformLatest { input ->
             if (input.songs.isEmpty()) { emit(HomePlanState()); return@transformLatest }
             // Replanning waits two quiet seconds (a newer input cancels this one); the first plan is not delayed.
             if (homePlanned) delay(2_000L)
-            homePlanned = true
             val now = nowMoment()
             val plan = HomeShelves.plan(input.songs, input.recent, input.favorites, now, tileCount = 6 - input.reserved)
             val leadSongs = buildList {
@@ -762,6 +761,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 launch { SharedCovers.loader.preloadAndWait(plan.tiles.mapNotNull { it.cover.cover_path }, 160, 700) }
                 launch { SharedCovers.loader.preloadAndWait(leadSongs.mapNotNull { it.cover_path }, 512, 700) }
             }
+            // Only now does the next plan wait: a first plan cut short by the scan or the covers starting used to delay its own redo by 2 s.
+            homePlanned = true
             // Tiles and shelves show at once; the slower daily mixes join when they are ready.
             if (!input.taste.showMixes) { emit(HomePlanState(plan = plan)); return@transformLatest }
             // Saved mixes show at once, even from an older day or library; fresh ones replace them when computed.
@@ -817,6 +818,24 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
         .catch { emit(HomeUi()) }
         .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), HomeUi())
+
+    /**
+     * Starts building what Home shows while the shell is still being drawn for the first time. The lists are only built while something
+     * collects them, so without this the page waited for its first frame before the library was even read. The shared flows stay alive
+     * five seconds after the last collector leaves, which is when the screen takes over.
+     */
+    fun warmUp() {
+        scope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(12_000) {
+                kotlinx.coroutines.coroutineScope {
+                    launch { library.first { it.songs !is Load.Loading } }
+                    launch { home.first { it.shelves.isNotEmpty() || it.tiles.isNotEmpty() } }
+                    launch { favorites.first(); recents.first() }
+                    launch { telegram.first() }
+                }
+            }
+        }
+    }
 
     /** Records "does not fit" for [song] in the mix [moodId]; the next mix leaves it out. */
     fun rejectFromMix(song: SongUi, moodId: String) = voteMix(song, moodId, -1)

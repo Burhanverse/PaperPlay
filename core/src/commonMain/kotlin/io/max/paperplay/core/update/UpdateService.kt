@@ -103,10 +103,11 @@ class UpdateService(
     }
 
     /** Does not offer this release again; a newer one still shows. */
-    fun skip() {
-        val s = _state.value as? UpdateState.Available ?: return
-        prefs.skipped = s.release.tag
-        _state.value = UpdateState.UpToDate(now())
+    fun skip(release: ReleaseInfo? = null) {
+        // The release the person was shown is skipped even if a later check changed the state meanwhile (it used to save nothing then).
+        val tag = release?.tag ?: (_state.value as? UpdateState.Available)?.release?.tag ?: return
+        prefs.skipped = tag
+        if ((_state.value as? UpdateState.Available)?.release?.tag == tag) _state.value = UpdateState.UpToDate(now())
     }
 
     suspend fun download() {

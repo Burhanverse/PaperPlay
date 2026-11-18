@@ -246,7 +246,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             },
             dismissButton = {
                 Row {
-                    androidx.compose.material3.TextButton({ backend.services.updates.skip(); updatePrompt = null }) { Text("Skip this version") }
+                    androidx.compose.material3.TextButton({ backend.services.updates.skip(r); updatePrompt = null }) { Text("Skip this version") }
                     androidx.compose.material3.TextButton({ updatePrompt = null }) { Text("Later") }
                 }
             },

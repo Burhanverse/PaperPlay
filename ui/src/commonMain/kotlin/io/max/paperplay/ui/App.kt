@@ -104,7 +104,7 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
     // The database, services and backend are built off the UI thread; a blank themed screen shows meanwhile.
     val built by produceState<CoreBackend?>(null) {
         val b = withContext(Dispatchers.Default) {
-            CoreBackend(env.createServices())
+            CoreBackend(env.createServices()).also { it.warmUp() }
         }
         value = b
         env.mark("services ready")
