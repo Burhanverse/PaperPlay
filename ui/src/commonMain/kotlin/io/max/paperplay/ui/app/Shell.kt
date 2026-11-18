@@ -432,7 +432,10 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.isAltPressed && e.key == androidx.compose.ui.input.key.Key.DirectionLeft) { handleBack(); true } else false
                 }
                 PublishMiniState(pb, backend, prefs.miniFormat)
-                val panel = prefs.nowPlayingPanel && pb.current != null && !showNow
+                // The saved song comes back a few seconds after the window shows; the panel's room is kept from the first frame so the page does not re-lay out.
+                var waitingForSong by remember { mutableStateOf(prefs.songExpected) }
+                LaunchedEffect(Unit) { kotlinx.coroutines.delay(25_000); waitingForSong = false }
+                val panel = prefs.nowPlayingPanel && (pb.current != null || waitingForSong) && !showNow
                 var sidebarExpanded by remember { mutableStateOf(true) }
                 WindowTint(g0.value)
                 // The mouse back button goes back like the phone gesture.
@@ -522,7 +525,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         androidx.compose.animation.AnimatedVisibility(panel, enter = panelEnter(), exit = panelExit()) {
                             Row {
                                 Spacer(Modifier.width(12.dp))
-                                NowPlayingPanel(pb, backend, actions, { showPlayer = true }, { prefs.putNowPlayingPanel(false) }, Modifier.width(320.dp).fillMaxHeight().deskCard())
+                                if (pb.current != null) NowPlayingPanel(pb, backend, actions, { showPlayer = true }, { prefs.putNowPlayingPanel(false) }, Modifier.width(320.dp).fillMaxHeight().deskCard())
+                                else Box(Modifier.width(320.dp).fillMaxHeight().deskCard())
                             }
                         }
                     }

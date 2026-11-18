@@ -138,6 +138,8 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
         private set
     var bgAnimDensity by mutableStateOf(flt("bg_anim_density", 0.5f))
         private set
+    /** True at start when the last queue will be put back, so the desktop can keep room for the now playing panel from the first frame. */
+    val songExpected: Boolean = read("restore_session") != "false" && !read("session_queue").isNullOrEmpty()
     var nowPlayingPanel by mutableStateOf(read("now_playing_panel") != "false")
         private set
     /** Transitions become instant (see [io.max.paperplay.ui.theme.LocalReduceMotion]). */
