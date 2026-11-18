@@ -68,7 +68,7 @@ Built with Kotlin and Compose Multiplatform.
 - Material or glass looks, many backgrounds (cover, gradient, wallpaper, animated), accent colour from the cover,
   Material 3 Expressive or Tabler icons.
 - Pages slide and fade, the full player is a sheet that follows your finger and Android's back swipe, lists glide, and
-  covers and titles fade between songs. **Settings > Style > Reduce motion** turns all of it off.
+  covers and titles fade between songs. **Settings > Style > Reduce motion** turns all of it off, and **Home animation** turns off only the tiles and cards flying in when Home opens.
 
 ## Get the apps
 
@@ -197,6 +197,7 @@ that need the database or Telegram have no preview yet.
 
 ## Known limitations
 
+- **Deleting old posts:** Telegram lets a bot delete only posts younger than 48 hours (its own, or ones you sent). Older duplicates are deleted by your own account: log it in under Settings > Library. The Duplicates page says how many of the ticked posts need it.
 - **Other bots' posts:** a bot cannot see songs another bot posted as itself in a group (channels are fine). Repair can read
   with every extra bot and with your own account to find them. With **Remain anonymous** on for each bot, new uploads are
   seen by every bot.
