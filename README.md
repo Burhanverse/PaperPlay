@@ -17,6 +17,16 @@ Built with Kotlin and Compose Multiplatform.
   The topics of the main chat also appear as lists under Playlists, on Home and in the desktop sidebar, apart from your playlists.
 - Your own account can be added (phone, code, password or QR) to index chats, copy songs into the main chat, and play
   songs the bot cannot see.
+- **Chat index** (Settings > Telegram > Chats and channels): each indexed chat is saved on the device with its song count, when it
+  was last read and whether the whole history was read, and can be opened in Telegram or removed. A read keeps its place after every
+  page, so pausing it or closing the app does not start it over, and an indexed chat only reads newer posts. Indexing carries on in the
+  background and shows as a task notification. Posts are matched against your whole library: "Already have", "Better than yours"
+  (with the reason, such as FLAC instead of your AAC) and "Missing, in Spotify lists". Add copies a post into the main chat without a
+  "forwarded from" line (a chat that blocks copying is downloaded and sent again by your account), with a speed slider and
+  pause and resume; a song leaves the lists only once Telegram accepted its copy. The main chat is found by itself when you index it.
+- Songs added to the library without a copy in Telegram are greyed "Bot can't reach". Select them from the library's Filter sheet (all, or only
+  those whose song is already in your chat) to delete the duplicates, or copy them to the chat so the bots can read them; a copy that
+  arrives takes over the library entry.
 - Find and delete duplicate songs (Telegram is asked about every post, so a delete counts only when the post is really gone),
   move songs between topics, upload songs from your phone or desktop. Android reads a chosen music folder where it is, with no
   copy, asks before it takes subfolders, and skips songs under 2 MB.
@@ -207,7 +217,8 @@ that need the database or Telegram have no preview yet.
   is no native ARM build. It is not signed, so SmartScreen may warn.
 - **Not tried on two devices yet:** the shared player (what the other plays, source switch, output names), the sync of song data,
   covers, Spotify links and deleted songs, and the PC right-click menu.
-- **Not tried on a device yet:** the greyed-out Spotify songs, deleting duplicates with the new per-post check, the language
+- **Not tried on a device yet:** the chat index after the last changes (resume after a restart, copy to the chat, the re-upload of a
+  chat that blocks copying, background indexing), the greyed-out Spotify songs, deleting duplicates with the new per-post check, the language
   search, the self-adjusting reading speed, folder upload from an SD card, system volume on Windows, the tray, borderless full screen, the themed Spotify login page,
   the device popups, reading with extra bots, the new animations, installing an update through Shizuku, and Log out and
   delete all data.
