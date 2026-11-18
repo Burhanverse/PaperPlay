@@ -81,8 +81,12 @@ class KeepAliveService : Service() {
         private val lastJob = HashMap<Int, List<Any?>>()
 
         /** Shows each running task as a separate notification and removes the ones that finished. */
-        fun updateJobs(context: Context, jobs: List<KeepAliveJob>) {
+        fun updateJobs(context: Context, allJobs: List<KeepAliveJob>) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // While the service runs its own (required) notification shows the first task, so there is no extra "working in the background" card.
+            val inService = if (running) allJobs.firstOrNull() else null
+            val jobs = if (inService != null) allJobs.drop(1) else allJobs
+            if (inService != null) update(context, inService.title, inService.text, inService.progress, inService.max, inService.progress == null)
             synchronized(this) {
                 val slots = jobs.map { it.slot }.toSet()
                 for (gone in postedJobs - slots) manager.cancel(JOB_BASE + gone)

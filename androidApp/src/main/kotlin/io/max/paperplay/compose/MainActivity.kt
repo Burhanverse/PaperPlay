@@ -122,7 +122,7 @@ class MainActivity : ComponentActivity() {
                         if (allowed()) KeepAliveService.start(applicationContext)
                     } else {
                         if (idleSince == 0L) idleSince = now
-                        if (now - idleSince >= 5 * 60_000L) KeepAliveService.stop(applicationContext)
+                        if (now - idleSince >= 20_000L) KeepAliveService.stop(applicationContext)
                     }
                     // Each running task is its own notification with its own bar; the service's own notification says nothing about them.
                     val jobs = buildList {
@@ -149,7 +149,7 @@ class MainActivity : ComponentActivity() {
                     KeepAliveService.updateJobs(applicationContext, jobs)
                     when {
                         error != null -> KeepAliveService.update(applicationContext, "Paper Play is running", error, null, null, false)
-                        jobs.isNotEmpty() -> KeepAliveService.update(applicationContext, "Paper Play is running", "Working in the background", null, null, false)
+                        jobs.isNotEmpty() -> Unit // the first task is the service's own notification (updateJobs)
                         !ready -> KeepAliveService.update(applicationContext, "Paper Play is running", "Connecting to Telegram", null, null, true)
                         else -> KeepAliveService.update(applicationContext, "Paper Play is running", "Everything is up to date", null, null, false)
                     }
