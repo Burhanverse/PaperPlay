@@ -783,3 +783,10 @@ elease` must say Java 25 and the setup exe must start.
 - [~] A song uploaded by a pool bot is saved at once with that bot as owner (`onSent` in `Uploader`), so it shows without a full bot scan. Songs uploaded before this need one full scan through each bot.
 - [~] Desktop: room for the now playing panel is kept from the first frame (`UiPrefs.songExpected`), so Home no longer re-lays out when the saved song comes back; the now playing view keeps the chosen background instead of a cover-colour wash (only Plain and Cover use the wash). Not seen running after the last change.
 - [ ] Desktop lag: not investigated. Heap cap is 448 MB with serial GC (220-240 MB in use); the first screen took 7-11 s on some cold starts.
+
+### Chat index and copying (19 Nov)
+- [~] The index keeps a page cursor per chat (`ReadCheckpoint`, pref `index_ckpt:<chat>`): a stopped or restarted read goes on instead of starting over; an indexed chat only reads newer posts; pause and resume on the chats page.
+- [~] Indexed songs are matched against the whole library; library-only songs (greyed, "Bot can't reach") do not count as had. Add copies into the main chat (speed slider, pause and resume); a refused copy is re-uploaded by the account; the main chat is found by itself; "Better than yours" says why.
+- [~] A library-only song moves to its post when a bot reads the copy (`upsertBotSong`). Library: copy picked songs to the chat, select songs the bot can't read or only the duplicates.
+- [~] Chats page: details per chat, open in Telegram, remove from the index; indexing runs on the app scope; the background card shows the first task instead of "Working in the background".
+- [ ] None of this was tried on the phone after the last install except the first launch.
