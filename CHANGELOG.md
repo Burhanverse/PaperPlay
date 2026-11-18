@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.7] - 2026-11-18
+
+### Fixed
+- Adjust bitmap size and update blur handling in CoverBlurLayer ([`d71007c`](https://github.com/maxcodl/PaperPlay/commit/d71007ca4afa8d28f14e212e9963a5e957d79d4b))
+
+**Full changes:** [v1.9.6...v1.9.7](https://github.com/maxcodl/PaperPlay/compare/v1.9.6...v1.9.7)
+
 ## [1.9.6] - 2026-11-18
 
 ### Other changes
