@@ -80,14 +80,26 @@ fun parseFileName(fileName: String): Pair<String, String> {
  * Songs saved with names split at the first " - " (song as the artist, "Version - Artists" as the title) are split again with the current
  * rule, and looked up again for covers and info. Songs edited by hand are left alone. Returns how many changed.
  */
-fun repairSplitNames(songs: List<Song>): List<Song> = songs.mapNotNull { s ->
-    if (s.user_edited) return@mapNotNull null
-    val (oldArtist, oldTitle) = parseFileNameFirst(s.file_name)
-    val (artist, title) = parseFileName(s.file_name)
-    if (!((artist == oldArtist && title == oldTitle) || s.artist != oldArtist || s.title != oldTitle))
-        return@mapNotNull s.copy(artist = artist, title = title, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
-    val (fa, ft) = fixSwappedTags(s.file_name, s.artist, s.title)
-    if (fa == s.artist && ft == s.title) null else s.copy(artist = fa, title = ft, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
+fun repairSplitNames(songs: List<Song>): List<Song> {
+    // Names read as "Artist - Title" but written "Song - Artist" come out swapped. The tie is broken by the library itself: the side that is
+    // already known as an artist from other songs (tags that are not just the file name) is the artist.
+    val known = HashMap<String, Int>()
+    for (s in songs) {
+        val (a, t) = parseFileNameFirst(s.file_name)
+        if (a.isEmpty() || !(s.artist == a && s.title == t)) known.merge(s.artist.lowercase(), 1, Int::plus)
+    }
+    return songs.mapNotNull { s ->
+        if (s.user_edited) return@mapNotNull null
+        val (oldArtist, oldTitle) = parseFileNameFirst(s.file_name)
+        val (artist, title) = parseFileName(s.file_name)
+        if (!((artist == oldArtist && title == oldTitle) || s.artist != oldArtist || s.title != oldTitle))
+            return@mapNotNull s.copy(artist = artist, title = title, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
+        if (oldArtist.isNotEmpty() && s.artist == oldArtist && s.title == oldTitle &&
+            (known[oldTitle.lowercase()] ?: 0) > (known[oldArtist.lowercase()] ?: 0)
+        ) return@mapNotNull s.copy(artist = oldTitle, title = oldArtist, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
+        val (fa, ft) = fixSwappedTags(s.file_name, s.artist, s.title)
+        if (fa == s.artist && ft == s.title) null else s.copy(artist = fa, title = ft, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
+    }
 }
 
 private fun looseName(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}&,]+"), " ").trim()
