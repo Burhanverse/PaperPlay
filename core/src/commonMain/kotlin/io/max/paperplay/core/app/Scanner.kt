@@ -104,7 +104,7 @@ fun fixSwappedTags(fileName: String, artist: String, title: String): Pair<String
     val a = looseName(artist)
     val sep = title.indexOf(" - ")
     val tail = looseName(if (sep > 0) title.substring(sep + 3) else title)
-    if (a.length < 3 || tail.length < 3 || !name.startsWith(a) || !name.endsWith(tail) || a == tail) return artist to title
+    if (a.length < 3 || tail.length < 3 || !name.startsWith(a) || !name.contains(tail.take(14)) || a == tail) return artist to title
     if (sep > 0) {
         val head = title.substring(0, sep).trim()
         return title.substring(sep + 3).trim() to "$artist ($head)"
