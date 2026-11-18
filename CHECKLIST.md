@@ -790,3 +790,7 @@ elease` must say Java 25 and the setup exe must start.
 - [~] A library-only song moves to its post when a bot reads the copy (`upsertBotSong`). Library: copy picked songs to the chat, select songs the bot can't read or only the duplicates.
 - [~] Chats page: details per chat, open in Telegram, remove from the index; indexing runs on the app scope; the background card shows the first task instead of "Working in the background".
 - [ ] None of this was tried on the phone after the last install except the first launch.
+
+### Settings pages and stray songs (19 Nov)
+- [~] `SettingsRow` took a trailing lambda as its leading content (parameter order), so arrows sat on the left and icons were dropped on every settings page; fixed. Library and Telegram pages are grouped into cards with labels and dividers (`SettingsSection`, `RowDivider`). Not seen on the phone yet.
+- [~] Settings > Library > Upkeep > Clear deleted songs: the greyed "Bot can't reach" songs are checked with the account and the ones whose post is gone are removed; copy to chat posts them again from the account when they sit in the main chat unreadable.
