@@ -65,6 +65,22 @@ fun SettingsCard(icon: ImageVector, title: String, subtitle: String, onClick: ()
     }
 }
 
+/** A titled group of settings rows on one rounded card: groups are told apart by the card and its label, rows inside by thin dividers ([RowDivider]). */
+@Composable
+fun SettingsSection(title: String?, modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        if (title != null) Text(title, Modifier.padding(start = 8.dp, bottom = 6.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Column(
+            Modifier.fillMaxWidth().partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(20.dp)).clip(appShape(20.dp)),
+            content = content,
+        )
+    }
+}
+
+/** A thin line between two rows of a [SettingsSection], starting after the icon. */
+@Composable
+fun RowDivider() = androidx.compose.material3.HorizontalDivider(Modifier.padding(start = 56.dp, end = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
 /** True inside Settings: a row's explanation text sits behind an info button next to its title instead of under it. */
 val LocalSettingsInfo = androidx.compose.runtime.staticCompositionLocalOf { false }
 
@@ -88,9 +104,11 @@ private fun TitleWithInfo(title: String, explanation: String?, open: Boolean, on
 @Composable
 fun SettingsRow(
     title: String, modifier: Modifier = Modifier, icon: ImageVector? = null, subtitle: String? = null,
-    onClick: (() -> Unit)? = null, enabled: Boolean = true, trailing: @Composable () -> Unit = {},
+    onClick: (() -> Unit)? = null, enabled: Boolean = true,
     /** Shown in place of [icon], such as a cover. */
     leading: (@Composable () -> Unit)? = null,
+    // Last on purpose: a trailing lambda at a call site binds to the last parameter, and callers mean the content at the end of the row.
+    trailing: @Composable () -> Unit = {},
 ) {
     Row(
         modifier.fillMaxWidth().then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)

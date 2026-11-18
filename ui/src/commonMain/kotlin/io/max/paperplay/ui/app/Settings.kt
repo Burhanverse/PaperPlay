@@ -305,38 +305,62 @@ internal fun SettingsPage(
             }
         }
         "telegram" -> {
-            NavRow("Channels and chats", "Added channels, the main chat, and your own chats and channels", Icons.Rounded.Forum) { stack.add("channels") }
-            NavRow("Bots", "Main bot credentials and extra bots for uploading", Icons.Rounded.SmartToy) { stack.add("bots") }
             val accountStep by backend.account.step.collectAsState()
-            NavRow(
-                "Your account (optional)",
-                if (accountStep == io.max.paperplay.core.account.LoginStep.Ready) "Logged in. Your chats can be read and copied from" else "Logged out. Log in as yourself to read and copy from your chats",
-                Icons.Rounded.Person,
-            ) { stack.add("account") }
-            NavRow("Activity log", "Reads, downloads, uploads, rate limits and problems. Search, copy and save", Icons.Rounded.MonitorHeart) { stack.add("log") }
-            SectionLabel("Log out")
-            SettingsRow("Log out", icon = Icons.Rounded.Logout, subtitle = "Your account (if logged in) and the main bot. The library stays on this device", onClick = { confirm = "logout" })
-            SettingsRow("Log out the bot only", icon = Icons.Rounded.SmartToy, subtitle = "Forgets the main bot's credentials. Your account stays logged in", onClick = { confirm = "logoutbot" })
-            SettingsRow("Log out the account only", icon = Icons.Rounded.Person, subtitle = "Your own login. The bot stays connected", onClick = { confirm = "accountout" })
-            SettingsRow("Log out and delete all data", icon = Icons.Rounded.DeleteForever, subtitle = "Removes the library and everything else from this device, for a fresh start", onClick = { confirm = "erase" })
+            SettingsSection("Connections") {
+                NavRow("Channels and chats", "Added channels, the main chat, and your own chats and channels", Icons.Rounded.Forum) { stack.add("channels") }
+                RowDivider()
+                NavRow("Bots", "Main bot credentials and extra bots for uploading", Icons.Rounded.SmartToy) { stack.add("bots") }
+                RowDivider()
+                NavRow(
+                    "Your account (optional)",
+                    if (accountStep == io.max.paperplay.core.account.LoginStep.Ready) "Logged in. Your chats can be read and copied from" else "Logged out. Log in as yourself to read and copy from your chats",
+                    Icons.Rounded.Person,
+                ) { stack.add("account") }
+            }
+            SettingsSection("Diagnostics") {
+                NavRow("Activity log", "Reads, downloads, uploads, rate limits and problems. Search, copy and save", Icons.Rounded.MonitorHeart) { stack.add("log") }
+            }
+            SettingsSection("Log out") {
+                SettingsRow("Log out", icon = Icons.Rounded.Logout, subtitle = "Your account (if logged in) and the main bot. The library stays on this device", onClick = { confirm = "logout" })
+                RowDivider()
+                SettingsRow("Log out the bot only", icon = Icons.Rounded.SmartToy, subtitle = "Forgets the main bot's credentials. Your account stays logged in", onClick = { confirm = "logoutbot" })
+                RowDivider()
+                SettingsRow("Log out the account only", icon = Icons.Rounded.Person, subtitle = "Your own login. The bot stays connected", onClick = { confirm = "accountout" })
+            }
+            SettingsSection("Danger zone") {
+                SettingsRow("Log out and delete all data", icon = Icons.Rounded.DeleteForever, subtitle = "Removes the library and everything else from this device, for a fresh start", onClick = { confirm = "erase" })
+            }
         }
         "library" -> {
-            // What it is doing now, then the actions that matter, then the settings behind drop-downs.
-            LibraryStatusRows(backend) { stack.add("missing") }
-            SectionLabel("Main tools")
-            NavRow("Scan library", "Read every chat with the bots and account you pick, fill in what is missing", Icons.Rounded.Sync) { stack.add("repair") }
-            NavRow("Find duplicates", "Repeated songs in your main chat, and deleting them", Icons.Rounded.ContentCopy) { stack.add("dupes") }
-            NavRow("Sort General", "Suggests topics for songs in General. Nothing moves till you confirm", Icons.Rounded.DriveFileMove) { stack.add("sort") }
+            // What it is doing now, then the actions that matter, then upkeep, then the settings that fold open.
+            SettingsSection("Overview") { LibraryStatusRows(backend) { stack.add("missing") } }
+            SettingsSection("Main tools") {
+                NavRow("Scan library", "Read every chat with the bots and account you pick, fill in what is missing", Icons.Rounded.Sync) { stack.add("repair") }
+                RowDivider()
+                NavRow("Find duplicates", "Repeated songs in your main chat, and deleting them", Icons.Rounded.ContentCopy) { stack.add("dupes") }
+                RowDivider()
+                NavRow("Sort General", "Suggests topics for songs in General. Nothing moves till you confirm", Icons.Rounded.DriveFileMove) { stack.add("sort") }
+            }
+            SettingsSection("Upkeep") {
             SettingsRow(
                 "Fix compilation covers", icon = Icons.Rounded.Album,
                 subtitle = "Songs filed under a hits compilation (Bravo Hits, Top 100) get that album's generic cover. This clears their album and cover so the next scan finds the real ones. Songs you edited stay",
                 onClick = { notice.value = "Reset ${backend.resetCompilationInfo()} songs. Run Scan library to look them up again" },
             )
+                RowDivider()
+            SettingsRow(
+                "Clear deleted songs", icon = Icons.Rounded.CleaningServices,
+                subtitle = "Checks the songs the bot can't reach with your account and removes the ones whose post was deleted from Telegram. Songs that still exist stay",
+                onClick = { backend.clearDeletedLibraryOnly { notice.value = it } },
+            )
+                RowDivider()
             SettingsRow(
                 "Clear the deletion record", icon = Icons.Rounded.DeleteSweep,
                 subtitle = "Songs you deleted are remembered so other devices remove them too. Clear it if a song was removed by mistake; no song is deleted by clearing",
                 onClick = { notice.value = "Cleared ${backend.clearDeletionRecord()} entries" },
             )
+            }
+            SettingsSection("Settings") {
             SettingsGroup("Speeds", "How fast the app asks Telegram for things", Icons.Rounded.Speed) {
                 RateSlider("reading", backend, notice)
                 var auto by remember { mutableStateOf(pref("reading_auto") == "true") }
@@ -348,6 +372,7 @@ internal fun SettingsPage(
                 RateSlider("lookups", backend, notice)
                 RateSlider("covers", backend, notice)
             }
+                RowDivider()
             SettingsGroup("Song info, covers and lyrics", "Looking things up in the background", Icons.Rounded.Lyrics) {
                 var fastLookups by remember { mutableStateOf(pref("lookups_fast") != "false") }
                 SwitchRow(
@@ -364,9 +389,12 @@ internal fun SettingsPage(
                 onClick = { if (lyricsRunning) backend.stopLyricsRun() else backend.startLyricsRun() },
             )
             }
-            SettingsGroup("More tools", "Music folders, recovery and export lists", Icons.Rounded.Folder) {
+            }
+            SettingsSection("More tools") {
                 NavRow("Music folders", "Songs on this device, optionally sent to Telegram", Icons.Rounded.Folder) { stack.add("folders") }
+                RowDivider()
                 NavRow("Recover songs the bot cannot read", "Songs another bot posted. Your account posts them again", Icons.Rounded.Restore) { stack.add("recover") }
+                RowDivider()
                 NavRow("Saved export lists", "Songs not in your library, with Spotify and Apple Music links", Icons.Rounded.IosShare) { stack.add("exports") }
             }
         }

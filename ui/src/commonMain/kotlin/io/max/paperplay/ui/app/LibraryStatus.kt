@@ -42,11 +42,14 @@ internal fun LibraryStatusRows(backend: CoreBackend, onOpenMissing: () -> Unit) 
         "${stats.total} songs", icon = Icons.Rounded.LibraryMusic,
         subtitle = "Song info: ${stats.matched} found, ${stats.noMatch} with no match, ${stats.waiting} waiting",
     )
+    RowDivider()
     SettingsRow("Covers: ${stats.covers} of ${stats.total}", icon = Icons.Rounded.Image, subtitle = "Covers load as songs appear on screen, then in the background")
+    RowDivider()
     SettingsRow(
         "Running now", icon = Icons.Rounded.Sync,
         subtitle = if (busy.isEmpty()) "Nothing. $moodRunning songs scanned for lyrics and genre" else busy.joinToString(", ").replaceFirstChar { it.uppercase() },
     )
+    RowDivider()
     NavRow(
         "Song info left", if (stats.left == 0) "Every song is complete" else "${stats.left} of ${stats.of} songs lack something. Tap to see which, and what.",
         Icons.Rounded.Rule, onOpenMissing,
