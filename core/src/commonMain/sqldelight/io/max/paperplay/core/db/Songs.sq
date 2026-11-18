@@ -50,6 +50,9 @@ SELECT * FROM songs WHERE chat_id = :chatId AND message_id = :messageId;
 songByUniqueId:
 SELECT * FROM songs WHERE unique_id = :uniqueId;
 
+songsByUniqueIds:
+SELECT * FROM songs WHERE unique_id IN :uniqueIds;
+
 favorites:
 SELECT * FROM songs WHERE favorite = 1 ORDER BY title ASC;
 

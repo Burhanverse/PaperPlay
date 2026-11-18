@@ -164,6 +164,8 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     }
 
     fun songByUniqueId(uniqueId: String): Song? = songs.songByUniqueId(uniqueId).executeAsOneOrNull()
+    /** Many songs in one query (the ids that match; the others are simply missing). */
+    fun songsByUniqueIds(ids: Collection<String>): List<Song> = if (ids.isEmpty()) emptyList() else songs.songsByUniqueIds(ids).executeAsList()
     fun replaceSong(s: Song) = write { repo.db.enrichQueries.replaceSong(s) }
     /** Saves many rows in one transaction with one (coalesced) change signal. */
     fun replaceSongs(list: List<Song>) { if (list.isNotEmpty()) batch { list.forEach { repo.db.enrichQueries.replaceSong(it) } } }

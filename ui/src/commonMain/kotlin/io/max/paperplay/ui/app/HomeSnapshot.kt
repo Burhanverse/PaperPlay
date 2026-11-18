@@ -33,6 +33,9 @@ internal object HomeSnapshot {
         for (m in mixes) appendLine("M$FIELD${m.mood.id}$FIELD${clean(m.title)}$FIELD${ids(m.songs)}")
     }
 
+    /** Every token of the saved text that could be a song id, for one query that fetches them all. */
+    fun idsIn(raw: String): List<String> = raw.split(FIELD, '\n', ID).filter { it.isNotEmpty() }.distinct().take(900)
+
     /** The saved page and mixes, or null when nothing usable is saved. [lookup] finds a song by its id. */
     fun decode(raw: String?, lookup: (String) -> Song?): Pair<HomeMix, List<DailyMix>>? {
         if (raw.isNullOrBlank()) return null

@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -104,7 +105,12 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
     // The database, services and backend are built off the UI thread; a blank themed screen shows meanwhile.
     val built by produceState<CoreBackend?>(null) {
         val b = withContext(Dispatchers.Default) {
-            CoreBackend(env.createServices()).also { it.warmUp() }
+            run {
+                val sv = env.createServices()
+                // The last page is read while the backend is still being built, so it is ready as soon as the screen is.
+                val saved = sv.scope.async { runCatching { io.max.paperplay.ui.app.loadSavedHome(sv) }.getOrNull() }
+                CoreBackend(sv).also { it.preloadedHome = saved; it.warmUp() }
+            }
         }
         value = b
         env.mark("services ready")

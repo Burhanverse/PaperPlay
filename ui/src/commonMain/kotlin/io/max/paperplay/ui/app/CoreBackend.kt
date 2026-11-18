@@ -799,61 +799,21 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             saveHome(plan, mixes)
         }
 
-    private fun buildHomeUi(plan: io.max.paperplay.core.recs.HomeMix, mixList: List<DailyMix>, fresh: (Song) -> Song): HomeUi {
-        fun coverOf(lead: Song, groupSongs: List<Song>): String? {
-            val f = fresh(lead)
-            return f.cover_path
-                ?: groupSongs.firstNotNullOfOrNull { it.cover_path }
-        }
-        return HomeUi(
-            tiles = plan.tiles.map { t ->
-                val ts = t.songs.map(fresh)
-                CollectionUi(t.title, t.title, "${ts.size} songs", coverOf(t.cover, ts), ts.map(Song::toUi))
-            },
-            shelves = plan.shelves.map { s ->
-                val kind = when (s.kind) { ShelfKind.SONGS -> ShelfKindUi.Songs; ShelfKind.ALBUMS -> ShelfKindUi.Albums; ShelfKind.ARTISTS -> ShelfKindUi.Artists }
-                val ss = s.songs.map(fresh)
-                ShelfUi(s.title, kind, ss.map(Song::toUi), s.groups.map { g ->
-                    val gs = g.songs.map(fresh)
-                    val sub = if (kind == ShelfKindUi.Albums) fresh(g.cover).artist else "${gs.size} songs"
-                    CollectionUi(g.name, g.name, sub, coverOf(g.cover, gs), gs.map(Song::toUi))
-                })
-            },
-            mixes = mixList.map { m ->
-                val ms = m.songs.map(fresh)
-                CollectionUi(m.mood.id, m.title, ms.take(3).joinToString(", ") { it.artist }, null, ms.map(Song::toUi), covers(ms))
-            },
-        )
-    }
-
     private val homeLive: Flow<HomeUi> = combine(repo.allSongs(), homePlan) { songs, state ->
         val plan = state.plan ?: return@combine HomeUi()
         val freshById = songs.associateBy { it.unique_id }
         buildHomeUi(plan, state.mixes) { freshById[it.unique_id] ?: it }
     }
 
+    /** The saved page being loaded since the services started (see [loadSavedHome]); set by the app before the screen asks for [home]. */
+    @Volatile var preloadedHome: kotlinx.coroutines.Deferred<HomeUi?>? = null
+
     /** Set once the real plan has produced a page, so a saved page that is still loading never replaces it. */
     @Volatile private var homeIsLive = false
 
-    /** The page saved at the last launch, with its covers decoded first so it is drawn complete. Null when none is saved. */
-    private suspend fun savedHome(): HomeUi? {
-        val (plan, mixes) = HomeSnapshot.decode(repo.pref(HomeSnapshot.PREF)) { repo.songByUniqueId(it) } ?: return null
-        val lead = buildList {
-            plan.tiles.forEach { add(it.cover); addAll(it.songs.take(1)) }
-            plan.shelves.forEach { sh -> addAll(sh.songs.take(8)); sh.groups.take(8).forEach { add(it.cover) } }
-            mixes.forEach { addAll(it.songs.take(4)) }
-        }.distinctBy { it.unique_id }
-        services.covers.prioritize(lead)
-        kotlinx.coroutines.coroutineScope {
-            launch { SharedCovers.loader.preloadAndWait(plan.tiles.mapNotNull { it.cover.cover_path }, 160, 600) }
-            launch { SharedCovers.loader.preloadAndWait(lead.mapNotNull { it.cover_path }, 512, 600) }
-        }
-        return buildHomeUi(plan, mixes) { it }
-    }
-
     val home: StateFlow<HomeUi> = kotlinx.coroutines.flow.channelFlow {
         // Last launch's page first (in parallel with the real plan), unless the real one got there before it.
-        launch { runCatching { savedHome() }.getOrNull()?.let { if (!homeIsLive) send(it) } }
+        launch { runCatching { (preloadedHome?.await() ?: loadSavedHome(services)) }.getOrNull()?.let { if (!homeIsLive) send(it) } }
         homeLive.collect { homeIsLive = true; send(it) }
     }
         .catch { emit(HomeUi()) }
@@ -1484,5 +1444,53 @@ internal fun Song.toUi(): SongUi {
         lossless = lossless, favorite = favorite, pinned = pinned, offline = size > 0 && cached_bytes >= size,
         botCantReach = remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE,
     )
+}
+
+internal fun buildHomeUi(plan: io.max.paperplay.core.recs.HomeMix, mixList: List<DailyMix>, fresh: (Song) -> Song): HomeUi {
+    fun coverOf(lead: Song, groupSongs: List<Song>): String? {
+        val f = fresh(lead)
+        return f.cover_path
+            ?: groupSongs.firstNotNullOfOrNull { it.cover_path }
+    }
+    return HomeUi(
+        tiles = plan.tiles.map { t ->
+            val ts = t.songs.map(fresh)
+            CollectionUi(t.title, t.title, "${ts.size} songs", coverOf(t.cover, ts), ts.map(Song::toUi))
+        },
+        shelves = plan.shelves.map { s ->
+            val kind = when (s.kind) { ShelfKind.SONGS -> ShelfKindUi.Songs; ShelfKind.ALBUMS -> ShelfKindUi.Albums; ShelfKind.ARTISTS -> ShelfKindUi.Artists }
+            val ss = s.songs.map(fresh)
+            ShelfUi(s.title, kind, ss.map(Song::toUi), s.groups.map { g ->
+                val gs = g.songs.map(fresh)
+                val sub = if (kind == ShelfKindUi.Albums) fresh(g.cover).artist else "${gs.size} songs"
+                CollectionUi(g.name, g.name, sub, coverOf(g.cover, gs), gs.map(Song::toUi))
+            })
+        },
+        mixes = mixList.map { m ->
+            val ms = m.songs.map(fresh)
+            CollectionUi(m.mood.id, m.title, ms.take(3).joinToString(", ") { it.artist }, null, ms.map(Song::toUi), covers(ms))
+        },
+    )
+}
+
+/**
+ * The page saved at the last launch, with its first covers decoded so it is drawn complete. Needs only the database, so the app starts
+ * it as soon as the services exist, beside the building of the backend. Null when none is saved.
+ */
+internal suspend fun loadSavedHome(services: AppServices): HomeUi? {
+    val repo = services.library
+    val raw = repo.pref(HomeSnapshot.PREF) ?: return null
+    val rows = repo.songsByUniqueIds(HomeSnapshot.idsIn(raw)).associateBy { it.unique_id }
+    val (plan, mixes) = HomeSnapshot.decode(raw) { rows[it] } ?: return null
+    // Only what is on screen at first is waited for; the rest is decoded as it is scrolled to.
+    val firstShelf = plan.shelves.firstOrNull { it.kind == ShelfKind.SONGS }?.songs.orEmpty().take(6)
+    val mixLead = mixes.flatMap { it.songs.take(4) }
+    val lead = (plan.tiles.flatMap { listOf(it.cover) + it.songs.take(1) } + firstShelf + mixLead).distinctBy { it.unique_id }
+    services.covers.prioritize(lead)
+    kotlinx.coroutines.coroutineScope {
+        launch { SharedCovers.loader.preloadAndWait(plan.tiles.mapNotNull { it.cover.cover_path }, 160, 350) }
+        launch { SharedCovers.loader.preloadAndWait((firstShelf + mixLead).mapNotNull { it.cover_path }, 512, 350) }
+    }
+    return buildHomeUi(plan, mixes) { it }
 }
 

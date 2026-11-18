@@ -53,30 +53,3 @@ fun Modifier.skeleton(shape: androidx.compose.ui.graphics.Shape = RoundedCornerS
 fun skeletonFill(): Modifier = Modifier.skeleton(androidx.compose.ui.graphics.RectangleShape)
 
 /** The six quick tiles of Home as placeholders. */
-@Composable
-fun SkeletonTiles() {
-    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        repeat(3) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(2) { Spacer(Modifier.weight(1f).height(56.dp).skeleton(RoundedCornerShape(12.dp))) }
-            }
-        }
-    }
-}
-
-/** A titled row of cover cards as placeholders. */
-@Composable
-fun SkeletonShelf(card: Dp = 150.dp) {
-    Column(Modifier.padding(top = 20.dp)) {
-        Spacer(Modifier.padding(start = 16.dp).width(160.dp).height(20.dp).skeleton(RoundedCornerShape(6.dp)))
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            repeat(3) {
-                Column {
-                    Spacer(Modifier.size(card).skeleton(RoundedCornerShape(10.dp)))
-                    Spacer(Modifier.padding(top = 8.dp).width(card * 0.8f).height(14.dp).skeleton(RoundedCornerShape(4.dp)))
-                    Spacer(Modifier.padding(top = 4.dp).width(card * 0.5f).height(12.dp).skeleton(RoundedCornerShape(4.dp)))
-                }
-            }
-        }
-    }
-}

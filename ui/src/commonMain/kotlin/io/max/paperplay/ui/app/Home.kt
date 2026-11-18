@@ -110,38 +110,19 @@ fun HomeScreen(
             }
         }
     }
-    // Until the library and the plan are ready the page shows the shape of what is coming, so it looks loaded at once.
-    val planning = songs.isNotEmpty() && home.tiles.isEmpty() && home.shelves.isEmpty()
-    // A plan that never comes (nothing to plan) must not keep the placeholders for good.
+    // No placeholders: the greeting is there at once and the tiles and cards fly in as soon as the page is on hand (last launch's, or the real
+    // one), whether or not the library has finished loading. A plan that never comes (nothing to plan) is given up after four seconds.
     var waited by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(4_000); waited = true }
-    // A page already on hand (last launch's, or the real one) is shown at once, whether or not the library has finished loading.
     val hasPlan = home.tiles.isNotEmpty() || home.shelves.isNotEmpty()
-    val skeleton = !hasPlan && (lib.songs is Load.Loading || planning) && !waited
-    val ready = !skeleton
+    val ready = hasPlan || waited
     // The fly-in plays for what is drawn in the first moments only; anything scrolled into view later just appears.
     androidx.compose.runtime.LaunchedEffect(ready) { if (ready) { kotlinx.coroutines.delay(2_200); introDone = true } }
-    // All the placeholders show first and the whole page fades in once everything is ready, so nothing pops in piece by piece.
-    // While the fly-in plays the placeholders go at once: cross-fading them out would show them under the tiles as these arrive.
-    val introPending = !introDone && !io.max.paperplay.ui.theme.LocalReduceMotion.current
-    val reveal by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, androidx.compose.animation.core.tween(if (introPending) 0 else 300), label = "home reveal")
-    // One greeting line for both layers, or the two would pick different ones while they cross-fade.
     val message = remember { homeMessages.random() }
-    // The placeholders fade out as the page fades in, on top of each other, so nothing goes blank in between.
     BoxWithConstraints(modifier) {
     // A wide window (desktop) gets a denser top: tiles at a fixed width beside a compact recently played row.
     val wide = maxWidth >= 900.dp
-    if (reveal < 1f) LazyColumn(
-        Modifier.fillMaxSize().graphicsLayer { alpha = 1f - reveal }, userScrollEnabled = false,
-        contentPadding = PaddingValues(bottom = bottomPadding),
-    ) {
-        item { HomeHeader(name, message) }
-        item { SkeletonTiles() }
-        item { SkeletonShelf() }
-        item { SkeletonShelf() }
-        item { SkeletonShelf() }
-    }
-    LazyColumn(Modifier.fillMaxSize().graphicsLayer { alpha = reveal }, contentPadding = PaddingValues(bottom = bottomPadding)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name, message) }
         if (ready && wide && (recentPlayed != null || tileRows.isNotEmpty())) item(key = "hero") {
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -266,6 +247,9 @@ private fun Modifier.snapIn(index: Int, startMs: Int): Modifier {
     if (!play) return this
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
+        // The first frames that draw this content are the slow ones (covers go to the graphics memory); the items wait, unseen, until
+        // those have passed, so the movement does not start on a long frame and jump.
+        repeat(3) { androidx.compose.runtime.withFrameNanos { } }
         kotlinx.coroutines.delay(startMs + index * 55L)
         p.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow))
     }
