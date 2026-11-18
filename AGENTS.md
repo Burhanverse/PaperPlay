@@ -50,6 +50,15 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Build with `cargo ndk -t arm64-v8a`, before Gradle and never at the same time as it.
 - No allocation, locks or panics in the audio path; no panic across the FFI line. If the library fails to load, fall back to the Media3 pipeline and log it.
 - Sound changes are judged by ear on the phone, level matched, against the previous build; mark `[~]` in `CHECKLIST.md` until heard working.
+- Layout: `engine/src/eq.rs` (curve fit, Bass, earphone correction, 180 Hz split, level trims, limiters, A/B), `engine/src/extras.rs` (dynamic bass, de-esser, crossfeed, switched by option bits), `engine/src/lib.rs` (JNI only).
+- Every piece gets a Rust unit test, and the test must fail when the fix is taken out (check it once). Keep the null test: flat curve, Bass 0 and no options give bit-exact output, also after the engine was on.
+- No clicks: parameter changes crossfade or glide, switching on and off fades. Never clear delay lines while sound is playing.
+- Headroom: output ceiling -1 dB true peak; the bass half sits lower than the output so its peaks do not make the output limiter duck the rest; limiters on bass hold longer than half a bass period (no gain movement inside a wave).
+- A new engine setting goes the whole way: Rust, `lib.rs`, `EngineNative.kt`, `PlaybackCore`, applied in `EngineAudioSink.convert`, `PlayerEngine` (default does nothing, so the PC is untouched), `LazyPlayerEngine` (kept until the engine exists), `PlaybackController`, `CoreBackend` and `PlayerControls`, and the per-output snapshot (`eqSnapshot`/`onOutput`). UI goes in `EngineExtras`, which both the Settings page and the player dialog show.
+- Compare with original needs something to compare: with a flat curve and Bass 0 the engine is bypassed and both sound the same.
+- Earphone corrections come from AutoEq (MIT) ParametricEQ results; name the measurement source and rig in a comment. They are for wired earphones; earbuds have their own tuning.
+- The PC mpv filter chain (`MpvFilters.kt`) is a separate copy of the older engine design; phone engine changes do not reach it. Change it only as its own step, with the PC tests.
+- `JvmPlayerEngineTest` (VLC) can time out once; run it again before blaming a change.
 - Plan and status live in the local `ENGINE_PLAN.md` (ignored); keep `CHECKLIST.md` in step.
 - Desktop: the optional mpv engine uses `libmpv-2.dll` through JNA. LGPL build only (the file name contains `lgpl`), never in git (`desktopApp/src/jvmMain/resources/mpv/`); the Windows CI step pins the build and its SHA-256. VLC stays the default until the mpv engine is proven. Tests use `ao=null` so nothing is played aloud.
 
