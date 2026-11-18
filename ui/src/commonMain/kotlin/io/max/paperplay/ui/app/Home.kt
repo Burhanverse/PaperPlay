@@ -239,7 +239,7 @@ private fun Modifier.staggerIn(order: Int): Modifier {
 private var introDone = false
 
 /**
- * The start-up animation: a tile or card flies in from the left, the right or the bottom (by its [index]), tilted, and snaps into
+ * The start-up animation: a tile or card flies in from the left, the right or the bottom (by its [index]) and snaps into
  * place with a small bounce, one after another from [startMs]. It plays only for what is drawn while the page first appears.
  */
 @Composable
@@ -263,8 +263,12 @@ private fun Modifier.snapIn(index: Int, startMs: Int): Modifier {
             1 -> translationX = size.width * 1.3f * away
             else -> translationY = size.height * 2.2f * away
         }
-        rotationZ = (from - 1) * 7f * away
+        // No tilt: a rotated layer made every cover in it be uploaded to the graphics memory again on every frame (measured: about a
+        // thousand uploads in half a second, against about a hundred without it), which is what made the animation stutter.
         alpha = (p.value * 4f).coerceIn(0f, 1f)
+        // Fade each piece as it is drawn instead of drawing the whole card into a separate buffer first: that buffer made every cover in it
+        // be uploaded to the graphics memory again on every frame of the animation (about a thousand uploads in half a second).
+        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
     }
 }
 
