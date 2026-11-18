@@ -44,6 +44,8 @@ class LazyPlayerEngine(
     private var pendingBass: Float? = null
     private var pendingExact: Boolean? = null
     private var pendingWidth: Float? = null
+    private var pendingEarphone: String? = null
+    private var earphoneSet = false
     private var pendingExclusive: Boolean? = null
     private var pendingProfile: String? = null
     private var profileSet = false
@@ -74,6 +76,7 @@ class LazyPlayerEngine(
             pendingBass?.let { engine.setBass(it) }
             pendingExact?.let { engine.setExactLevel(it) }
             pendingWidth?.let { engine.setStereoWidth(it) }
+            if (earphoneSet) engine.setEarphoneCorrection(pendingEarphone)
             pendingExclusive?.let { engine.setExclusiveOutput(it) }
             if (profileSet) engine.setCorrectionProfile(pendingProfile)
             pendingSpeed?.let { engine.setSpeed(it) }
@@ -182,6 +185,12 @@ class LazyPlayerEngine(
     }
 
     override fun setDryCompare(on: Boolean) { real?.setDryCompare(on) }
+
+    override fun setEarphoneCorrection(text: String?) {
+        pendingEarphone = text
+        earphoneSet = true
+        real?.setEarphoneCorrection(text)
+    }
 
     override fun setStereoWidth(width: Float) {
         pendingWidth = width

@@ -89,4 +89,18 @@ class MpvFiltersTest {
         assertNull(CorrectionProfile.parse("GraphicEQ: 20 -4; 10 -3; 30 1; 40 1; 50 1; 60 1; 70 1; 80 1")) // frequencies not rising
         assertNull(CorrectionProfile.parse("GraphicEQ: 20 -4; 21 -3")) // too few points
     }
+
+    @Test
+    fun `parametric eq text is read into kind, hz, q and gain`() {
+        for ((name, text) in CorrectionProfile.EARPHONES) {
+            val f = assertNotNull(CorrectionProfile.parseParametric(text), name)
+            assertEquals(40, f.size, name)
+        }
+        val castor = CorrectionProfile.parseParametric(CorrectionProfile.EARPHONES.getValue("KZ Castor Bass (on-on-on-on)"))!!
+        assertEquals(listOf(1f, 105f, 0.7f, 4.2f), castor.take(4)) // low shelf
+        assertEquals(listOf(0f, 85f, 0.24f, -4.8f), castor.drop(8).take(4)) // peak with a negative gain
+        assertEquals(2f, castor[20]) // high shelf
+        assertNull(CorrectionProfile.parseParametric("Preamp: -3.0 dB"))
+        assertNull(CorrectionProfile.parseParametric("Filter 1: OFF PK Fc 100 Hz Gain 3 dB Q 1"))
+    }
 }

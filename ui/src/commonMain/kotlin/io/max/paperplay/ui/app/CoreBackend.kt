@@ -104,6 +104,16 @@ interface PlayerControls {
     /** PC with the mpv engine: plays the file untouched through exclusive output; the equalizer, bass, normalise and profile are bypassed (not erased). */
     val bitPerfect: StateFlow<Boolean> get() = MutableStateFlow(false)
     fun setBitPerfect(on: Boolean) {}
+    /** Phone engine extras: exact level, A/B with the original, stereo width (see [CoreBackend]). */
+    val eqExact: StateFlow<Boolean> get() = MutableStateFlow(false)
+    fun setEqExact(on: Boolean) {}
+    val eqDry: StateFlow<Boolean> get() = MutableStateFlow(false)
+    fun setEqDry(on: Boolean) {}
+    val eqWidth: StateFlow<Float> get() = MutableStateFlow(1f)
+    fun setEqWidth(width: Float) {}
+    /** Name of a built-in earphone correction ([io.max.paperplay.player.CorrectionProfile.EARPHONES]), empty for none. */
+    val eqEarphone: StateFlow<String> get() = MutableStateFlow("")
+    fun setEqEarphone(name: String) {}
     /** True where the engine in use has a Bass control: the phone, and the PC with the mpv engine. */
     val hasBass: Boolean get() = io.max.paperplay.ui.isPhone
     fun removeFromQueue(index: Int)
@@ -628,27 +638,35 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
 
     /** Phone engine: true plays the drawn curve exactly (everything lowered by its peak), false keeps the music loud. */
-    val eqExact = MutableStateFlow(repo.pref("eq_exact") == "true")
+    override val eqExact = MutableStateFlow(repo.pref("eq_exact") == "true")
 
-    fun setEqExact(on: Boolean) {
+    override fun setEqExact(on: Boolean) {
         eqExact.value = on
         repo.setPref("eq_exact", "$on")
         if (playerStarted.value) player.setExactLevel(on)
     }
 
     /** Phone engine: stereo width above the bass, 0.5 to 1.6 (1 = as recorded). Applies while the equalizer is on. */
-    val eqWidth = MutableStateFlow(repo.pref("eq_width")?.toFloatOrNull() ?: 1f)
+    override val eqWidth = MutableStateFlow(repo.pref("eq_width")?.toFloatOrNull() ?: 1f)
 
-    fun setEqWidth(width: Float) {
+    override fun setEqWidth(width: Float) {
         eqWidth.value = width
         repo.setPref("eq_width", "$width")
         pushBass()
     }
 
-    /** Phone engine A/B: plays the original at the processed level while held on. Not saved. */
-    val eqDry = MutableStateFlow(false)
+    override val eqEarphone = MutableStateFlow(repo.pref("eq_earphone").orEmpty())
 
-    fun setEqDry(on: Boolean) {
+    override fun setEqEarphone(name: String) {
+        eqEarphone.value = name
+        repo.setPref("eq_earphone", name)
+        pushBass()
+    }
+
+    /** Phone engine A/B: plays the original at the processed level while held on. Not saved. */
+    override val eqDry = MutableStateFlow(false)
+
+    override fun setEqDry(on: Boolean) {
         eqDry.value = on
         if (playerStarted.value) player.setDryCompare(on)
     }
@@ -666,6 +684,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val on = eqOn.value && !bitPerfect.value
         player.setBass(if (on) eqBass.value else 0f)
         player.setStereoWidth(if (on) eqWidth.value else 1f)
+        player.setEarphoneCorrection(if (on) io.max.paperplay.player.CorrectionProfile.EARPHONES[eqEarphone.value] else null)
     }
 
     override fun setEqualizer(on: Boolean, gains: List<Float>) {
@@ -937,7 +956,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             val bp = bitPerfect.value
             if (eqOn.value && !bp) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
             p.setExactLevel(eqExact.value)
-            if (eqOn.value && !bp) p.setStereoWidth(eqWidth.value)
+            if (eqOn.value && !bp) {
+                p.setStereoWidth(eqWidth.value)
+                p.setEarphoneCorrection(io.max.paperplay.player.CorrectionProfile.EARPHONES[eqEarphone.value])
+            }
             if (exclusiveOutput.value || bp) p.setExclusiveOutput(true)
             if (!bp) correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)

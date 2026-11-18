@@ -28,6 +28,7 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
     private var appliedExact = false
     private var appliedDry = false
     private var appliedWidth = 1f
+    private var appliedCorrection: FloatArray? = null
     private var pending: ByteBuffer? = null
     private var out: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
     private var calls = 0
@@ -49,6 +50,7 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         appliedExact = false
         appliedDry = false
         appliedWidth = 1f
+        appliedCorrection = null
         val floatFormat = f.buildUpon().setPcmEncoding(C.ENCODING_PCM_FLOAT).build()
         super.configure(
             AudioSink.AudioSinkConfig.Builder(floatFormat)
@@ -90,6 +92,8 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         if (dry != appliedDry) { EngineNative.setDry(handle, dry); appliedDry = dry; PlayLog.log("engine", "compare with original $dry") }
         val width = PlaybackCore.width
         if (width != appliedWidth) { EngineNative.setWidth(handle, width); appliedWidth = width; PlayLog.log("engine", "width $width") }
+        val corr = PlaybackCore.correction
+        if (corr !== appliedCorrection) { EngineNative.setCorrection(handle, corr ?: FloatArray(0)); appliedCorrection = corr; PlayLog.log("engine", "correction ${(corr?.size ?: 0) / 4} filters") }
         val kind = when (enc) { C.ENCODING_PCM_16BIT -> 0; C.ENCODING_PCM_24BIT -> 1; C.ENCODING_PCM_FLOAT -> 3; else -> 2 }
         // Decoder buffers are direct, so Rust reads them in place; anything else is converted here first.
         if (!src.isDirect || EngineNative.processPcm(handle, src, src.position(), kind, samples, out) != samples) {

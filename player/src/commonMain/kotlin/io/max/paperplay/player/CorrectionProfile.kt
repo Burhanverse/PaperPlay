@@ -23,6 +23,53 @@ object CorrectionProfile {
         return points
     }
 
+    /**
+     * Reads AutoEq "ParametricEQ.txt" text (`Filter 1: ON PK Fc 244 Hz Gain 4.9 dB Q 1.21`, also LSC and HSC) into 4 floats
+     * per filter: kind (0 peak, 1 low shelf, 2 high shelf), Hz, Q, gain dB. The preamp line is ignored (the engine sets its
+     * own headroom). Null when no filter is found.
+     */
+    fun parseParametric(text: String): FloatArray? {
+        val re = Regex("""Filter\s*\d*:\s*ON\s+(PK|LSC|HSC|LS|HS)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+(-?[\d.]+)\s*dB\s+Q\s+([\d.]+)""")
+        val out = re.findAll(text).mapNotNull { m ->
+            val (type, fc, gain, q) = m.destructured
+            val kind = when (type) { "PK" -> 0f; "LSC", "LS" -> 1f; else -> 2f }
+            val f = fc.toFloatOrNull(); val g = gain.toFloatOrNull(); val qq = q.toFloatOrNull()
+            if (f == null || g == null || qq == null) null else floatArrayOf(kind, f, qq, g.coerceIn(-24f, 24f))
+        }.toList()
+        return if (out.isEmpty()) null else out.reduce { a, b -> a + b }
+    }
+
+    /**
+     * Built-in earphone corrections (phone engine): AutoEq ParametricEQ results toward its default in-ear target. Each is the
+     * measured earphone's deviation from that target, so it changes the earphone's own sound, not the music.
+     */
+    val EARPHONES: Map<String, String> = linkedMapOf(
+        // ToneDeafMonk measurement, switches on-on-on-on: AutoEq results/ToneDeafMonk/in-ear/KZ Castor Improved Bass Version (on-on-on-on).
+        "KZ Castor Bass (on-on-on-on)" to
+            "Filter 1: ON LSC Fc 105 Hz Gain 4.2 dB Q 0.70\n" +
+            "Filter 2: ON PK Fc 244 Hz Gain 4.9 dB Q 1.21\n" +
+            "Filter 3: ON PK Fc 85 Hz Gain -4.8 dB Q 0.24\n" +
+            "Filter 4: ON PK Fc 398 Hz Gain 2.1 dB Q 0.79\n" +
+            "Filter 5: ON PK Fc 5251 Hz Gain -2.2 dB Q 3.24\n" +
+            "Filter 6: ON HSC Fc 10000 Hz Gain -3.8 dB Q 0.70\n" +
+            "Filter 7: ON PK Fc 2791 Hz Gain -1.1 dB Q 3.02\n" +
+            "Filter 8: ON PK Fc 8369 Hz Gain -1.1 dB Q 3.25\n" +
+            "Filter 9: ON PK Fc 6570 Hz Gain 2.2 dB Q 5.91\n" +
+            "Filter 10: ON PK Fc 1455 Hz Gain -0.5 dB Q 2.30",
+        // crinacle measurement on a 711 coupler: AutoEq results/crinacle/711 in-ear/Moondrop Chu 2.
+        "Moondrop Chu 2" to
+            "Filter 1: ON LSC Fc 105 Hz Gain -0.2 dB Q 0.70\n" +
+            "Filter 2: ON PK Fc 166 Hz Gain -2.6 dB Q 0.87\n" +
+            "Filter 3: ON PK Fc 5928 Hz Gain 6.7 dB Q 0.95\n" +
+            "Filter 4: ON PK Fc 780 Hz Gain 2.2 dB Q 1.24\n" +
+            "Filter 5: ON PK Fc 4221 Hz Gain -4.4 dB Q 0.80\n" +
+            "Filter 6: ON HSC Fc 10000 Hz Gain -3.1 dB Q 0.70\n" +
+            "Filter 7: ON PK Fc 9560 Hz Gain 1.6 dB Q 2.29\n" +
+            "Filter 8: ON PK Fc 1418 Hz Gain -0.7 dB Q 2.98\n" +
+            "Filter 9: ON PK Fc 1028 Hz Gain 0.5 dB Q 3.66\n" +
+            "Filter 10: ON PK Fc 2167 Hz Gain 0.4 dB Q 4.09",
+    )
+
     /** Moondrop Chu 2, crinacle measurement on a 711 coupler, from the AutoEq results (GraphicEQ.txt, 20 Hz to 20 kHz). */
     const val MOONDROP_CHU_2 = "GraphicEQ: 20 -4.0; 21 -4.2; 22 -4.3; 23 -4.3; 24 -4.4; 26 -4.7; 27 -4.8; 29 -4.8; 30 -4.8; 32 -4.7; 34 -4.7; " +
         "36 -4.8; 38 -4.8; 40 -4.8; 43 -4.8; 45 -4.7; 48 -4.9; 50 -4.9; 53 -4.8; 56 -4.8; 59 -4.8; 63 -4.8; 66 -4.9; 70 -4.9; 74 -5.0; " +

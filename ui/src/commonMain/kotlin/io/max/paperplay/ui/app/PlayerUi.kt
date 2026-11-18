@@ -624,6 +624,7 @@ internal fun EqualizerDialog(backend: PlayerControls, onClose: () -> Unit) {
             Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 BitPerfectRow(backend)
                 EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
+                EngineExtras(backend)
             }
         },
         confirmButton = { TextButton(onClose) { Text("Close") } },

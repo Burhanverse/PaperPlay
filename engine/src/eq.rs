@@ -42,6 +42,12 @@ const TP_LAG: usize = TP_TAPS - 1 - TP_CENTRE;
 const SWITCH_MS: f64 = 5.0;
 /// Crossfade from the old filters to the new ones on any change, and between processed and dry.
 const FADE_MS: f64 = 20.0;
+/// Most filters an earphone correction may have.
+pub const MAX_CORR: usize = 16;
+/// Correction filter kinds, as in AutoEq's ParametricEQ.txt: peaking, low shelf, high shelf.
+pub const CORR_PK: u8 = 0;
+pub const CORR_LSC: u8 = 1;
+pub const CORR_HSC: u8 = 2;
 /// Filters in the bass stage.
 const BASS_F: usize = 4;
 /// Time constant of the level trims.
@@ -88,11 +94,14 @@ fn peaking_q(rate: f64, hz: f64, gain_db: f64, q: f64) -> Coef {
 }
 
 /// RBJ low shelf (slope 1).
-fn low_shelf(rate: f64, hz: f64, gain_db: f64) -> Coef {
+fn low_shelf(rate: f64, hz: f64, gain_db: f64) -> Coef { low_shelf_q(rate, hz, gain_db, std::f64::consts::FRAC_1_SQRT_2) }
+
+/// RBJ low shelf with its own Q (0.707 = slope 1).
+fn low_shelf_q(rate: f64, hz: f64, gain_db: f64, q: f64) -> Coef {
     let a = 10f64.powf(gain_db / 40.0);
     let w = 2.0 * PI * hz / rate;
     let (sw, cw) = (w.sin(), w.cos());
-    let alpha = sw / 2.0 * 2f64.sqrt(); // S = 1
+    let alpha = sw / (2.0 * q);
     let t = 2.0 * a.sqrt() * alpha;
     let a0 = (a + 1.0) + (a - 1.0) * cw + t;
     Coef {
@@ -105,11 +114,14 @@ fn low_shelf(rate: f64, hz: f64, gain_db: f64) -> Coef {
 }
 
 /// RBJ high shelf (slope 1).
-fn high_shelf(rate: f64, hz: f64, gain_db: f64) -> Coef {
+fn high_shelf(rate: f64, hz: f64, gain_db: f64) -> Coef { high_shelf_q(rate, hz, gain_db, std::f64::consts::FRAC_1_SQRT_2) }
+
+/// RBJ high shelf with its own Q (0.707 = slope 1).
+fn high_shelf_q(rate: f64, hz: f64, gain_db: f64, q: f64) -> Coef {
     let a = 10f64.powf(gain_db / 40.0);
     let w = 2.0 * PI * hz / rate;
     let (sw, cw) = (w.sin(), w.cos());
-    let alpha = sw / 2.0 * 2f64.sqrt();
+    let alpha = sw / (2.0 * q);
     let t = 2.0 * a.sqrt() * alpha;
     let a0 = (a + 1.0) - (a - 1.0) * cw + t;
     Coef {
@@ -316,6 +328,9 @@ struct Chain {
     bass_on: bool,
     bass: [Coef; BASS_F],
     bass_state: [[State; BASS_F]; MAX_CH],
+    corr: [Coef; MAX_CORR],
+    corr_n: usize,
+    corr_state: [[State; MAX_CORR]; MAX_CH],
 }
 
 impl Chain {
@@ -327,10 +342,14 @@ impl Chain {
             bass_on: false,
             bass: [Coef::default(); BASS_F],
             bass_state: [[State::default(); BASS_F]; MAX_CH],
+            corr: [Coef::default(); MAX_CORR],
+            corr_n: 0,
+            corr_state: [[State::default(); MAX_CORR]; MAX_CH],
         }
     }
 
     fn run(&mut self, c: usize, mut x: f64) -> f64 {
+        for b in 0..self.corr_n { x = biquad(&self.corr[b], &mut self.corr_state[c][b], x); }
         for b in 0..N {
             if self.active[b] { x = biquad(&self.coefs[b], &mut self.state[c][b], x); }
         }
@@ -343,6 +362,7 @@ impl Chain {
     fn clear(&mut self) {
         self.state = [[State::default(); N]; MAX_CH];
         self.bass_state = [[State::default(); BASS_F]; MAX_CH];
+        self.corr_state = [[State::default(); MAX_CORR]; MAX_CH];
     }
 }
 
@@ -449,7 +469,8 @@ impl Eq {
         let ch = &self.chain;
         let bands: f64 = (0..N).filter(|&i| ch.active[i]).map(|i| mag_db(&ch.coefs[i], self.rate, hz)).sum();
         let bass: f64 = if ch.bass_on { ch.bass.iter().map(|k| mag_db(k, self.rate, hz)).sum() } else { 0.0 };
-        bands + bass
+        let corr: f64 = ch.corr[..ch.corr_n].iter().map(|k| mag_db(k, self.rate, hz)).sum();
+        bands + bass + corr
     }
 
     /// Keeps the current filters running as the old set, faded out over `FADE_MS` while the new set fades in.
@@ -481,6 +502,25 @@ impl Eq {
         self.refresh();
     }
 
+    /// Earphone correction, applied before the curve: `(kind, hz, q, gain dB)` per filter (kinds `CORR_*`), up to
+    /// `MAX_CORR`; empty turns it off. Filters above 0.45 x the rate or with a bad Q are skipped. Its boosts count in the headroom.
+    pub fn set_correction(&mut self, filters: &[(u8, f64, f64, f64)]) {
+        self.begin_fade();
+        let mut n = 0;
+        for &(kind, hz, q, db) in filters.iter().take(MAX_CORR) {
+            if !(hz > 10.0 && hz < self.rate * 0.45 && q > 0.05 && q < 20.0 && db.abs() <= 24.0) { continue; }
+            self.chain.corr[n] = match kind {
+                CORR_LSC => low_shelf_q(self.rate, hz, db, q),
+                CORR_HSC => high_shelf_q(self.rate, hz, db, q),
+                _ => peaking_q(self.rate, hz, db, q),
+            };
+            n += 1;
+        }
+        if n != self.chain.corr_n { self.chain.corr_state = [[State::default(); MAX_CORR]; MAX_CH]; }
+        self.chain.corr_n = n;
+        self.refresh();
+    }
+
     /// Exact: everything is lowered by the curve's peak, so the heard balance is the drawn curve. Loud: the default trims.
     pub fn set_exact(&mut self, exact: bool) {
         self.exact = exact;
@@ -498,7 +538,7 @@ impl Eq {
     pub fn set_dry(&mut self, dry: bool) { self.dry = dry; }
 
     fn refresh(&mut self) {
-        self.want_on = self.bands_on || self.chain.bass_on || (self.channels == 2 && (self.width - 1.0).abs() > 0.005);
+        self.want_on = self.bands_on || self.chain.bass_on || self.chain.corr_n > 0 || (self.channels == 2 && (self.width - 1.0).abs() > 0.005);
         if !self.want_on { return; }
         // Peak of the response below and above the split, separately: each half is trimmed only for its own boost.
         let top = self.rate * 0.45;
@@ -850,6 +890,34 @@ mod tests {
             assert!(db(amp_at(&r, hz, rate) / amp_at(&ir, hz, rate)).abs() < 0.2, "{hz} right");
         }
         let _ = ir;
+    }
+
+    #[test]
+    fn correction_follows_its_filters_and_turns_off_cleanly() {
+        // A peak, a low shelf and a high shelf: the response at their centres matches the RBJ shapes.
+        let mut e = Eq::new(48000, 2);
+        e.set_correction(&[(CORR_PK, 244.0, 1.21, 4.9), (CORR_LSC, 105.0, 0.7, 4.2), (CORR_HSC, 10000.0, 0.7, -3.8)]);
+        let pk = peaking_q(48000.0, 244.0, 4.9, 1.21);
+        let ls = low_shelf_q(48000.0, 105.0, 4.2, 0.7);
+        let hs = high_shelf_q(48000.0, 10000.0, -3.8, 0.7);
+        for hz in [30.0, 105.0, 244.0, 1000.0, 10000.0, 16000.0] {
+            let want = mag_db(&pk, 48000.0, hz) + mag_db(&ls, 48000.0, hz) + mag_db(&hs, 48000.0, hz);
+            assert!((e.response_db(hz) - want).abs() < 1e-9, "{hz}");
+        }
+        assert!(e.response_db(20.0) > 3.9 && e.response_db(16000.0) < -3.5);
+        // Bad filters are skipped, empty switches it off and the output is untouched again.
+        e.set_correction(&[(CORR_PK, 30000.0, 1.0, 3.0), (CORR_PK, 1000.0, 0.0, 3.0)]);
+        assert!(e.response_db(1000.0).abs() < 1e-9);
+        let mut a = sine(48000.0, 440.0, 0.3, 9600);
+        e.set_correction(&[(CORR_PK, 1000.0, 1.0, 3.0)]);
+        e.process(&mut a);
+        e.set_correction(&[]);
+        let mut fade = sine(48000.0, 440.0, 0.3, 4800);
+        e.process(&mut fade);
+        let mut b = sine(48000.0, 440.0, 0.3, 4800);
+        let c = b.clone();
+        e.process(&mut b);
+        assert_eq!(b, c);
     }
 
     #[test]

@@ -403,6 +403,8 @@ class AndroidPlayerEngine : PlayerEngine {
 
     override fun setStereoWidth(width: Float) { PlaybackCore.width = width }
 
+    override fun setEarphoneCorrection(text: String?) { PlaybackCore.correction = text?.let { CorrectionProfile.parseParametric(it) } }
+
     override fun setEqualizer(gainsDb: List<Float>?) {
         PlaybackCore.eqGains = gainsDb
         onMain {
@@ -448,6 +450,7 @@ class AndroidPlayerEngine : PlayerEngine {
         val effects = buildList {
             if (eqOn) add(if (PlaybackCore.engineActive) "Equalizer (engine)" else "Equalizer (system)")
             if (eqOn && PlaybackCore.engineActive && PlaybackCore.bassDb >= 0.05f) add("Bass +${"%.1f".format(PlaybackCore.bassDb)} dB")
+            if (PlaybackCore.engineActive && PlaybackCore.correction != null) add("Earphone correction")
             if (PlaybackCore.engineActive && kotlin.math.abs(PlaybackCore.width - 1f) > 0.005f) add("Width ${(PlaybackCore.width * 100).toInt()}%")
             if (PlaybackCore.normalize) add("Normalise")
             if (PlaybackCore.speed != 1f) add("Speed ${PlaybackCore.speed}x")

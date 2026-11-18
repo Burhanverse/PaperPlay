@@ -36,6 +36,8 @@ internal object PlaybackCore {
     @Volatile var dryCompare = false
     /** Stereo width above the bass, 1 = as recorded. */
     @Volatile var width = 1f
+    /** Earphone correction filters, 4 floats each (kind, Hz, Q, dB), or null. */
+    @Volatile var correction: FloatArray? = null
     /** What the Rust engine reads and writes, and its meters, for the output info. Set by the sink wrapper. */
     @Volatile var engineIn: String? = null
     @Volatile var engineOut: String? = null

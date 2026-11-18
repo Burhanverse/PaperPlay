@@ -70,6 +70,47 @@ private fun db(v: Float): String {
 
 private fun hz(f: Int) = if (f >= 1000) "${f / 1000}k" else "$f"
 
+/** Phone engine extras below the equalizer: stereo width and the listening check (exact level, compare with original). */
+@Composable
+internal fun EngineExtras(backend: PlayerControls) {
+    if (!io.max.paperplay.ui.isPhone) return
+    val exact by backend.eqExact.collectAsState()
+    val dry by backend.eqDry.collectAsState()
+    val width by backend.eqWidth.collectAsState()
+    val on by backend.eqOn.collectAsState()
+    val earphone by backend.eqEarphone.collectAsState()
+    SectionLabel("Earphone correction")
+    val names = listOf("None") + io.max.paperplay.player.CorrectionProfile.EARPHONES.keys
+    ChoiceRow(names, earphone.ifEmpty { "None" }, { it }, { backend.setEqEarphone(if (it == "None") "" else it) })
+    Text(
+        "Evens out the earphone's own measured sound (AutoEq). Wired earphones only; choose None for earbuds.",
+        Modifier.padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SectionLabel("Stereo width")
+    Text(
+        "${kotlin.math.round(width * 100).toInt()}%" + when {
+            width > 1.005f -> ", instruments spread further apart; bass stays centred"
+            width < 0.995f -> ", narrower, softer on hard-panned recordings"
+            else -> ", as recorded"
+        },
+        Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+    )
+    androidx.compose.material3.Slider(
+        value = width, onValueChange = { backend.setEqWidth(kotlin.math.round(it * 20) / 20f) }, valueRange = 0.5f..1.6f, steps = 21,
+        enabled = on, modifier = Modifier.padding(horizontal = 20.dp),
+    )
+    SectionLabel("Listening check")
+    SwitchRow(
+        "Exact level", exact, backend::setEqExact, null,
+        if (exact) "Plays the curve as drawn; quieter by the curve's peak, so raise the volume"
+        else "Keeps the music loud; big bass boosts are heard a little smaller than drawn",
+    )
+    SwitchRow(
+        "Compare with original", dry, backend::setEqDry, null,
+        "Plays the untouched sound at the same loudness, so only the tuning differs",
+    )
+}
+
 /** Settings > Listening > Equalizer. Ten bands drawn as a curve you can drag, plus presets. */
 @Composable
 internal fun EqualizerPage(backend: CoreBackend) {
@@ -78,35 +119,7 @@ internal fun EqualizerPage(backend: CoreBackend) {
     val bass by backend.eqBass.collectAsState()
     BitPerfectRow(backend)
     EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
-    if (io.max.paperplay.ui.isPhone) {
-        val exact by backend.eqExact.collectAsState()
-        val dry by backend.eqDry.collectAsState()
-        val width by backend.eqWidth.collectAsState()
-        val on by backend.eqOn.collectAsState()
-        SectionLabel("Stereo width")
-        Text(
-            "${kotlin.math.round(width * 100).toInt()}%" + when {
-                width > 1.005f -> ", instruments spread further apart; bass stays centred"
-                width < 0.995f -> ", narrower, softer on hard-panned recordings"
-                else -> ", as recorded"
-            },
-            Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
-        )
-        androidx.compose.material3.Slider(
-            value = width, onValueChange = { backend.setEqWidth(kotlin.math.round(it * 20) / 20f) }, valueRange = 0.5f..1.6f, steps = 21,
-            enabled = on, modifier = Modifier.padding(horizontal = 20.dp),
-        )
-        SectionLabel("Listening check")
-        SwitchRow(
-            "Exact level", exact, backend::setEqExact, null,
-            if (exact) "Plays the curve as drawn; quieter by the curve's peak, so raise the volume"
-            else "Keeps the music loud; big bass boosts are heard a little smaller than drawn",
-        )
-        SwitchRow(
-            "Compare with original", dry, backend::setEqDry, null,
-            "Plays the untouched sound at the same loudness, so only the tuning differs",
-        )
-    }
+    EngineExtras(backend)
 }
 
 @Composable

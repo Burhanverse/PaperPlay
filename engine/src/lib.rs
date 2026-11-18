@@ -104,6 +104,18 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setBass(_env: J
     if let Some(eq) = eq(handle) { eq.set_bass(db); }
 }
 
+/// Earphone correction: `filters` holds 4 floats per filter (kind 0 peak / 1 low shelf / 2 high shelf, Hz, Q, gain dB);
+/// an empty array turns it off.
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setCorrection(env: JNIEnv, _c: JClass, handle: jlong, filters: JFloatArray) {
+    let Some(eq) = eq(handle) else { return };
+    let n = env.get_array_length(&filters).unwrap_or(0).max(0) as usize;
+    let mut v = vec![0f32; n];
+    if env.get_float_array_region(&filters, 0, &mut v).is_err() { v.clear(); }
+    let f: Vec<(u8, f64, f64, f64)> = v.chunks_exact(4).map(|c| (c[0] as u8, c[1] as f64, c[2] as f64, c[3] as f64)).collect();
+    eq.set_correction(&f);
+}
+
 /// Stereo width above 180 Hz, 0.5 to 1.6 (1 = as recorded).
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setWidth(_env: JNIEnv, _c: JClass, handle: jlong, w: jni::sys::jfloat) {
