@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
@@ -92,6 +93,8 @@ class ListActions(
     val setPinned: (SongUi, Boolean) -> Unit = { _, _ -> },
     val deleteSong: (SongUi) -> Unit = {},
     val deleteSongs: (List<SongUi>) -> Unit = {},
+    /** Copies songs into the main chat, so the bots can read them. */
+    val copyToChat: (List<SongUi>) -> Unit = {},
 )
 
 internal fun ListActions.rowActions(onRemove: ((SongUi) -> Unit)? = null) = object : SongActions {
@@ -203,6 +206,10 @@ fun SongList(
                         songsPicked.forEach { actions.setFavorite(it, makeFavorite) }
                         selection = Selection()
                     }) { AppIcon(Icons.Rounded.FavoriteBorder, "Favorite picked") }
+                    IconButton(onClick = {
+                        actions.copyToChat(shown.filter { it.id in picked })
+                        selection = Selection()
+                    }) { AppIcon(Icons.Rounded.ContentCopy, "Copy to chat") }
                     IconButton(onClick = { confirmBulkDelete = true }) {
                         AppIcon(Icons.Rounded.Delete, "Delete from Telegram", tint = MaterialTheme.colorScheme.error)
                     }
@@ -334,7 +341,13 @@ fun SongList(
         if (confirmBulkDelete) androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmBulkDelete = false },
             title = { Text("Delete ${picked.size} ${if (picked.size == 1) "song" else "songs"} from Telegram?") },
-            text = { Text("They are removed from your main chat and from this library. Repeats of the same files in that chat go too. Progress shows on the Tasks page. This cannot be undone.") },
+            text = {
+                val onlyLocal = shown.filter { it.id in picked }.all { it.botCantReach }
+                Text(
+                    if (onlyLocal) "They are only in this library, not in Telegram, so nothing is deleted there. This cannot be undone."
+                    else "They are removed from your main chat and from this library. Repeats of the same files in that chat go too. Progress shows on the Tasks page. This cannot be undone.",
+                )
+            },
             confirmButton = {
                 TextButton({
                     confirmBulkDelete = false
@@ -356,6 +369,21 @@ fun SongList(
                         onClick = { onlyUnreachable = !onlyUnreachable; sortSheet = false },
                         label = { Text("Only songs the bot can't reach (${songs.count { it.botCantReach }})") },
                     )
+                    // Songs the bot cannot read are removed from the library unless they are the only copy: pick them here, then delete the
+                    // duplicates (the same song is already in your chat) or copy the rest to the chat first.
+                    val unreachable = songs.filter { it.botCantReach }
+                    TextButton(
+                        onClick = { selection = Selection(unreachable.mapTo(HashSet()) { it.id }); sortSheet = false },
+                        enabled = unreachable.isNotEmpty(), modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Select songs the bot can't read (${unreachable.size})", Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start) }
+                    val readable = songs.filter { !it.botCantReach }.groupBy { io.max.paperplay.core.integrations.looseTitleKey(it.title, it.artist) }
+                    val duplicates = unreachable.filter { u ->
+                        readable[io.max.paperplay.core.integrations.looseTitleKey(u.title, u.artist)].orEmpty().any { kotlin.math.abs(it.durationSec - u.durationSec) <= 3 }
+                    }
+                    TextButton(
+                        onClick = { selection = Selection(duplicates.mapTo(HashSet()) { it.id }); sortSheet = false },
+                        enabled = duplicates.isNotEmpty(), modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Select only those already in your chat (${duplicates.size})", Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start) }
                     Text("Sort songs", style = MaterialTheme.typography.titleLarge)
                     SongSort.entries.forEach { option ->
                         TextButton(

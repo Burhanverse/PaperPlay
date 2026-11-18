@@ -197,6 +197,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 if (real.size < list.size) scope.launch { snack.showSnackbar("Repeated posts are skipped; delete them from the Duplicates page") }
                 if (real.isNotEmpty()) backend.deleteSongs(real.map { it.id }) { m -> scope.launch { snack.showSnackbar(m) } }
             },
+            copyToChat = { list -> backend.copySongsToChat(list.map { it.id }) { m -> scope.launch { snack.showSnackbar(m) } } },
             telegramLink = backend::telegramLink,
             findMetadata = { s -> tagDialogs.match = s },
             editTags = { s -> tagDialogs.tags = s },
