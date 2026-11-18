@@ -2,6 +2,38 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.6] - 2026-11-18
+
+### Other changes
+- Upload: title and artist come from the file's own tags; the sending bot owns the new song ([`80aeb0b`](https://github.com/maxcodl/PaperPlay/commit/80aeb0b7b4c2f86b429b5141a78c1173f5b4c742))
+- Names: Song - Artist file names are swapped back using the artists the library already knows ([`64ca4b4`](https://github.com/maxcodl/PaperPlay/commit/64ca4b4a3fc43a43bb7441eb39aa096cd4fc4d6e))
+- Agents: audio engine layout, tests, clicks, headroom and the path for a new setting ([`16d573f`](https://github.com/maxcodl/PaperPlay/commit/16d573f5fb2a42143d58048b383d5a97b2bdeaf1))
+- Engine: settings per output, dynamic bass, de-esser and crossfeed; checklist ([`7491b9d`](https://github.com/maxcodl/PaperPlay/commit/7491b9d0452db7f1539d0ebaacbab7fcd80ea90a))
+- Agents: rules for wrong tags and checking real data ([`16b39e0`](https://github.com/maxcodl/PaperPlay/commit/16b39e0ae4d451ac96027b69444d400f2a034f84))
+- Agents: measure speed claims, phone and Telegram test rules, line endings, stop builds you started ([`a5a65fa`](https://github.com/maxcodl/PaperPlay/commit/a5a65fa89b330e04f93e39e353dfad573ec1cb60))
+- Readme: Home animation setting, old posts need the account to delete ([`a456659`](https://github.com/maxcodl/PaperPlay/commit/a4566599ea47da5a87bbc9169b17353d99c6b72f))
+- Agents: compile after install, bots delete only recent posts, composition and animation rules ([`185b40d`](https://github.com/maxcodl/PaperPlay/commit/185b40d1e1325b2d6f95f6497cc70b3173797ef8))
+- Checklist: deletes and duplicates, start-up and Home, notifications (18 Nov) ([`40d187c`](https://github.com/maxcodl/PaperPlay/commit/40d187cd6805b8c62a42722fc9b0ce510f838900))
+- Checklist: swapped names and the blank notification ([`4981d7f`](https://github.com/maxcodl/PaperPlay/commit/4981d7f240359a2a8239a20ef772c164c5b446c8))
+- Engine: earphone correction (AutoEq parametric) on the phone, engine extras in the player equalizer ([`59c404a`](https://github.com/maxcodl/PaperPlay/commit/59c404a69c88927741d0e96e178a82a7f1e5ae51))
+- Engine: bass keeps its rumble with less boom, stereo width above the bass, clearer bass and vocal presets ([`c8669da`](https://github.com/maxcodl/PaperPlay/commit/c8669da8611824f132e5b26b77087b02ed744f39))
+- Engine: smooth changes, true-peak ceiling, held bass limiter, exact level mode, level-matched A/B ([`af1374e`](https://github.com/maxcodl/PaperPlay/commit/af1374e95f51416ed4e66b387f9ac02ac7e7ce02))
+- Notifications: the service's own notification no longer counts running tasks ([`59213a7`](https://github.com/maxcodl/PaperPlay/commit/59213a79c8d723ff3ed298b8688fa373b92e5b5b))
+- Media notification: posted ungrouped so the shade does not draw it as an empty card ([`6e7eb06`](https://github.com/maxcodl/PaperPlay/commit/6e7eb06597690517c1557edc8e0ef665af0d4c4d))
+- Home animation: no tilt (it re-uploaded every cover each frame) and fade per piece ([`bc557cb`](https://github.com/maxcodl/PaperPlay/commit/bc557cb63e9322fecfba486b3ec6d315546e93bd))
+- Home: waits for its data before animating in, no spinner at start, second background deferred; setting to turn the home animation off ([`330a4d4`](https://github.com/maxcodl/PaperPlay/commit/330a4d43180c87a34c70dbb1fc0731d4b786e692))
+- Home: no placeholders, the animation waits for the first frames; the saved page loads beside the backend with one query ([`5af36f1`](https://github.com/maxcodl/PaperPlay/commit/5af36f1332bad5496bbb52f02895b9ac2fea6af5))
+- Names: swapped title and artist tags are fixed, repair runs again ([`2cc4e2d`](https://github.com/maxcodl/PaperPlay/commit/2cc4e2d2f29672579f20fa7b69eee91e6ea86889))
+- Home: placeholders leave at once when the fly-in starts; the first covers no longer wait for the busy main thread ([`4373f9e`](https://github.com/maxcodl/PaperPlay/commit/4373f9e81a7433901513b2ec28e1f4e0bc624db5))
+- Home: wide windows get fixed-width tiles beside a compact recently played row; covers are scaled to the asked size and pre-uploaded off the main thread ([`e4d48d2`](https://github.com/maxcodl/PaperPlay/commit/e4d48d20689c77e5981843543f5858438fc96c6a))
+- Home: last launch's page is drawn at once with its covers; songs, albums and artists are built only when shown; tiles and cards fly in at start ([`e2e2275`](https://github.com/maxcodl/PaperPlay/commit/e2e227562236d332cd6b187b37fd329ee1d91043))
+- Home: the plan no longer waits for the whole library or restarts for weather and taste settings ([`8c1b3db`](https://github.com/maxcodl/PaperPlay/commit/8c1b3dbe7e325aebfed5fecd49f18887a21c929c))
+- Startup: home plan no longer restarts when the scan or covers begin; warm the library and home flows early; update: skip saves the release shown ([`60e9259`](https://github.com/maxcodl/PaperPlay/commit/60e92591d17f3f10309f3ca409f8a9923a5be15d))
+- Home: topic lists built off the main thread, cover queue no longer redraws the shell; duplicates: notice for posts only the account can delete ([`f8df3d6`](https://github.com/maxcodl/PaperPlay/commit/f8df3d6898dda6e704ab4388885571582d735f02))
+- Update: download has timeouts and retries a connect timeout; desktop no longer caches the first dead GitHub address ([`59b2081`](https://github.com/maxcodl/PaperPlay/commit/59b2081b90fac54378ec2e96dfb55f1cab1a7ca2))
+
+**Full changes:** [v1.9.5...v1.9.6](https://github.com/maxcodl/PaperPlay/compare/v1.9.5...v1.9.6)
+
 ## [1.9.5] - 2026-11-17
 
 ### Improved
