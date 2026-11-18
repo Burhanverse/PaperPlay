@@ -62,7 +62,8 @@ class KeepAliveService : Service() {
         /** Redraws the notification with the current activity. Does nothing while the service is off. */
         fun update(context: Context, title: String, text: String, progress: Int?, max: Int?, indeterminate: Boolean) {
             // Off ("keep running" is not chosen): the notification is still shown while there is work, as an ordinary one that can be swiped away.
-            val idleText = text == "Everything is up to date" || text == "Connecting to Telegram"
+            // The per-task notifications show the work, so the service's own line is shown only when it has to be (keep running on).
+            val idleText = text == "Everything is up to date" || text == "Connecting to Telegram" || text == "Working in the background"
             if (!running && idleText) { clear(context); return }
             val key = listOf(title, text, progress, max, indeterminate)
             val now = android.os.SystemClock.elapsedRealtime()

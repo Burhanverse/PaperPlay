@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
                         if (idleSince == 0L) idleSince = now
                         if (now - idleSince >= 5 * 60_000L) KeepAliveService.stop(applicationContext)
                     }
-                    // Each running task is its own notification with its own bar; the service's own notification only counts them.
+                    // Each running task is its own notification with its own bar; the service's own notification says nothing about them.
                     val jobs = buildList {
                         scan?.let { add(KeepAliveJob(1, "Library scan", it.text, it.fraction?.let { f -> (f * 1000).toInt() }, it.fraction?.let { 1000 })) }
                         enrich?.let { add(KeepAliveJob(2, "Looking up song info", "${it.done} of ${it.total}" + if (it.current.isNotBlank()) " - ${it.current}" else "", if (it.total > 0) it.done else null, if (it.total > 0) it.total else null)) }
@@ -149,7 +149,7 @@ class MainActivity : ComponentActivity() {
                     KeepAliveService.updateJobs(applicationContext, jobs)
                     when {
                         error != null -> KeepAliveService.update(applicationContext, "Paper Play is running", error, null, null, false)
-                        jobs.isNotEmpty() -> KeepAliveService.update(applicationContext, "Paper Play is working", if (jobs.size == 1) "1 task running" else "${jobs.size} tasks running", null, null, false)
+                        jobs.isNotEmpty() -> KeepAliveService.update(applicationContext, "Paper Play is running", "Working in the background", null, null, false)
                         !ready -> KeepAliveService.update(applicationContext, "Paper Play is running", "Connecting to Telegram", null, null, true)
                         else -> KeepAliveService.update(applicationContext, "Paper Play is running", "Everything is up to date", null, null, false)
                     }
