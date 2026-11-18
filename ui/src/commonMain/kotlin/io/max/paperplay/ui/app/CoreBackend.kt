@@ -1293,6 +1293,19 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         scope.launch(Dispatchers.IO) { runCatching { chatIndex.indexChat(chat) }.onFailure { onError(it.message ?: "Indexing failed") } }
     }
 
+    /** Removes library-only songs whose post was deleted from Telegram (checked with your account); the rest stay. */
+    fun clearDeletedLibraryOnly(say: (String) -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            say("Checking songs the bot can't reach")
+            val (removed, kept, unchecked) = runCatching { chatIndex.clearDeletedLibraryOnly() }.getOrElse { say("Could not check: ${it.message}"); return@launch }
+            say(buildString {
+                append("Removed $removed deleted songs")
+                if (kept > 0) append(", $kept still exist in Telegram and stay")
+                if (unchecked > 0) append(", $unchecked could not be checked (log in your account and try again)")
+            })
+        }
+    }
+
     /** Copies songs into the main chat so the bots can read them. Songs already there are skipped; a failed copy leaves the song as it was. */
     fun copySongsToChat(ids: Collection<String>, say: (String) -> Unit) {
         val list = ids.mapNotNull { byId[it] }
@@ -1301,9 +1314,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             val rate = (repo.pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)
             say("Copying ${list.size} songs to your main chat")
             var last = Triple(0, 0, null as String?)
+            var total = 0
             try {
-                chatIndex.copySongsToMain(list, 60_000L / rate, { false }) { ok, bad, _, why -> last = Triple(ok, bad, why) }
-                say(if (last.second == 0) "Copied ${last.first} to your main chat" else "Copied ${last.first}, ${last.second} failed. ${last.third.orEmpty()}")
+                chatIndex.copySongsToMain(list, 60_000L / rate, { false }) { ok, bad, all, why -> last = Triple(ok, bad, why); total = all }
+                say(when {
+                    total == 0 -> "Nothing to copy: these songs are already in your main chat and readable"
+                    last.second == 0 -> "Copied ${last.first} to your main chat"
+                    else -> "Copied ${last.first}, ${last.second} failed. ${last.third.orEmpty()}"
+                })
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
