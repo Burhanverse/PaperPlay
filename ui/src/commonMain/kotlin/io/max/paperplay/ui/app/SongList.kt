@@ -71,6 +71,10 @@ internal val LocalPageTop = androidx.compose.runtime.staticCompositionLocalOf<an
 val LocalListActions = androidx.compose.runtime.staticCompositionLocalOf<ListActions?> { null }
 
 /** Topics of the main chat and starred channels, as lists to show beside the playlists. Empty where there are none. */
+/** The album and artist lists, built only while a screen collects them. */
+internal val LocalAlbums = androidx.compose.runtime.staticCompositionLocalOf<kotlinx.coroutines.flow.StateFlow<List<io.max.paperplay.ui.state.GroupUi>>> { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }
+internal val LocalArtists = androidx.compose.runtime.staticCompositionLocalOf<kotlinx.coroutines.flow.StateFlow<List<io.max.paperplay.ui.state.GroupUi>>> { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }
+
 internal val LocalTelegramLists = androidx.compose.runtime.staticCompositionLocalOf<() -> List<CoreBackend.TelegramList>> { { emptyList() } }
 
 /** What a list of songs can do; the shell provides one. */

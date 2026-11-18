@@ -299,7 +299,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         backend.services.covers.queued.collect { q -> if (q > 0) saw = true else if (saw) coversStarting = false }
     }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(10_000); coversStarting = false }
-    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalTelegramLists provides remember(telegramState) { { telegramState.value } }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput) { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } } }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalAlbums provides backend.albums, LocalArtists provides backend.artists, LocalTelegramLists provides remember(telegramState) { { telegramState.value } }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput) { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } } }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
@@ -505,8 +505,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                     PlaylistsTab(lib.playlists, favorites, recents, pad, { d2 -> navigate { detail = d2 } }, { newPlaylist = true },
                                         { navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("spotify") } })
                                 }
-                                k.page == "albums" -> Column { TopBar("Albums"); GroupGrid(lib.albums, pad, "No albums yet.") { g -> navigate { detail = Detail.Album(g.name, g.owner) } } }
-                                k.page == "artists" -> Column { TopBar("Artists"); GroupList(lib.artists, pad, "No artists yet.", circle = true) { g -> navigate { detail = Detail.Artist(g.name) } } }
+                                k.page == "albums" -> Column { TopBar("Albums"); GroupGrid(LocalAlbums.current.collectAsState().value, pad, "No albums yet.") { g -> navigate { detail = Detail.Album(g.name, g.owner) } } }
+                                k.page == "artists" -> Column { TopBar("Artists"); GroupList(LocalArtists.current.collectAsState().value, pad, "No artists yet.", circle = true) { g -> navigate { detail = Detail.Artist(g.name) } } }
                                 k.page == "favorites" -> Column { TopBar("Favorites"); SongList(favorites, currentId, actions, Modifier.fillMaxSize(), pad, empty = "No favorites yet.", listKey = "library:favorites") }
                                 else -> Column { TopBar("Recently played"); SongList(recents, currentId, actions, Modifier.fillMaxSize(), pad, sortable = false, empty = "Nothing played yet.") }
                             }

@@ -177,8 +177,8 @@ fun LibraryScreen(
                 is Load.Error -> Text(s.message, Modifier.padding(24.dp), color = MaterialTheme.colorScheme.error)
                 is Load.Ready -> SongList(s.value, currentId, actions, Modifier.fillMaxSize(), bottomPadding, empty = "No songs yet. Add a chat in Settings.", listKey = "library:songs")
             }
-            1 -> GroupGrid(lib.albums, bottomPadding, "No albums yet.") { onOpen(Detail.Album(it.name, it.owner)) }
-            2 -> GroupList(lib.artists, bottomPadding, "No artists yet.", circle = true) { onOpen(Detail.Artist(it.name)) }
+            1 -> GroupGrid(LocalAlbums.current.collectAsState().value, bottomPadding, "No albums yet.") { onOpen(Detail.Album(it.name, it.owner)) }
+            2 -> GroupList(LocalArtists.current.collectAsState().value, bottomPadding, "No artists yet.", circle = true) { onOpen(Detail.Artist(it.name)) }
             3 -> PlaylistsTab(lib.playlists, favorites, recents, bottomPadding, onOpen, onNewPlaylist, onImportSpotify)
             else -> SongList(favorites, currentId, actions, Modifier.fillMaxSize(), bottomPadding, empty = "No favorites yet.", listKey = "library:favorites")
         }

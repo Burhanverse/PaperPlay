@@ -104,8 +104,6 @@ sealed interface Load<out T> {
 
 data class LibraryUi(
     val songs: Load<List<SongUi>> = Load.Loading,
-    val albums: List<GroupUi> = emptyList(),
-    val artists: List<GroupUi> = emptyList(),
     val playlists: List<GroupUi> = emptyList(),
 )
 

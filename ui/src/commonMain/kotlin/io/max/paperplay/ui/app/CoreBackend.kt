@@ -164,15 +164,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 }
             }
             byGroupKey = groupsByKey
-            LibraryUi(
-                songs = Load.Ready(songs.map(Song::toUi) + repeatPosts(byId)),
-                albums = songs.filter { it.album.isNotBlank() }.groupBy { it.album }.entries.sortedBy { it.key.lowercase() }.flatMap { (name, list) ->
-                    io.max.paperplay.core.library.splitAlbum(list) { it.artist }.map { (owner, part) ->
-                        GroupUi(if (owner == null) name else "$name | $owner", name, albumSubtitle(part), covers(part), owner)
-                    }
-                },
-                artists = artistGroups(songs),
-            )
+            // The rows stay as they are and each song becomes a UI object only when a list asks for it (the ones on screen).
+            LibraryUi(songs = Load.Ready(LazySongs(songs, repeatPosts(byId))))
         },
         repo.playlistSummaries().map { list ->
             list.map { p -> GroupUi(p.id.toString(), p.name, "${p.count} songs", p.covers) }
@@ -185,6 +178,18 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         .catch { emit(LibraryUi(songs = Load.Error(it.message ?: "The library could not be read."))) }
         .flowOn(Dispatchers.Default)
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), LibraryUi())
+
+    /** Albums and artists are grouped only while their tab or page is open. */
+    val albums: StateFlow<List<GroupUi>> = repo.allSongs().map { songs ->
+        songs.filter { it.album.isNotBlank() }.groupBy { it.album }.entries.sortedBy { it.key.lowercase() }.flatMap { (name, list) ->
+            io.max.paperplay.core.library.splitAlbum(list) { it.artist }.map { (owner, part) ->
+                GroupUi(if (owner == null) name else "$name | $owner", name, albumSubtitle(part), covers(part), owner)
+            }
+        }
+    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val artists: StateFlow<List<GroupUi>> = repo.allSongs().map { artistGroups(it) }
+        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Topic and starred-channel lists, rebuilt after the library is (it groups every song, so never on the main thread). */
     val telegram: StateFlow<List<TelegramList>> = library.map { telegramLists() }.conflate()
@@ -730,6 +735,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** The daily mixes last shown: a plan that comes back empty (a partly loaded library, a failed build) must not take them away. */
     @Volatile private var lastMixes: List<DailyMix> = emptyList()
     private fun sizeBucket(n: Int) = if (n < 200) n else 200 + n / 100
+    private fun saveHome(plan: io.max.paperplay.core.recs.HomeMix, mixes: List<DailyMix>) {
+        runCatching { repo.setPref(HomeSnapshot.PREF, HomeSnapshot.encode(plan, mixes)) }
+    }
+
     private val homePlan: Flow<HomePlanState> = combine(
         repo.allSongs(), repo.recents(30), repo.favorites(), repo.playlistSummaries(),
         combine(taste, weather, services.scanner.progress.map { it != null }, services.covers.queued.map { it > 0 }) { t, w, scanning, covering ->
@@ -765,7 +774,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             // Only now does the next plan wait: a first plan cut short by the scan or the covers starting used to delay its own redo by 2 s.
             homePlanned = true
             // Tiles and shelves show at once; the slower daily mixes join when they are ready.
-            if (!input.taste.showMixes) { emit(HomePlanState(plan = plan)); return@transformLatest }
+            if (!input.taste.showMixes) { emit(HomePlanState(plan = plan)); saveHome(plan, emptyList()); return@transformLatest }
             // Saved mixes show at once, even from an older day or library; fresh ones replace them when computed.
             val votes = runCatching { io.max.paperplay.core.recs.MoodVotes.verdicts(repo.repo, input.songs) }.getOrDefault(emptyList())
             val mixKey = "${now.dayKey}:${sizeBucket(input.songs.size)}:${input.favorites.size}:${input.taste.at}:${input.weather}:${votes.size}:${services.moodScanner.scanned / 50}"
@@ -773,6 +782,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             val shown = cached?.second.orEmpty().ifEmpty { lastMixes }
             if (shown.isNotEmpty()) lastMixes = shown
             emit(HomePlanState(plan = plan, mixes = shown))
+            saveHome(plan, shown)
             if (cached != null && cached.first == mixKey && cached.second.isNotEmpty()) return@transformLatest
             // Building mixes is heavy: not while the library is scanning or covers are loading.
             if (input.busy) return@transformLatest
@@ -786,36 +796,65 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             val mixes = daily.ifEmpty { shown }
             if (mixes.isNotEmpty()) lastMixes = mixes
             emit(HomePlanState(plan = plan, mixes = mixes))
+            saveHome(plan, mixes)
         }
 
-    val home: StateFlow<HomeUi> = combine(repo.allSongs(), homePlan) { songs, state ->
-        val plan = state.plan ?: return@combine HomeUi()
-        val freshById = songs.associateBy { it.unique_id }
-        fun fresh(s: Song) = freshById[s.unique_id] ?: s
+    private fun buildHomeUi(plan: io.max.paperplay.core.recs.HomeMix, mixList: List<DailyMix>, fresh: (Song) -> Song): HomeUi {
         fun coverOf(lead: Song, groupSongs: List<Song>): String? {
             val f = fresh(lead)
             return f.cover_path
                 ?: groupSongs.firstNotNullOfOrNull { it.cover_path }
         }
-        HomeUi(
+        return HomeUi(
             tiles = plan.tiles.map { t ->
-                val ts = t.songs.map(::fresh)
+                val ts = t.songs.map(fresh)
                 CollectionUi(t.title, t.title, "${ts.size} songs", coverOf(t.cover, ts), ts.map(Song::toUi))
             },
             shelves = plan.shelves.map { s ->
                 val kind = when (s.kind) { ShelfKind.SONGS -> ShelfKindUi.Songs; ShelfKind.ALBUMS -> ShelfKindUi.Albums; ShelfKind.ARTISTS -> ShelfKindUi.Artists }
-                val ss = s.songs.map(::fresh)
+                val ss = s.songs.map(fresh)
                 ShelfUi(s.title, kind, ss.map(Song::toUi), s.groups.map { g ->
-                    val gs = g.songs.map(::fresh)
+                    val gs = g.songs.map(fresh)
                     val sub = if (kind == ShelfKindUi.Albums) fresh(g.cover).artist else "${gs.size} songs"
                     CollectionUi(g.name, g.name, sub, coverOf(g.cover, gs), gs.map(Song::toUi))
                 })
             },
-            mixes = state.mixes.map { m ->
-                val ms = m.songs.map(::fresh)
+            mixes = mixList.map { m ->
+                val ms = m.songs.map(fresh)
                 CollectionUi(m.mood.id, m.title, ms.take(3).joinToString(", ") { it.artist }, null, ms.map(Song::toUi), covers(ms))
             },
         )
+    }
+
+    private val homeLive: Flow<HomeUi> = combine(repo.allSongs(), homePlan) { songs, state ->
+        val plan = state.plan ?: return@combine HomeUi()
+        val freshById = songs.associateBy { it.unique_id }
+        buildHomeUi(plan, state.mixes) { freshById[it.unique_id] ?: it }
+    }
+
+    /** Set once the real plan has produced a page, so a saved page that is still loading never replaces it. */
+    @Volatile private var homeIsLive = false
+
+    /** The page saved at the last launch, with its covers decoded first so it is drawn complete. Null when none is saved. */
+    private suspend fun savedHome(): HomeUi? {
+        val (plan, mixes) = HomeSnapshot.decode(repo.pref(HomeSnapshot.PREF)) { repo.songByUniqueId(it) } ?: return null
+        val lead = buildList {
+            plan.tiles.forEach { add(it.cover); addAll(it.songs.take(1)) }
+            plan.shelves.forEach { sh -> addAll(sh.songs.take(8)); sh.groups.take(8).forEach { add(it.cover) } }
+            mixes.forEach { addAll(it.songs.take(4)) }
+        }.distinctBy { it.unique_id }
+        services.covers.prioritize(lead)
+        kotlinx.coroutines.coroutineScope {
+            launch { SharedCovers.loader.preloadAndWait(plan.tiles.mapNotNull { it.cover.cover_path }, 160, 600) }
+            launch { SharedCovers.loader.preloadAndWait(lead.mapNotNull { it.cover_path }, 512, 600) }
+        }
+        return buildHomeUi(plan, mixes) { it }
+    }
+
+    val home: StateFlow<HomeUi> = kotlinx.coroutines.flow.channelFlow {
+        // Last launch's page first (in parallel with the real plan), unless the real one got there before it.
+        launch { runCatching { savedHome() }.getOrNull()?.let { if (!homeIsLive) send(it) } }
+        homeLive.collect { homeIsLive = true; send(it) }
     }
         .catch { emit(HomeUi()) }
         .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), HomeUi())
@@ -829,8 +868,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         scope.launch {
             kotlinx.coroutines.withTimeoutOrNull(12_000) {
                 kotlinx.coroutines.coroutineScope {
-                    launch { library.first { it.songs !is Load.Loading } }
                     launch { home.first { it.shelves.isNotEmpty() || it.tiles.isNotEmpty() } }
+                    launch { library.first { it.songs !is Load.Loading } }
                     launch { favorites.first(); recents.first() }
                     launch { telegram.first() }
                 }
@@ -1388,6 +1427,22 @@ private fun <T> groups(songs: List<Song>, key: (Song) -> String, make: (String, 
         .sortedBy { it.key.lowercase() }.map { make(it.key, it.value) }
 
 /** One group per artist: a song credited to several artists is in each of their groups. */
+/**
+ * The library's songs as a list whose items are turned into UI objects the first time they are read, so a long list costs only
+ * what is on screen (plus whatever a search or sort touches). Two lists are equal only if they are the same object, so comparing
+ * one library with the next never reads every song.
+ */
+internal class LazySongs(private val rows: List<Song>, private val extra: List<SongUi>) : AbstractList<SongUi>(), RandomAccess {
+    private val made = arrayOfNulls<SongUi>(rows.size)
+    override val size get() = rows.size + extra.size
+    override fun get(index: Int): SongUi {
+        if (index >= rows.size) return extra[index - rows.size]
+        return made[index] ?: rows[index].toUi().also { made[index] = it }
+    }
+    override fun equals(other: Any?) = this === other
+    override fun hashCode() = System.identityHashCode(this)
+}
+
 private fun artistGroups(songs: List<Song>): List<GroupUi> {
     val byName = LinkedHashMap<String, Pair<String, MutableList<Song>>>()
     for (s in songs) {

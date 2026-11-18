@@ -115,8 +115,12 @@ fun HomeScreen(
     // A plan that never comes (nothing to plan) must not keep the placeholders for good.
     var waited by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(4_000); waited = true }
-    val skeleton = (lib.songs is Load.Loading || planning) && !waited
+    // A page already on hand (last launch's, or the real one) is shown at once, whether or not the library has finished loading.
+    val hasPlan = home.tiles.isNotEmpty() || home.shelves.isNotEmpty()
+    val skeleton = !hasPlan && (lib.songs is Load.Loading || planning) && !waited
     val ready = !skeleton
+    // The fly-in plays for what is drawn in the first moments only; anything scrolled into view later just appears.
+    androidx.compose.runtime.LaunchedEffect(ready) { if (ready) { kotlinx.coroutines.delay(2_200); introDone = true } }
     // All the placeholders show first and the whole page fades in once everything is ready, so nothing pops in piece by piece.
     val reveal by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, androidx.compose.animation.core.tween(300), label = "home reveal")
     // One greeting line for both layers, or the two would pick different ones while they cross-fade.
@@ -135,15 +139,16 @@ fun HomeScreen(
     }
     LazyColumn(Modifier.fillMaxSize().graphicsLayer { alpha = reveal }, contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name, message) }
-        if (ready && recentPlayed != null) item(key = "recent_played") { Box(Modifier.staggerIn(0)) { SongShelf(recentPlayed.title, recentPlayed.songs, currentId, actions) } }
+        if (ready && recentPlayed != null) item(key = "recent_played") { Box(Modifier.staggerIn(0)) { SongShelf(recentPlayed.title, recentPlayed.songs, currentId, actions, order = 0) } }
         if (ready && tileRows.isNotEmpty()) item {
             // Each column holds three tiles; two columns fill the screen and the rest wait a swipe away.
             LazyRow(Modifier.staggerIn(1), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(tileRows) { column ->
+                    val columnIndex = tileRows.indexOf(column)
                     Column(Modifier.fillParentMaxWidth(if (tileRows.size > 2) 0.46f else 0.485f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        column.forEach { (g, click) ->
+                        column.forEachIndexed { rowIndex, (g, click) ->
                             Row(
-                                Modifier.fillMaxWidth().height(56.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, appShape(12.dp))
+                                Modifier.fillMaxWidth().height(56.dp).snapIn(columnIndex * 3 + rowIndex, 100).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerHigh, appShape(12.dp))
                                     .clickable(onClick = click),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -159,7 +164,7 @@ fun HomeScreen(
             Column(Modifier.staggerIn(2)) {
                 Section("Your daily mixes")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    items(home.mixes, key = { it.id }) { m -> MixCard(m) { onOpen(Detail.Mix(m.name, m.id, m.songs)) } }
+                    items(home.mixes.size, key = { home.mixes[it].id }) { i -> val m = home.mixes[i]; MixCard(m, Modifier.snapIn(i, 260)) { onOpen(Detail.Mix(m.name, m.id, m.songs)) } }
                 }
             }
         } else if (ready && songs.isNotEmpty()) item {
@@ -193,7 +198,7 @@ fun HomeScreen(
                 }
             }
         }
-        if (ready && recentAdded != null) item(key = "recent_added") { Box(Modifier.staggerIn(5)) { SongShelf(recentAdded.title, recentAdded.songs, currentId, actions) } }
+        if (ready && recentAdded != null) item(key = "recent_added") { Box(Modifier.staggerIn(5)) { SongShelf(recentAdded.title, recentAdded.songs, currentId, actions, order = 5) } }
         if (ready && moreCards.isNotEmpty()) item(key = "more_for_you") {
             Column(Modifier.staggerIn(6)) {
                 Section("More for you")
@@ -221,6 +226,36 @@ private fun Modifier.staggerIn(order: Int): Modifier {
         shown = true
     }
     return graphicsLayer { alpha = p.value; translationY = (1f - p.value) * 24.dp.toPx() }
+}
+
+/** Set when the first moments of the page are over; see [snapIn]. */
+private var introDone = false
+
+/**
+ * The start-up animation: a tile or card flies in from the left, the right or the bottom (by its [index]), tilted, and snaps into
+ * place with a small bounce, one after another from [startMs]. It plays only for what is drawn while the page first appears.
+ */
+@Composable
+private fun Modifier.snapIn(index: Int, startMs: Int): Modifier {
+    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val play = remember { !introDone && !reduce }
+    if (!play) return this
+    val p = remember { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(startMs + index * 55L)
+        p.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow))
+    }
+    val from = index % 3
+    return graphicsLayer {
+        val away = 1f - p.value
+        when (from) {
+            0 -> translationX = -size.width * 1.3f * away
+            1 -> translationX = size.width * 1.3f * away
+            else -> translationY = size.height * 2.2f * away
+        }
+        rotationZ = (from - 1) * 7f * away
+        alpha = (p.value * 4f).coerceIn(0f, 1f)
+    }
 }
 
 private val homeMessages = listOf(
@@ -300,14 +335,14 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
 }
 
 @Composable
-fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: ListActions) {
+fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: ListActions, order: Int = 99) {
     val keys = remember(songs) { songs.map { it.id }.uniqueKeys() }
     Column {
         Section(title)
         LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
             items(songs.size, key = { keys[it] }) { i ->
                 val s = songs[i]
-                MediaCard(s.coverUri, s.id, s.title, s.artist, titleColor = if (s.id == currentId) MaterialTheme.colorScheme.primary else null) { actions.play(songs, i) }
+                MediaCard(s.coverUri, s.id, s.title, s.artist, titleColor = if (s.id == currentId) MaterialTheme.colorScheme.primary else null, modifier = if (order < 99) Modifier.snapIn(i, 120 + order * 70) else Modifier) { actions.play(songs, i) }
             }
         }
     }
@@ -315,9 +350,9 @@ fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: L
 
 /** A cover with a title and subtitle under it; round for artists. */
 @Composable
-fun MediaCard(coverUri: String?, key: String, title: String, subtitle: String?, circle: Boolean = false, titleColor: Color? = null, onClick: () -> Unit) {
+fun MediaCard(coverUri: String?, key: String, title: String, subtitle: String?, circle: Boolean = false, titleColor: Color? = null, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val align = if (circle) Alignment.CenterHorizontally else Alignment.Start
-    Column(Modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp), horizontalAlignment = align) {
+    Column(modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp), horizontalAlignment = align) {
         CoverImage(coverUri, key, size = cardSize, radius = if (circle) cardSize / 2 else 10.dp)
         Text(
             title, Modifier.padding(top = 8.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall,
@@ -344,9 +379,9 @@ private val moodIcons = mapOf(
 
 /** A daily mix: its covers washed in the mood's colour, with its name. */
 @Composable
-private fun MixCard(mix: CollectionUi, onClick: () -> Unit) {
+private fun MixCard(mix: CollectionUi, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val color = moodColors[mix.id] ?: MaterialTheme.colorScheme.primary
-    Column(Modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp)) {
+    Column(modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp)) {
         Box(Modifier.size(cardSize).clip(RoundedCornerShape(10.dp))) {
             CoverGrid(mix.coverUris, mix.id, cardSize, 0.dp)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(color.copy(alpha = 0.35f), color.copy(alpha = 0.95f)))))

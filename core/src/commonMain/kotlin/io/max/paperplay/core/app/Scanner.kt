@@ -84,8 +84,33 @@ fun repairSplitNames(songs: List<Song>): List<Song> = songs.mapNotNull { s ->
     if (s.user_edited) return@mapNotNull null
     val (oldArtist, oldTitle) = parseFileNameFirst(s.file_name)
     val (artist, title) = parseFileName(s.file_name)
-    if ((artist == oldArtist && title == oldTitle) || s.artist != oldArtist || s.title != oldTitle) null
-    else s.copy(artist = artist, title = title, enrich_state = EnrichState.PENDING)
+    if (!((artist == oldArtist && title == oldTitle) || s.artist != oldArtist || s.title != oldTitle))
+        return@mapNotNull s.copy(artist = artist, title = title, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
+    val (fa, ft) = fixSwappedTags(s.file_name, s.artist, s.title)
+    if (fa == s.artist && ft == s.title) null else s.copy(artist = fa, title = ft, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
+}
+
+private fun looseName(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}&,]+"), " ").trim()
+
+/**
+ * Some files carry tags in the wrong places: a name like `Song_Lofi_Artists.flac` tagged title = Artists, artist = Song, or title =
+ * "Lofi - Artists", artist = Song. Returns (artist, title) corrected when the file name starts with the tagged artist and ends with the
+ * tagged title (song first), the name has no " - " and the artist tag looks like a song; otherwise the input unchanged.
+ */
+fun fixSwappedTags(fileName: String, artist: String, title: String): Pair<String, String> {
+    val base = cleanName(fileName)
+    if (artist.isEmpty() || title.isEmpty() || base.contains(" - ")) return artist to title
+    val name = looseName(base)
+    val a = looseName(artist)
+    val sep = title.indexOf(" - ")
+    val tail = looseName(if (sep > 0) title.substring(sep + 3) else title)
+    if (a.length < 3 || tail.length < 3 || !name.startsWith(a) || !name.endsWith(tail) || a == tail) return artist to title
+    if (sep > 0) {
+        val head = title.substring(0, sep).trim()
+        return title.substring(sep + 3).trim() to "$artist ($head)"
+    }
+    if (VERSION_WORD.containsMatchIn(artist) || artist.contains("(From", ignoreCase = true)) return title to artist
+    return artist to title
 }
 
 internal fun JsonObject.obj(k: String) = this[k] as? JsonObject
@@ -129,8 +154,8 @@ fun songFromMessage(message: JsonObject): Song? {
     // Tags that are only the filename split at its first " - " are replaced by the better split.
     val (oldArtist, oldTitle) = parseFileNameFirst(fileName)
     val oldSplit = tag("title") == oldTitle && tag("performer") == oldArtist
-    val title = if (oldSplit) nameTitle else tag("title").ifEmpty { nameTitle }
-    val artist = if (oldSplit) nameArtist else tag("performer").ifEmpty { nameArtist }
+    val (artist, title) = if (oldSplit) nameArtist to nameTitle
+        else fixSwappedTags(fileName, tag("performer").ifEmpty { nameArtist }, tag("title").ifEmpty { nameTitle })
     val size = (file.long("size") ?: 0L).takeIf { it != 0L } ?: file.long("expected_size") ?: 0L
     return Song(
         chat_id = message.long("chat_id") ?: return null,
