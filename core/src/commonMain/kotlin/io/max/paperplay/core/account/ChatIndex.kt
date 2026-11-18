@@ -337,17 +337,32 @@ class ChatIndex(
 
     private fun libraryOnly(): List<Song> {
         val main = mainChat()
-        return library.repo.db.songsQueries.allSongs().executeAsList().filter { it.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE && it.chat_id != main }
+        // Includes posts that sit in the main chat but that no bot can read: copying posts them again from the account, and the old post becomes a repeat.
+        return library.repo.db.songsQueries.allSongs().executeAsList().filter { it.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE }
     }
 
     override fun libraryOnlyCount(): Int = libraryOnly().size
+
+    override suspend fun clearDeletedLibraryOnly(): Triple<Int, Int, Int> {
+        var removed = 0
+        var kept = 0
+        var unchecked = 0
+        for ((chat, rows) in libraryOnly().groupBy { it.chat_id }) {
+            // Only a post Telegram says is gone is removed; if it cannot be asked, the songs stay.
+            val alive = runCatching { account.existingPosts(chat, rows.map { it.message_id }) }.getOrNull()
+            if (alive == null) { unchecked += rows.size; continue }
+            for (r in rows) if (r.message_id in alive) kept++ else { library.removePost(r.chat_id, r.message_id); removed++ }
+        }
+        return Triple(removed, kept, unchecked)
+    }
 
     override suspend fun copyLibraryOnly(delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) =
         copyAll(libraryOnly(), delayMs, paused, onStep)
 
     override suspend fun copySongsToMain(songs: List<Song>, delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) {
         val main = mainChat()
-        copyAll(songs.filter { it.chat_id != main }, delayMs, paused, onStep)
+        // A song whose post is in the main chat and readable needs nothing; one the bot cannot read is posted again by the account.
+        copyAll(songs.filter { it.chat_id != main || it.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE }, delayMs, paused, onStep)
     }
 
     private suspend fun copyAll(todo: List<Song>, delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) {

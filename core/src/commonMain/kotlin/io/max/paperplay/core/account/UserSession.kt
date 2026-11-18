@@ -462,6 +462,8 @@ class UserSession(
     @Volatile var lastDeleteError: String? = null
 
     /** Which of [ids] this account can still see in [chatId]; null when Telegram could not be asked. TDLib answers a delete with ok even for posts it never loaded, so a delete is only believed after this. */
+    override suspend fun existingPosts(chatId: Long, ids: List<Long>): Set<Long>? = existing(chatId, ids)
+
     suspend fun existing(chatId: Long, ids: List<Long>): Set<Long>? = try {
         val c = ready()
         knowChat(c, chatId, loadList = true)

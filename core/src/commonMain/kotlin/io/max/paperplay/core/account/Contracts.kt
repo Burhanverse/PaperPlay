@@ -40,6 +40,9 @@ sealed interface LoginStep {
 
 /** The owner's own Telegram account: login, chat listing, reading songs, copying. Built on its own TDLib client. */
 interface AccountApi {
+    /** Which of [ids] this account can still see in [chatId]; null when Telegram could not be asked. */
+    suspend fun existingPosts(chatId: Long, ids: List<Long>): Set<Long>? = null
+
     /** A line about the last [songsIn] read: posts it skipped because they are not songs, and how many small songs it kept. Empty before a read. */
     val lastReadNotes: String get() = ""
 
@@ -125,6 +128,12 @@ interface ChatIndexApi {
 
     /** Copies [songs] that are not in the main chat into it, like [copyLibraryOnly]. */
     suspend fun copySongsToMain(songs: List<io.max.paperplay.core.library.Song>, delayMs: Long, paused: () -> Boolean, onStep: (Int, Int, Int, String?) -> Unit) {}
+
+    /**
+     * Checks the library-only songs with the account and removes the ones whose post was deleted from Telegram. Returns (removed, still there,
+     * not checked because Telegram could not be asked or the account cannot see that chat). Songs that still exist are left alone.
+     */
+    suspend fun clearDeletedLibraryOnly(): Triple<Int, Int, Int> = Triple(0, 0, 0)
 
     /** Details of an indexed chat, or null when it is not indexed. */
     fun details(chatId: Long): ChatIndexDetails? = null
