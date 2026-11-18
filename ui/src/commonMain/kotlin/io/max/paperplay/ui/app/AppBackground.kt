@@ -71,12 +71,12 @@ private fun CoverWash(coverUri: String?, base: Color, dark: Boolean) {
 @Composable
 private fun CoverBlurLayer(coverUri: String?, base: Color) {
     val loader = LocalCoverLoader.current
-    // A small bitmap stretched to the screen is already soft, which also covers Android below 12 where blur does nothing.
+    // A tiny bitmap stretched to the screen is already soft; the GPU blur filter drew wrong colours on some desktop drivers, so there is none.
     Crossfade(coverUri, Modifier.fillMaxSize(), animationSpec = tween(700), label = "coverBlur") { uri ->
-        val painter = if (uri != null) loader?.painter(uri, 96) else null
+        val painter = if (uri != null) loader?.painter(uri, 24) else null
         if (painter != null) {
             Image(
-                painter, null, Modifier.fillMaxSize().graphicsLayer { scaleX = 1.25f; scaleY = 1.25f }.blur(40.dp),
+                painter, null, Modifier.fillMaxSize().graphicsLayer { scaleX = 1.25f; scaleY = 1.25f },
                 contentScale = ContentScale.Crop,
             )
         }
