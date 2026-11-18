@@ -777,3 +777,9 @@ elease` must say Java 25 and the setup exe must start.
 - [~] The glass nav bar blurs the page colour as well as the page.
 - [~] The Shizuku button finds the app by its launcher entry.
 - [ ] Still open: first screen takes about 400 ms to compose and about 400 ms to draw its first frame (blurred backgrounds); the PC was not run or measured; the glass look beyond the nav bar was not reviewed.
+
+### Uploads, names and desktop layout (18 Nov, later)
+- [~] "Song - Artist" file names are swapped back by `repairSplitNames`: a side already known as an artist from other songs wins (`split_names_v4`). New uploads read the file's own tags first (`Uploader.kt`), so the posted title and artist are right. Phone shows Sickick / Say My Name correctly.
+- [~] A song uploaded by a pool bot is saved at once with that bot as owner (`onSent` in `Uploader`), so it shows without a full bot scan. Songs uploaded before this need one full scan through each bot.
+- [~] Desktop: room for the now playing panel is kept from the first frame (`UiPrefs.songExpected`), so Home no longer re-lays out when the saved song comes back; the now playing view keeps the chosen background instead of a cover-colour wash (only Plain and Cover use the wash). Not seen running after the last change.
+- [ ] Desktop lag: not investigated. Heap cap is 448 MB with serial GC (220-240 MB in use); the first screen took 7-11 s on some cold starts.
