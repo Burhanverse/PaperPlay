@@ -2,6 +2,28 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.12] - 2026-11-19
+
+### Documentation
+- Session status, covers rules, handover rule ([`2d45f7a`](https://github.com/maxcodl/PaperPlay/commit/2d45f7a1de6b3a1b7197afa028de717097d314a9))
+
+### Other changes
+- Mixes: build Home mixes from the recommender (sound groups, right now, new to you, ordered to flow) and remove the old mood mixer ([`c191557`](https://github.com/maxcodl/PaperPlay/commit/c191557623dc3123edc37149271b1511cd4508eb))
+- Covers: remove cover files no song uses any more ([`fd53759`](https://github.com/maxcodl/PaperPlay/commit/fd53759877d24347de46554f798c296b4bfd7e5d))
+- Recs: log every listen with how much was heard, and a recommender that learns from them ([`6a182d5`](https://github.com/maxcodl/PaperPlay/commit/6a182d57398cb609067b405e914fa542722de2d5))
+- Covers: saved at display size, one shared file per picture, existing covers packed once in the background ([`1a3757e`](https://github.com/maxcodl/PaperPlay/commit/1a3757eae9c82c218cf731cc42b85ad9b20491e4))
+- Recs: measure each song's sound (tempo, key, loudness, timbre) in the Rust engine on the phone ([`eeb75b7`](https://github.com/maxcodl/PaperPlay/commit/eeb75b7cdc4a62f2b8aa31acf779b8657ae0abb1))
+- Cache: limit and clear also cover the account's and extra bots' downloads and half-finished files ([`7847eb4`](https://github.com/maxcodl/PaperPlay/commit/7847eb4958a9e466316ee2ef03a1961255cd00b5))
+- Desktop: stereo width and crossfeed in the mpv engine, shown on the PC equalizer page ([`d0234fd`](https://github.com/maxcodl/PaperPlay/commit/d0234fd37dab3ec5c12872ecc11c8bd266c492a1))
+- Lyrics: closest-length timed version first, choose the lyrics writing ([`64a6abe`](https://github.com/maxcodl/PaperPlay/commit/64a6abe28e5cb923ad64e59cd2c230046085a463))
+- Settings: keep running in the background switch on desktop ([`194b81a`](https://github.com/maxcodl/PaperPlay/commit/194b81a43fe708e93cb4b164940d85e5511c1c16))
+- Desktop: option to quit on close instead of the tray; upload skip matches names ignoring case and logs why ([`6e801dc`](https://github.com/maxcodl/PaperPlay/commit/6e801dcad6f1362cf369934ac293ea352c830363))
+- Search: 'title by artist' finds the song ([`d90f6e6`](https://github.com/maxcodl/PaperPlay/commit/d90f6e63d3461e834a97d704e06fefca533c0d2f))
+- Mark a song as recently played after 5 seconds, not when it stops ([`702ad01`](https://github.com/maxcodl/PaperPlay/commit/702ad013e4f1199ed61aed54750415c2d29145a2))
+- Desktop: Listening bit-perfect row is the same switch as the equalizer dialog's ([`67fdb40`](https://github.com/maxcodl/PaperPlay/commit/67fdb40258ec0d62c86e3d0a1dfb93b353bd34bd))
+
+**Full changes:** [v1.9.11...v1.9.12](https://github.com/maxcodl/PaperPlay/compare/v1.9.11...v1.9.12)
+
 ## [1.9.11] - 2026-11-19
 
 ### Other changes
