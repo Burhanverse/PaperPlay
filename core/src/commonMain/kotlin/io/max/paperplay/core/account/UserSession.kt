@@ -451,6 +451,16 @@ class UserSession(
         return path to fileId
     }
 
+    override suspend fun clearDownloads() {
+        val c = client ?: return
+        call(c, request("optimizeStorage") {
+            put("size", 0); put("ttl", 0); put("count", 0); put("immunity_delay", 0)
+            put("file_types", buildJsonArray { add(buildJsonObject { put("@type", "fileTypeAudio") }) })
+            put("chat_ids", buildJsonArray { }); put("exclude_chat_ids", buildJsonArray { })
+            put("return_deleted_file_statistics", false); put("chat_limit", 0)
+        }, 300)
+    }
+
     /** Lets TDLib forget a downloaded file once it has been sent. */
     suspend fun releaseFile(fileId: Int) {
         val c = ready()

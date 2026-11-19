@@ -40,6 +40,9 @@ sealed interface LoginStep {
 
 /** The owner's own Telegram account: login, chat listing, reading songs, copying. Built on its own TDLib client. */
 interface AccountApi {
+    /** Deletes the audio the account downloaded to play songs the bots cannot read. */
+    suspend fun clearDownloads() {}
+
     /** Which of [ids] this account can still see in [chatId]; null when Telegram could not be asked. */
     suspend fun existingPosts(chatId: Long, ids: List<Long>): Set<Long>? = null
 

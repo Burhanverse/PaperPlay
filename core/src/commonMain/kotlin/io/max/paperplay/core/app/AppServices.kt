@@ -631,6 +631,7 @@ class AppServices(
     /** Deletes the audio TDLib downloaded for streaming. Songs download again when played. False when not connected. */
     suspend fun clearDownloads(): Boolean {
         val c = client ?: return false
+        runCatching { account.clearDownloads() }
         c.call(request("optimizeStorage") {
             put("size", 0)
             put("ttl", 0)
