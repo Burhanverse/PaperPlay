@@ -452,6 +452,10 @@ internal fun SettingsPage(
                 var keep by remember { mutableStateOf(pref("keep_running") == "true") }
                 SwitchRow("Keep running in the background", keep, { keep = it; backend.setPref("keep_running", "$it"); env?.setKeepRunning?.invoke(it) },
                     Icons.Rounded.Sync, "Syncing carries on after you leave. A notification shows what the app is doing")
+            } else {
+                var keep by remember { mutableStateOf(pref("keep_running") != "false") }
+                SwitchRow("Keep running in the background", keep, { keep = it; backend.setPref("keep_running", "$it") },
+                    Icons.Rounded.Sync, "The close button hides the window to the tray and music keeps playing. Off: closing quits the app")
             }
             if (env?.permissions != null) NavRow("Permissions", "Notifications, music files, Bluetooth and battery: what is allowed", Icons.Rounded.Security) { stack.add("permissions") }
             NavRow("Connection", "Devices on this network, pairing, addresses and encryption", Icons.Rounded.SettingsEthernet) { stack.add("conn") }
