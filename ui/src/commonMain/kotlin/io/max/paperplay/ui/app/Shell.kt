@@ -215,7 +215,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         val sync = lan
         launch {
             // The sync loop dials an offline paired device every 20 seconds; each device is announced once per run.
-            val announced = mutableSetOf<String>()
+            val announced = announcedConnecting // once per process, so a rebuilt screen does not repeat it
             sync.connecting.collect { now ->
                 now.firstOrNull { announced.add(it) }?.let { name -> launch { waitForQuietStart(); snack.currentSnackbarData?.dismiss(); snack.showSnackbar("Connecting to $name", duration = androidx.compose.material3.SnackbarDuration.Short) } }
             }
@@ -656,3 +656,5 @@ private suspend fun waitForQuietStart() {
     val left = 10_000L - launchMark.elapsedNow().inWholeMilliseconds
     if (left > 0) kotlinx.coroutines.delay(left)
 }
+
+private val announcedConnecting = mutableSetOf<String>()

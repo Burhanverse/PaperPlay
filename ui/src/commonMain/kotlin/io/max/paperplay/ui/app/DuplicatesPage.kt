@@ -65,7 +65,7 @@ private fun dateText(seconds: Long): String {
 
 private fun sizeText(bytes: Long) = "${(bytes * 10 / 1_048_576) / 10.0} MB"
 
-private fun postsOf(g: DuplicateGroup) = listOf(g.keep) + g.others
+private fun postsOf(g: DuplicateGroup) = (listOf(g.keep) + g.others).distinctBy { it.key }
 
 /**
  * One post can sit in two groups (as the copy to keep of an identical-file group, and as a worse file of a same-song group), and a tick

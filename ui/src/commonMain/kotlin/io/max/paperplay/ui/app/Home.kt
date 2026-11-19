@@ -93,8 +93,8 @@ fun HomeScreen(
     // Quick tiles: favorites, every playlist, then generated collections to make at least six. Three stack in a column; swipe sideways for more.
     val tileRows = remember(favorites, lib.playlists, home.tiles, actions) {
         buildList<Pair<GroupUi, () -> Unit>> {
-            if (favorites.isNotEmpty()) add(GroupUi("fav", "Favorites", coverUris = favorites.map { it.coverUri }) to { actions.play(favorites, 0) })
-            lib.playlists.forEach { g -> add(g to { onOpen(Detail.Playlist(g.id, g.name)) }) }
+            if (favorites.isNotEmpty()) add(GroupUi("fav", "Favorites", coverUris = favorites.map { it.coverUri }.shuffled()) to { actions.play(favorites, 0) })
+            lib.playlists.forEach { g -> add(g.copy(coverUris = g.coverUris.shuffled()) to { onOpen(Detail.Playlist(g.id, g.name)) }) }
             home.tiles.take((6 - size).coerceAtLeast(0)).forEach { c -> add(GroupUi(c.id, c.name, coverUris = listOf(c.coverUri)) to { onOpen(Detail.Songs(c.name, c.songs)) }) }
         }.chunked(3)
     }
@@ -127,7 +127,7 @@ fun HomeScreen(
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name, message) }
         if (ready && wide && (recentPlayed != null || tileRows.isNotEmpty())) item(key = "hero") {
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top = 0.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 // Two columns of three tiles, each a set width, so they stay compact however wide the window is.
                 if (tileRows.isNotEmpty()) Row(Modifier.padding(start = 16.dp, top = 44.dp).staggerIn(1), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     tileRows.take(2).forEachIndexed { ci, column ->

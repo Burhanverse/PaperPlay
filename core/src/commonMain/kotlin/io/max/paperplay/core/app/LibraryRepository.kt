@@ -153,7 +153,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         val rows = lists.playlistCoverRows().executeAsList().groupBy { it.playlist_id }
         lists.livePlaylists().executeAsList().map { p ->
             val r = rows[p.id].orEmpty()
-            PlaylistSummary(p.id, p.uuid, p.name, r.size, r.mapNotNull { it.cover_path }.distinct().take(4))
+            PlaylistSummary(p.id, p.uuid, p.name, r.size, r.mapNotNull { it.cover_path }.distinct().take(12))
         }
     }
 
