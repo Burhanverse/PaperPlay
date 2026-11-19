@@ -95,14 +95,34 @@ if (${'$'}d.ShowDialog(${'$'}host1) -eq 'OK') { ${'$'}d.FileName }
             } finally { System.setProperty("apple.awt.fileDialogForDirectories", "false") }
         }
         val script = FOLDER_SCRIPT.replace("__TITLE__", title.replace("'", "''"))
-        return runCatching {
-            val p = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand",
+        val log = io.max.paperplay.player.PlayLog
+        val out = try {
+            val p = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                 java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE)))
                 .redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().readText().lines().lastOrNull { it.isNotBlank() }?.trim()
+            val text = p.inputStream.bufferedReader().readText()
             p.waitFor()
-            out?.takeIf { File(it).isDirectory }?.let(::File)
-        }.getOrNull()
+            text.lines().lastOrNull { it.isNotBlank() }?.trim()
+        } catch (e: Throwable) {
+            log.log("upload", "folder dialog could not start: ${e::class.simpleName} ${e.message}")
+            null
+        }
+        // Blank output is a cancelled dialog; a path is the answer; anything else is an error text from PowerShell.
+        if (out == null || out.isNotEmpty() && !File(out).isDirectory) {
+            if (out != null) log.log("upload", "folder dialog failed: ${out.take(300)}")
+            return swingFolder(title)
+        }
+        return out.takeIf { it.isNotEmpty() }?.let(::File)
+    }
+
+    /** Java's own folder chooser, used when the Windows dialog cannot be shown. */
+    private fun swingFolder(title: String): File? {
+        var result: File? = null
+        javax.swing.SwingUtilities.invokeAndWait {
+            val c = javax.swing.JFileChooser().apply { dialogTitle = title; fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY }
+            if (c.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) result = c.selectedFile
+        }
+        return result
     }
 
     private val FOLDER_SCRIPT = """
