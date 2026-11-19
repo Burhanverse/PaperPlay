@@ -794,3 +794,21 @@ elease` must say Java 25 and the setup exe must start.
 ### Settings pages and stray songs (19 Nov)
 - [~] `SettingsRow` took a trailing lambda as its leading content (parameter order), so arrows sat on the left and icons were dropped on every settings page; fixed. Library and Telegram pages are grouped into cards with labels and dividers (`SettingsSection`, `RowDivider`). Not seen on the phone yet.
 - [~] Settings > Library > Upkeep > Clear deleted songs: the greyed "Bot can't reach" songs are checked with the account and the ones whose post is gone are removed; copy to chat posts them again from the account when they sit in the main chat unreadable.
+
+### Crashes, scan, covers, desktop audio (19-20 Nov)
+- [~] Duplicates page crashed ("Key post:... was already used"): a post listed twice in one group. Keys now include the group and each group lists a post once; the Home "More for you" and Search recent rows are de-duplicated. Not seen again, but not scrolled through every section since.
+- [~] Scan library: the account step now forces a full read of the main chat (`indexChat(full = true)`), so missing songs are added and gone ones pruned. PC checked: 3366 songs against Telegram's 3355 audio + 12 documents. The phone has not been scanned with it.
+- [~] Folder upload on PC: the Windows dialog's answer arrived with PowerShell progress XML after the path, so the app saw "no folder". The path now comes through a UTF-8 file, with a log line "folder dialog closed after ... ms" and a Java chooser fallback. Needs a PC build from v1.9.11 or later, not tried.
+- [~] Toasts: new look and placement (desktop status toast bottom right above the player bar), "connecting" notice once per run. Solid heart beside the song name and in "Made by".
+- [~] Cache: the limit and Clear cache now cover the account's downloads, extra bots' downloads and half-finished files (`optimizeStorage`, every 10 minutes). Clear cache was not pressed on the phone after the change (account folder still 1.3 GB).
+- [~] Covers: saved at most 1000 px, named by content and shared by an album's songs; `packExistingCovers` (once) and `removeUnusedCovers` (each start). Phone: covers 1.0 GB, then 725 MB after the pack, then 220 MB after the cleanup. The "removed unused cover files" log line was not seen. Look through Home, albums and songs for missing covers.
+- [~] PC (mpv engine): crossfeed and stereo width on the equalizer page (`MpvFilters.graph`), tests render real audio and fail without the feature. One **Bit-perfect** switch in the Equalizer dialog and Settings > Listening (the old separate exclusive switch is folded in). Not heard.
+- [~] Search: `title by artist` finds the song.
+- [~] Android and desktop UI: cover outline (pure black or white at 10%), card radius = cover radius + padding.
+- [ ] Match check: verify iTunes/MusicBrainz results (title, artist, duration) before accepting them, and a "weak match" list. 174 songs are unmatched, 181 have no source, and the hand-chosen covers (64) came from wrong matches. Hand-chosen covers must never be overwritten by a lookup; check that path.
+- [ ] Only if still needed: fetch covers from their URL (2,734 of 3,173 have one; 439 do not, 30 hand-chosen are local files) with thumbnails and a limited disk cache.
+- [ ] HRTF headphone surround on both platforms (PC `sofalizer` exists in the shipped libmpv; the phone needs a Rust stage). Needs a SOFA set with a clean licence.
+- [ ] PC: make mpv the default engine when libmpv is present, then remove VLC in a later release. De-esser and dynamic bass are phone only.
+- [ ] CI run 146 on `main`: every build job passed, "Publish release" failed at "Release notes and checksums" (log needed from GitHub).
+- [ ] `RecommenderTest.replay_learns_better_than_a_coin` fails every time (another session's uncommitted recs work, not covers).
+- [ ] Phone and PC library gap: after both scans, compare song counts; clear the deletion record first if the phone is lower.

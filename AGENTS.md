@@ -62,6 +62,11 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Plan and status live in the local `ENGINE_PLAN.md` (ignored); keep `CHECKLIST.md` in step.
 - Desktop: the optional mpv engine uses `libmpv-2.dll` through JNA. LGPL build only (the file name contains `lgpl`), never in git (`desktopApp/src/jvmMain/resources/mpv/`); the Windows CI step pins the build and its SHA-256. VLC stays the default until the mpv engine is proven. Tests use `ao=null` so nothing is played aloud.
 
+## Covers
+- Covers are written only by `CoverService.writeCoverFile`: at most 1000 px, JPEG, named `c_<hash>.jpg` from the bytes, so songs of one album share a file. Never write or delete a cover file anywhere else.
+- A cover file is deleted only when no song's `cover_path` uses it (`coverPathUses`). `packExistingCovers` (once, pref `cover_pack_v1`) and `removeUnusedCovers` (every start, files older than an hour) keep the folder small; they run in the background and log "covers: ..." lines.
+- Backup, restore and sync follow `cover_path`; keep that column and the `covers/` folder, so they need no change.
+
 ## UI
 - Match the neighbours first: copy the row, header, spacing and icon style of the nearest existing screen or list instead of inventing a new one. Reuse the shared composables and theme tokens (`MaterialTheme.colorScheme`, `AppIcon`, `LocalUiPrefs`); no hard-coded colours.
 - Every navigation row, setting and tool has an icon from the Material rounded set, and the same icon means the same thing everywhere.
@@ -86,9 +91,11 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 ## Git
 - Short plain commit messages. No tool or AI mentions, no trailers.
 - Do not push unless told. Pull with `git pull --rebase --autostash origin main` first. Never bump the version by hand; the release bot does.
-- Do not edit files another person or agent is working on; keep them out of your commits.
+- Do not edit files another person or agent is working on; keep them out of your commits. Stage your own files by name; never `git add -A` on a folder another session is changing (a hunk of theirs that depends on an untracked file breaks a clean build).
+- If `git push` is rejected because the release bot pushed, merge `origin/main` into `main` (no rebase and no force), push `main`, then fast-forward `beta`. Push `main` and `beta` one after the other, not at once.
 
 ## Docs
 - Only `README.md`, `CHECKLIST.md`, `CHANGELOG.md` and `AGENTS.md` are tracked `.md` files.
 - Keep `CHECKLIST.md` current: `[x]` seen working, `[~]` built but not tried, `[ ]` open.
 - Local notes (`HANDOVER.md`, `CONTEXT.md`) stay git-ignored.
+- **Report everything to `HANDOVER.md`.** After each set of changes and before you stop, add a dated section there: what changed (commit hashes), what was checked and how (tests run, device or log evidence) and what was not, what is left unpushed, open bugs and their evidence, the exact next steps in order, and anything another session left uncommitted that you did not touch. Another agent must be able to continue from that file alone. Mark `CHECKLIST.md` in step.

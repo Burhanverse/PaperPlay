@@ -32,7 +32,7 @@ Built with Kotlin and Compose Multiplatform.
   copy, asks before it takes subfolders, and skips songs under 2 MB.
 - Reading speed can adjust itself to what Telegram allows (Settings > Library > Speeds). Only a scan you start uses the
   "messages per request" setting; automatic reads stay at 100 ids and at most 50 requests a minute.
-- Search by title, artist, album, genre, year and language (try `japanese`, `hindi`, `lang:tamil`). Albums with the same name
+- Search by title, artist, album, genre, year and language (try `japanese`, `hindi`, `lang:tamil`, or `title by artist`). Albums with the same name
   are split by artist.
 
 **Playing**
@@ -47,10 +47,11 @@ Built with Kotlin and Compose Multiplatform.
   every artist and the album, and an artist page lists every song they are credited on.
 - Android: media notification, **standby mode** (a dark clock screen with the song, a grayscale cover tile and a Lyrics
   style that scrolls several lines with faded edges), volume follows the system volume.
-- Desktop: now playing view, full-screen player, always-on-top mini player, tray menu, media keys, keyboard shortcuts.
+- Desktop: now playing view, full-screen player, always-on-top mini player, tray menu, media keys, keyboard shortcuts. With the optional mpv engine: one **Bit-perfect** switch (exclusive WASAPI output, equalizer and effects bypassed), equalizer, bass, crossfeed and stereo width.
+- The cache limit also covers what your own account and extra bots download, and Clear cache clears all of it.
 
 **Info, covers and mixes**
-- Song info from MusicBrainz, Deezer, iTunes and TheAudioDB, plus tags and covers read from the audio files.
+- Song info from MusicBrainz, Deezer, iTunes and TheAudioDB, plus tags and covers read from the audio files. Covers are saved at display size (at most 1000 px) and shared by the songs of one album, and cover files no song uses are removed.
 - Lyrics from LRCLIB, NetEase, Kugou, QQ Music and lyrics.ovh.
 - Daily mixes, genre and weather mixes, listening statistics, ListenBrainz.
 - Import Spotify playlists (public link, or log in with your own Spotify client id; a logged-in account lists its own
