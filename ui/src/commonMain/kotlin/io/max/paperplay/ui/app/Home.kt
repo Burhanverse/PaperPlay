@@ -366,7 +366,7 @@ fun SongShelf(title: String, songs: List<SongUi>, currentId: String?, actions: L
 @Composable
 fun MediaCard(coverUri: String?, key: String, title: String, subtitle: String?, circle: Boolean = false, titleColor: Color? = null, modifier: Modifier = Modifier, size: Dp = cardSize, onClick: () -> Unit) {
     val align = if (circle) Alignment.CenterHorizontally else Alignment.Start
-    Column(modifier.width(size + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp), horizontalAlignment = align) {
+    Column(modifier.width(size + 16.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(8.dp), horizontalAlignment = align) {
         CoverImage(coverUri, key, size = size, radius = if (circle) size / 2 else 10.dp)
         Text(
             title, Modifier.padding(top = 8.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall,
@@ -395,7 +395,7 @@ private val moodIcons = mapOf(
 @Composable
 private fun MixCard(mix: CollectionUi, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val color = moodColors[mix.id] ?: MaterialTheme.colorScheme.primary
-    Column(modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp)) {
+    Column(modifier.width(cardSize + 16.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(8.dp)) {
         Box(Modifier.size(cardSize).clip(RoundedCornerShape(10.dp))) {
             CoverGrid(mix.coverUris, mix.id, cardSize, 0.dp)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(color.copy(alpha = 0.35f), color.copy(alpha = 0.95f)))))

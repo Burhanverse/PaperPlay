@@ -2,6 +2,9 @@ package io.max.paperplay.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,6 +71,11 @@ fun CoverImage(
         }
         if (painter != null) {
             Image(painter, contentDescription = null, Modifier.size(size).graphicsLayer { alpha = fade.value }, contentScale = ContentScale.Crop, colorFilter = colorFilter)
+        }
+        // A 1dp edge in pure black (light) or white (dark) at 10%, so a cover close to the page colour keeps its outline; tile covers inside a mosaic have none.
+        if (radius > 0.dp) {
+            val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+            Box(Modifier.size(size).border(1.dp, (if (dark) Color.White else Color.Black).copy(alpha = 0.1f), shape))
         }
     }
 }
