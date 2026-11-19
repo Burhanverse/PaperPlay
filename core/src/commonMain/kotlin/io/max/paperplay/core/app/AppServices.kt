@@ -443,6 +443,7 @@ class AppServices(
     private val cachePending = HashMap<String, Pair<Long, Boolean>>()
     private val clockMs = clock
     private var lastEvict = 0L
+    private var lastTrim = 0L
     private var cacheFlushJob: Job? = null
     private val _auth = MutableStateFlow("")
     private val _error = MutableStateFlow<String?>(null)
@@ -632,20 +633,27 @@ class AppServices(
     suspend fun clearDownloads(): Boolean {
         val c = client ?: return false
         runCatching { account.clearDownloads() }
-        c.call(request("optimizeStorage") {
-            put("size", 0)
-            put("ttl", 0)
-            put("count", 0)
-            put("immunity_delay", 0)
-            put("file_types", buildJsonArray { add(buildJsonObject { put("@type", "fileTypeAudio") }) })
-            put("chat_ids", buildJsonArray { })
-            put("exclude_chat_ids", buildJsonArray { })
-            put("return_deleted_file_statistics", false)
-            put("chat_limit", 0)
-        }, 300.seconds)
+        // Extra bots keep their own download folders; the eviction below only looks at the main bot's, so clear theirs here.
+        for (b in botPool.bots.value) botPool.clientOf(b.id)?.let { bc -> runCatching { bc.call(optimizeRequest(0L), 300.seconds) } }
+        c.call(optimizeRequest(0L), 300.seconds)
         driver.execute(null, "UPDATE songs SET cached_bytes = 0 WHERE pinned = 0", 0)
         library.invalidate()
         return true
+    }
+
+    /** TDLib's storage optimizer for audio, documents and the half-finished files in `temp`: keeps at most [size] bytes (0 deletes them all). */
+    private fun optimizeRequest(size: Long) = request("optimizeStorage") {
+        put("size", size)
+        put("ttl", -1)
+        put("count", -1)
+        put("immunity_delay", if (size == 0L) 0 else 600)
+        put("file_types", buildJsonArray {
+            for (t in listOf("fileTypeAudio", "fileTypeDocument", "fileTypeTemporary")) add(buildJsonObject { put("@type", t) })
+        })
+        put("chat_ids", buildJsonArray { })
+        put("exclude_chat_ids", buildJsonArray { })
+        put("return_deleted_file_statistics", false)
+        put("chat_limit", 0)
     }
 
     /** Pins or unpins songs; pinned songs download in full and are never evicted. */
@@ -703,6 +711,14 @@ class AppServices(
         if (now - lastEvict < 60_000L) return
         lastEvict = now
         val limit = library.cacheLimit()
+        // The account's own downloads and the extra bots' are outside the song cache above, so each gets the same limit through TDLib's optimizer (every 10 minutes).
+        if (now - lastTrim > 600_000L) {
+            lastTrim = now
+            scope.launch {
+                runCatching { account.trimDownloads(limit) }
+                for (b in botPool.bots.value) botPool.clientOf(b.id)?.let { bc -> runCatching { bc.call(optimizeRequest(limit), 300.seconds) } }
+            }
+        }
         val rows = library.cachedSongs().filter { !it.pinned }.sortedBy { it.last_played_at ?: 0L }
         var total = rows.sumOf { it.cached_bytes }
         val protected = resolver.activeIds() + batch.keys

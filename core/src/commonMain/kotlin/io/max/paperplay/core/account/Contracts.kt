@@ -42,6 +42,8 @@ sealed interface LoginStep {
 interface AccountApi {
     /** Deletes the audio the account downloaded to play songs the bots cannot read. */
     suspend fun clearDownloads() {}
+    /** Keeps those downloads under [maxBytes]. */
+    suspend fun trimDownloads(maxBytes: Long) {}
 
     /** Which of [ids] this account can still see in [chatId]; null when Telegram could not be asked. */
     suspend fun existingPosts(chatId: Long, ids: List<Long>): Set<Long>? = null

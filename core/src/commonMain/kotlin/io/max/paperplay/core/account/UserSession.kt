@@ -451,11 +451,18 @@ class UserSession(
         return path to fileId
     }
 
-    override suspend fun clearDownloads() {
+    override suspend fun clearDownloads() { optimize(0L) }
+
+    /** Keeps the account's own downloads (songs it plays that no bot can read, and half-finished files) under [maxBytes]. */
+    override suspend fun trimDownloads(maxBytes: Long) { optimize(maxBytes) }
+
+    private suspend fun optimize(size: Long) {
         val c = client ?: return
         call(c, request("optimizeStorage") {
-            put("size", 0); put("ttl", 0); put("count", 0); put("immunity_delay", 0)
-            put("file_types", buildJsonArray { add(buildJsonObject { put("@type", "fileTypeAudio") }) })
+            put("size", size); put("ttl", -1); put("count", -1); put("immunity_delay", if (size == 0L) 0 else 600)
+            put("file_types", buildJsonArray {
+                for (t in listOf("fileTypeAudio", "fileTypeDocument", "fileTypeTemporary")) add(buildJsonObject { put("@type", t) })
+            })
             put("chat_ids", buildJsonArray { }); put("exclude_chat_ids", buildJsonArray { })
             put("return_deleted_file_statistics", false); put("chat_limit", 0)
         }, 300)
