@@ -169,11 +169,15 @@ class CoverService(
         }
         // Covers saved before the display-size change are packed once, well after the app has settled.
         scope.launch {
-            if (repo.pref(PACK_KEY) == "1") return@launch
             delay(startDelayMs + 60_000L)
-            val freed = runCatching { packExistingCovers() }.onFailure { io.max.paperplay.player.PlayLog.log("covers", "packing stopped: ${it.message}") }.getOrNull() ?: return@launch
-            repo.setPref(PACK_KEY, "1")
-            io.max.paperplay.player.PlayLog.log("covers", "packed the saved covers: ${freed / 1_048_576} MB freed")
+            if (repo.pref(PACK_KEY) != "1") {
+                val freed = runCatching { packExistingCovers() }.onFailure { io.max.paperplay.player.PlayLog.log("covers", "packing stopped: ${it.message}") }.getOrNull() ?: return@launch
+                repo.setPref(PACK_KEY, "1")
+                io.max.paperplay.player.PlayLog.log("covers", "packed the saved covers: ${freed / 1_048_576} MB freed")
+            }
+            // Every start: files left behind by replaced covers.
+            val unused = runCatching { removeUnusedCovers() }.getOrDefault(0L)
+            if (unused > 0) io.max.paperplay.player.PlayLog.log("covers", "removed unused cover files: ${unused / 1_048_576} MB freed")
         }
     }
 
@@ -783,6 +787,24 @@ class CoverService(
             if (!Fs.exists(path)) Fs.write(path, data)
             path
         }.getOrNull()
+    }
+
+    /**
+     * Deletes cover files no song points at (old versions left behind when a cover was replaced). A file younger than an hour is left,
+     * since a cover may be written just before its song is updated. Returns the bytes freed.
+     */
+    suspend fun removeUnusedCovers(nowMs: Long = clock(), minAgeMs: Long = 3_600_000L): Long {
+        val used = runCatching { repo.distinctCoverPaths() }.getOrNull()?.map { it.replace(Char(92), '/') }?.toSet() ?: return 0L
+        var freed = 0L
+        for ((path, modified) in CoverImages.listFiles(coversDir())) {
+            if (path in used || nowMs - modified < minAgeMs) continue
+            kotlinx.coroutines.yield()
+            val size = runCatching { Fs.size(path) }.getOrDefault(0L)
+            // Checked again right before the delete: a song may have taken this file in the meantime.
+            if (runCatching { repo.coverPathUses(path) }.getOrDefault(1L) != 0L) continue
+            if (runCatching { Fs.deleteRecursively(path); true }.getOrDefault(false)) freed += size
+        }
+        return freed
     }
 
     /**

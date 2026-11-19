@@ -501,4 +501,26 @@ class ScannerAndCoverTest {
         assertEquals(0L, runBlocking { covers.packExistingCovers() })
         assertEquals(p1, repo.songByUniqueId("u1")!!.cover_path)
     }
+
+    @Test
+    fun `unused cover files are removed, but a used one and a fresh one stay`() {
+        val (db, repo) = newRepo()
+        val dataDir = Files.createTempDirectory("pp-prune").toFile().apply { deleteOnExit() }.absolutePath
+        val dir = File(dataDir, "covers").apply { mkdirs() }
+        val now = System.currentTimeMillis()
+        fun file(name: String, ageMs: Long) = File(dir, name).apply { writeBytes(ByteArray(1000)); setLastModified(now - ageMs) }
+        val used = file("c_used.jpg", 5 * 3_600_000L)
+        val oldUnused = file("AgAD_old_1.jpg", 5 * 3_600_000L)
+        val freshUnused = file("AgAD_new_2.jpg", 60_000L)
+        insertSong(db, 1)
+        repo.updateCover(uniqueId = "u1", coverPath = used.path, notify = false)
+        val covers = CoverService(dataDir = dataDir, td = { null }, repo = repo, http = object : HttpFetcher { override suspend fun send(request: HttpRequest): HttpResponse = HttpResponse(404, emptyMap(), ByteArray(0)) }, scope = scope, maxWorkers = 1, requestPauseMs = 0L, backgroundPauseMs = 0L, debounceMs = 0L)
+
+        val freed = runBlocking { covers.removeUnusedCovers(nowMs = now) }
+
+        assertTrue(used.exists(), "a cover a song uses must stay")
+        assertTrue(freshUnused.exists(), "a file written in the last hour is left alone")
+        assertTrue(!oldUnused.exists(), "an old file no song uses is removed")
+        assertEquals(1000L, freed)
+    }
 }

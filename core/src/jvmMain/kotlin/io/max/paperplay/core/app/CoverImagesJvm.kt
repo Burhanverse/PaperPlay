@@ -32,4 +32,7 @@ actual object CoverImages {
     }.getOrNull()
 
     actual fun readFile(path: String): ByteArray? = runCatching { File(path).readBytes() }.getOrNull()
+
+    actual fun listFiles(dir: String): List<Pair<String, Long>> =
+        File(dir).listFiles().orEmpty().filter { it.isFile }.map { it.path.replace(java.io.File.separatorChar, '/') to it.lastModified() }
 }

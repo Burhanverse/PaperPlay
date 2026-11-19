@@ -10,6 +10,9 @@ expect object CoverImages {
 
     /** The whole file, or null when it cannot be read. */
     fun readFile(path: String): ByteArray?
+
+    /** The files directly in [dir] with their last-changed time in milliseconds; empty when the folder is missing. */
+    fun listFiles(dir: String): List<Pair<String, Long>>
 }
 
 /** Longest side of a stored cover. The biggest place a cover is drawn is the full player, which needs about this much on a phone. */
