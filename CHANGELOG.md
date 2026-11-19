@@ -2,6 +2,17 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.9] - 2026-11-19
+
+### Other changes
+- Desktop: folder picker logs why the Windows dialog failed and falls back to Java's chooser ([`8ed27cf`](https://github.com/maxcodl/PaperPlay/commit/8ed27cf2b585379d9b8471d9d6df9c12de0009fb))
+- Ui: guard two more list keys against repeats ([`f8b0488`](https://github.com/maxcodl/PaperPlay/commit/f8b0488b5b3c7fc6925f7d27b006a32137f3dfb4))
+- Scan: the account scan of the main chat now does a full read so missing songs are added and gone ones pruned ([`3bd8b2c`](https://github.com/maxcodl/PaperPlay/commit/3bd8b2c19839c6b75370fb9dceb9a59637f0e68a))
+- Duplicates: one row per post, random tile covers, connecting notice once per run ([`541df9b`](https://github.com/maxcodl/PaperPlay/commit/541df9b1d760214d462c2864d2f60cfc50fe9aeb))
+- Duplicates: unique list keys per group, fixes crash when a post is in two groups ([`c35026b`](https://github.com/maxcodl/PaperPlay/commit/c35026b670d1e3ad6ab2ff140f1b1556569980b7))
+
+**Full changes:** [v1.9.8...v1.9.9](https://github.com/maxcodl/PaperPlay/compare/v1.9.8...v1.9.9)
+
 ## [1.9.8] - 2026-11-18
 
 ### Other changes
