@@ -143,7 +143,7 @@ interface ChatIndexApi {
     val progress: StateFlow<IndexProgress?>
 
     /** Reads a chat once from the start and saves what it finds; posts show up in [songs] as they are saved. */
-    suspend fun indexChat(chat: ChatInfo)
+    suspend fun indexChat(chat: ChatInfo, full: Boolean = false)
 
     /** Ends the read going on now. */
     fun stopRun() {}

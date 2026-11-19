@@ -205,7 +205,7 @@ private suspend fun readMainChatWithAccount(backend: CoreBackend, log: (String) 
         backend.chatIndex.progress.collect { p -> services.scanner.announce(p?.let { "Your account: reading ${it.chatTitle}, ${it.found} posts found so far (songs are added to the library when the read ends)" }) }
     }
     runCatching {
-        backend.chatIndex.indexChat(io.max.paperplay.core.account.ChatInfo(main, services.library.chat(main)?.title ?: "Main chat", true))
+        backend.chatIndex.indexChat(io.max.paperplay.core.account.ChatInfo(main, services.library.chat(main)?.title ?: "Main chat", true), full = true)
         val r = backend.chatIndex.addPostsNotInLibrary()
         log(
             if (r.seen == 0) "Your account read no posts from the main chat"

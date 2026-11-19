@@ -41,7 +41,7 @@ private class StubIndex(val matches: (String) -> List<ChatPost>) : ChatIndexApi 
     val copied = mutableListOf<ChatPost>()
     override val indexedChats: StateFlow<Map<Long, String>> = MutableStateFlow(emptyMap())
     override val progress: StateFlow<IndexProgress?> = MutableStateFlow(null)
-    override suspend fun indexChat(chat: ChatInfo) {}
+    override suspend fun indexChat(chat: ChatInfo, full: Boolean) {}
     override suspend fun refresh() {}
     override fun songs(chatId: Long): Flow<List<IndexedSong>> = emptyFlow()
     override suspend fun matchesFor(title: String, artist: String, durationSec: Int) = matches(title)

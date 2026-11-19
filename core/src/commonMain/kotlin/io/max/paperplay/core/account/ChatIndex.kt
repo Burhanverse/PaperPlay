@@ -102,13 +102,13 @@ class ChatIndex(
     override val indexedChats: StateFlow<Map<Long, String>> = _chats
     override val progress: StateFlow<IndexProgress?> = _progress
 
-    override suspend fun indexChat(chat: ChatInfo) {
+    override suspend fun indexChat(chat: ChatInfo, full: Boolean) {
         runLock.withLock {
             val had = store.chat(chat.id)
             store.saveChat(chat.id, chat.title)
             _chats.value = store.chats().associate { it.id to it.title }
-            // Already indexed: only what is new, or the rest of a stopped read; never the whole chat again.
-            readFromCheckpoint(had ?: IndexedChat(chat.id, chat.title, 0, 0, false))
+            // Already indexed: only what is new, or the rest of a stopped read; never the whole chat again unless asked.
+            if (full) read(chat.id, chat.title, after = 0, complete = true) else readFromCheckpoint(had ?: IndexedChat(chat.id, chat.title, 0, 0, false))
             mainChat() // finds and saves the main chat when this was it
         }
         onRunFinished?.invoke()

@@ -53,7 +53,7 @@ class ChatIndexTest {
     @Test
     fun savesBatchesAndLists() = runBlocking {
         account.batches = listOf(listOf(post(30, "u3", "Three"), post(20, "u2", "Two")), listOf(post(10, "u1", "One")))
-        index.indexChat(ChatInfo(-5, "Chat", true))
+        index.indexChat(ChatInfo(-5, "Chat", true), false)
         val songs = index.songs(-5).first()
         assertEquals(listOf(30L, 20L, 10L), songs.map { it.post.messageId })
         assertTrue(songs.none { it.inMainChat || it.copied })
@@ -63,7 +63,7 @@ class ChatIndexTest {
     @Test
     fun refreshReadsOnlyNewer() = runBlocking {
         account.batches = listOf(listOf(post(20, "u2", "Two"), post(10, "u1", "One")))
-        index.indexChat(ChatInfo(-5, "Chat", true))
+        index.indexChat(ChatInfo(-5, "Chat", true), false)
         account.reads.clear()
         account.batches = listOf(listOf(post(40, "u4", "Four"), post(20, "u2", "Two")))
         index.refresh()
@@ -77,7 +77,7 @@ class ChatIndexTest {
             post(1, "u1", "One").asSong().copy(chat_id = main, message_id = 7),
         )
         account.batches = listOf(listOf(post(20, "u2", "Two"), post(10, "u1", "One")))
-        index.indexChat(ChatInfo(-5, "Chat", true))
+        index.indexChat(ChatInfo(-5, "Chat", true), false)
         index.copyToMain(post(20, "u2", "Two"))
         val byId = index.songs(-5).first().associateBy { it.post.uniqueId }
         assertTrue(byId.getValue("u1").inMainChat)
@@ -88,7 +88,7 @@ class ChatIndexTest {
     @Test
     fun matchesPreferSureThenCloserLength() = runBlocking {
         account.batches = listOf(listOf(post(30, "a", "Song", dur = 300), post(20, "b", "Song", dur = 201), post(10, "c", "Other")))
-        index.indexChat(ChatInfo(-5, "Chat", true))
+        index.indexChat(ChatInfo(-5, "Chat", true), false)
         val m = index.matchesFor("Song", "A", 200)
         assertEquals(listOf("b", "a"), m.map { it.uniqueId })
     }
@@ -96,7 +96,7 @@ class ChatIndexTest {
     @Test
     fun exportImportAndCloudRoundTrip() = runBlocking {
         account.batches = listOf(listOf(post(20, "u2", "Two")))
-        index.indexChat(ChatInfo(-5, "Chat", true))
+        index.indexChat(ChatInfo(-5, "Chat", true), false)
         index.copyToMain(post(20, "u2", "Two"))
         val cloud = IndexCloud(account, index, library)
         library.setPref(IndexPrefs.AUTO, "true")
