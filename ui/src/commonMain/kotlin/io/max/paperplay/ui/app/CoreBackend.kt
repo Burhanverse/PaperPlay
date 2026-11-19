@@ -611,11 +611,15 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** PC only: which audio engine plays (vlc or mpv; read when the app starts, so a change applies after a restart). */
     fun pcEngine(): String = services.platform.settings.get("pc_engine") ?: "vlc"
     override val hasBass: Boolean get() = io.max.paperplay.ui.isPhone || pcEngine() == "mpv"
-    override val bitPerfect = MutableStateFlow(repo.pref("pc_bitperfect") == "true" && !io.max.paperplay.ui.isPhone)
+    // The old separate "exclusive output" switch counts as bit-perfect now that the two are one.
+    override val bitPerfect = MutableStateFlow((repo.pref("pc_bitperfect") == "true" || repo.pref("pc_exclusive") == "true") && !io.max.paperplay.ui.isPhone)
 
     override fun setBitPerfect(on: Boolean) {
         bitPerfect.value = on
         repo.setPref("pc_bitperfect", "$on")
+        // The old separate exclusive switch is folded into this one; leaving it set would keep the device exclusive after switching off.
+        exclusiveOutput.value = false
+        repo.setPref("pc_exclusive", "false")
         if (!playerStarted.value) return
         pushBass()
         player.setEqualizer(if (on || !eqOn.value) null else eqGains.value)

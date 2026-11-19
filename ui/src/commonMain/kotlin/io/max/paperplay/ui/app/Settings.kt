@@ -426,9 +426,10 @@ internal fun SettingsPage(
                 var engine by remember { mutableStateOf(backend.pcEngine()) }
                 SwitchRow("Use the mpv audio engine", engine == "mpv", { engine = if (it) "mpv" else "vlc"; backend.setPcEngine(engine) }, Icons.Rounded.GraphicEq,
                     "Equalizer with bass, exclusive output and earphone profiles. Needs libmpv next to the app; without it the player stays on VLC. Restart to apply")
-                val exclusive by backend.exclusiveOutput.collectAsState()
-                SwitchRow("Exclusive output (bit-perfect)", exclusive, backend::setExclusiveOutput, Icons.Rounded.GraphicEq,
-                    "mpv engine only. Takes the sound device for itself so the samples reach it unchanged, with no equalizer or volume change. Other apps are silent meanwhile")
+                // The same switch as the Equalizer dialog's Bit-perfect: exclusive output with the equalizer, bass, levelling and profile bypassed.
+                val bitPerfect by backend.bitPerfect.collectAsState()
+                SwitchRow("Bit-perfect", bitPerfect, backend::setBitPerfect, Icons.Rounded.GraphicEq,
+                    "mpv engine only. Takes the sound device for itself so the samples reach it unchanged, with no equalizer, levelling or profile. Other apps are silent meanwhile")
                 var taskbar by remember { mutableStateOf(backend.taskbarButtons()) }
                 SwitchRow("Taskbar player buttons", taskbar, { taskbar = it; backend.setTaskbarButtons(it) }, Icons.Rounded.GraphicEq,
                     "Previous, play or pause and next under the taskbar preview of the window. Restart to apply")
