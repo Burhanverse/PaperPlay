@@ -366,6 +366,16 @@ class AppServices(
         enrichRunning = { enricher.progress.value != null },
     )
 
+    /** How each song sounds, measured from its file on the phone, for recommendations. */
+    val audioFeatures = io.max.paperplay.core.recs.AudioFeatureStore(driver, scope, clock, platform::canRunBackground) { uid ->
+        val s = library.songByUniqueId(uid) ?: return@AudioFeatureStore null
+        val main = client ?: return@AudioFeatureStore null
+        val c = botOwnerOf(s.remote_id)?.let { botPool.clientOf(it) } ?: main
+        val file = c.call(request("getRemoteFile") { put("remote_file_id", s.remote_id) })
+        val local = file.obj("local")
+        local?.str("path")?.takeIf { it.isNotEmpty() && (local["is_downloading_completed"] as? JsonPrimitive)?.booleanOrNull == true && io.max.paperplay.core.backup.Fs.exists(it) }
+    }
+
     /** Deletes duplicate posts and songs: bot, then Bot API, then the owner's account. */
     val deleteQueue: io.max.paperplay.core.dupes.DeleteQueue by lazy {
         val rules = io.max.paperplay.core.dupes.DefaultSongRules
@@ -560,6 +570,7 @@ class AppServices(
                     }
                     enricher.kick()
                     moodScanner.start()
+                    audioFeatures.startBackfill { library.cachedSongs().sortedByDescending { it.plays }.map { it.unique_id } }
                     downloadPins()
                     runCatching { localFolders.syncNow() }
                 }
@@ -690,6 +701,7 @@ class AppServices(
         if (completed) {
             local.str("path")?.takeIf { it.isNotEmpty() }?.let { path ->
                 scope.launch(kotlinx.coroutines.Dispatchers.IO) { embeddedTags.apply(uid, path) }
+                audioFeatures.onDownloaded(uid, path)
             }
         }
         if (cacheFlushJob?.isActive != true) {

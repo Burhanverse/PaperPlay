@@ -22,4 +22,7 @@ internal object EngineNative {
     external fun processPcm(handle: Long, src: ByteBuffer, offset: Int, kind: Int, samples: Int, out: ByteBuffer): Int
     external fun stats(handle: Long, out: FloatArray)
     external fun reset(handle: Long)
+    /** Audio features of the first [n] samples of mono [pcm] at [rate] Hz into [out]; false when too short or silent. */
+    external fun analyze(pcm: FloatArray, n: Int, rate: Int, out: FloatArray): Boolean
+    external fun featureVersion(): Int
 }

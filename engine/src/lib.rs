@@ -1,5 +1,6 @@
 //! PaperPlay audio engine: float DSP for the Android player. JNI entry points at the bottom.
 mod eq;
+pub mod features;
 mod extras;
 pub use eq::{Eq, BANDS_HZ};
 
@@ -148,6 +149,26 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_stats(env: JNIE
     let st = eq.take_stats();
     let n = env.get_array_length(&out).unwrap_or(0).clamp(0, st.len() as i32) as usize;
     let _ = env.set_float_array_region(&out, 0, &st[..n]);
+}
+
+/// Measures the first `n` samples of mono `pcm` at `rate` Hz into `out` (`features::N_FEATURES` values); false when too short or silent.
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_analyze(
+    env: JNIEnv, _c: JClass, pcm: JFloatArray, n: jint, rate: jint, out: JFloatArray,
+) -> jboolean {
+    let len = env.get_array_length(&pcm).unwrap_or(0).clamp(0, n.max(0)) as usize;
+    let mut v = vec![0f32; len];
+    if len == 0 || rate <= 0 || env.get_float_array_region(&pcm, 0, &mut v).is_err() { return 0; }
+    let Some(f) = features::analyze(&v, rate as u32) else { return 0 };
+    if env.get_array_length(&out).unwrap_or(0) < f.len() as i32 { return 0; }
+    if env.set_float_array_region(&out, 0, &f).is_err() { return 0; }
+    1
+}
+
+/// Version of the feature layout; stored with each vector so a new layout measures songs again.
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_EngineNative_featureVersion(_env: JNIEnv, _c: JClass) -> jint {
+    features::FEATURE_VERSION
 }
 
 #[cfg(test)]
