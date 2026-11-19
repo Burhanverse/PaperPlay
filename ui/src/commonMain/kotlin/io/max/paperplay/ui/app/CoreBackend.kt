@@ -320,7 +320,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         // The bot's name as Telegram shows it; its username only when it has no name. Never an "@".
         if (id == null) {
             val main = services.botPool.mainBot.value
-            return "Bot: " + (main.name ?: main.username?.removePrefix("@") ?: "main bot") + " (main bot)"
+            val mainName = main.name ?: main.username?.removePrefix("@")
+            return "Bot: " + (if (mainName != null) "$mainName (main bot)" else "main bot")
         }
         val bot = services.botPool.bots.value.firstOrNull { it.id == id }
         return "Bot: " + (bot?.name ?: bot?.username?.removePrefix("@") ?: "bot $id")

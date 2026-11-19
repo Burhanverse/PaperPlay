@@ -28,6 +28,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.DirectionsCar
@@ -324,10 +326,10 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
         val bg = androidx.compose.ui.graphics.lerp(tint, scheme.onSurface, 0.16f)
         val fg = if (bg.luminance() < 0.5f) Color.White else Color.Black
         Column(
-            Modifier.padding(horizontal = 16.dp).widthIn(max = 520.dp)
+            Modifier.padding(horizontal = 16.dp).widthIn(max = 440.dp)
                 .offset { androidx.compose.ui.unit.IntOffset(offset.toInt(), 0) }
                 .graphicsLayer { alpha = (1f - kotlin.math.abs(offset) / 600f).coerceIn(0f, 1f) }
-                .shadow(6.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).background(bg)
+                .toastSurface(bg, fg)
                 .pointerInput(key) {
                     detectHorizontalDragGestures(
                         // On dismiss the offset stays so the toast keeps sliding out; it resets when the toast comes back.
@@ -335,14 +337,20 @@ fun StatusToast(conn: ConnectionUi, scanState: State<ScanUi?>, songCount: Int, t
                         onDragCancel = { offset = 0f },
                     ) { _, dx -> offset += dx }
                 }
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
         ) {
-            Text(text ?: last, color = fg, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Icon(
+                    if (conn.error != null) androidx.compose.material.icons.Icons.Rounded.ErrorOutline else androidx.compose.material.icons.Icons.Rounded.Sync,
+                    null, Modifier.size(20.dp), tint = fg.copy(alpha = 0.8f),
+                )
+                Text(text ?: last, Modifier.padding(start = 12.dp), color = fg, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+            }
             if (scan != null && conn.error == null) {
                 val f = scan.fraction
-                val m = Modifier.fillMaxWidth().padding(top = 8.dp)
-                if (f != null) LinearProgressIndicator({ f.toFloat() }, m, color = fg, trackColor = fg.copy(alpha = 0.25f))
-                else LinearProgressIndicator(m, color = fg, trackColor = fg.copy(alpha = 0.25f))
+                val m = Modifier.fillMaxWidth().padding(top = 10.dp).height(4.dp).clip(RoundedCornerShape(2.dp))
+                if (f != null) LinearProgressIndicator({ f.toFloat() }, m, color = fg, trackColor = fg.copy(alpha = 0.22f), gapSize = 0.dp, drawStopIndicator = {})
+                else LinearProgressIndicator(m, color = fg, trackColor = fg.copy(alpha = 0.22f), gapSize = 0.dp)
             }
         }
     }

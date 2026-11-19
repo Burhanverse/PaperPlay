@@ -582,7 +582,9 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             }
             StatusToast(
                 conn, scan, if (lib.songs is Load.Ready) songs.size else 1, g0.value,
-                Modifier.align(Alignment.TopCenter).padding(top = if (isPhone) WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp else 16.dp),
+                if (isPhone) Modifier.align(Alignment.TopCenter).padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp)
+                // On a desktop it sits bottom right above the player bar, clear of page titles and the panel button.
+                else Modifier.align(Alignment.BottomEnd).padding(bottom = 96.dp, end = 8.dp),
             )
         }
 

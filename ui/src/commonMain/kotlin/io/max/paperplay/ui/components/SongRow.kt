@@ -127,13 +127,25 @@ fun SongRow(
                     .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.Center,
             ) {
-                Text(
-                    text = song.title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (current) scheme.primary else scheme.onSurface,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = song.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (current) scheme.primary else scheme.onSurface,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    // A solid heart beside the name; the Material icon is used directly because AppIcon swaps it for an outline in the Tabler set.
+                    if (song.favorite) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Rounded.Favorite,
+                            contentDescription = "Favorite",
+                            tint = scheme.primary,
+                            modifier = Modifier.padding(start = 6.dp).size(14.dp),
+                        )
+                    }
+                }
                 val detail = remember(song.sizeBytes, song.durationSec) {
                     val kbps = if (song.durationSec > 0) song.sizeBytes * 8 / song.durationSec / 1000 else 0L
                     listOfNotNull(
@@ -179,14 +191,6 @@ fun SongRow(
                         softWrap = false,
                     )
                 }
-            }
-            if (song.favorite) {
-                AppIcon(
-                    imageVector = Icons.Rounded.Favorite,
-                    contentDescription = "Favorite",
-                    tint = scheme.primary,
-                    modifier = Modifier.size(16.dp).padding(end = 4.dp),
-                )
             }
             if (actions != null) SongMenu(song, actions, openState = menuOpen) else Box(Modifier.size(8.dp))
         }

@@ -1,6 +1,11 @@
 package io.max.paperplay.ui.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
@@ -36,6 +41,12 @@ fun AppSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier, tin
     SnackbarHost(state, modifier) { data -> SwipeToast(data, tint) }
 }
 
+private val ToastShape = RoundedCornerShape(16.dp)
+
+/** The toast body: a soft shadow for lift and a 1dp edge in the text colour at 10% (it stays when shadows are off), so it reads on any page colour. */
+fun Modifier.toastSurface(bg: Color, fg: Color): Modifier =
+    shadow(8.dp, ToastShape).clip(ToastShape).background(bg).border(1.dp, fg.copy(alpha = 0.10f), ToastShape)
+
 @Composable
 private fun SwipeToast(data: SnackbarData, tint: Color?) {
     val scheme = MaterialTheme.colorScheme
@@ -43,20 +54,21 @@ private fun SwipeToast(data: SnackbarData, tint: Color?) {
     val fg = if (bg.luminance() < 0.5f) Color.White else Color.Black
     var offset by remember(data) { mutableFloatStateOf(0f) }
     Row(
-        Modifier.padding(horizontal = 16.dp).widthIn(max = 520.dp)
+        Modifier.padding(horizontal = 16.dp).widthIn(max = 440.dp)
             .offset { IntOffset(offset.toInt(), 0) }
             .graphicsLayer { alpha = (1f - kotlin.math.abs(offset) / 600f).coerceIn(0f, 1f) }
-            .shadow(6.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).background(bg)
+            .toastSurface(bg, fg)
             .pointerInput(data) {
                 detectHorizontalDragGestures(
                     onDragEnd = { if (kotlin.math.abs(offset) > 80f) data.dismiss() else offset = 0f },
                     onDragCancel = { offset = 0f },
                 ) { _, dx -> offset += dx }
             }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(data.visuals.message, Modifier.weight(1f), color = fg, style = MaterialTheme.typography.bodyMedium)
+        androidx.compose.material3.Icon(Icons.Rounded.Info, null, Modifier.size(20.dp), tint = fg.copy(alpha = 0.8f))
+        Text(data.visuals.message, Modifier.weight(1f).padding(start = 12.dp), color = fg, style = MaterialTheme.typography.bodyMedium)
         data.visuals.actionLabel?.let { label ->
             TextButton({ data.performAction() }) { Text(label, color = fg) }
         }

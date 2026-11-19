@@ -28,7 +28,8 @@ fun MadeBy(modifier: Modifier = Modifier) {
         val style = MaterialTheme.typography.bodyMedium
         val muted = MaterialTheme.colorScheme.onSurfaceVariant
         Text("Made by Max with ", style = style, color = muted)
-        AppIcon(Icons.Rounded.Favorite, "love", Modifier.size(16.dp), tint = accent)
+        // The Material Favorite is a solid heart; AppIcon would swap it for an outline in the Tabler set.
+        androidx.compose.material3.Icon(Icons.Rounded.Favorite, "love", Modifier.size(16.dp), tint = accent)
         Text(" and ", style = style, color = muted)
         AppIcon(Icons.Rounded.LocalCafe, "coffee", Modifier.size(16.dp), tint = accent)
     }
