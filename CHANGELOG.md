@@ -2,6 +2,14 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.11] - 2026-11-19
+
+### Other changes
+- Ui: nicer toasts and desktop placement, solid heart by the song name and in Made by, main bot label ([`31e5639`](https://github.com/maxcodl/PaperPlay/commit/31e5639c665f6745ae91ee643dc86fe1c62251f7))
+- Desktop: folder picker returns the path through a UTF-8 file and logs how the dialog ended ([`e36bb53`](https://github.com/maxcodl/PaperPlay/commit/e36bb534d9daac6792df8803996e6f9d8ff5f0ae))
+
+**Full changes:** [v1.9.10...v1.9.11](https://github.com/maxcodl/PaperPlay/compare/v1.9.10...v1.9.11)
+
 ## [1.9.10] - 2026-11-19
 
 ### Other changes
