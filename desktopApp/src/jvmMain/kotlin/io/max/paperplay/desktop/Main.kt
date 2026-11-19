@@ -337,7 +337,7 @@ fun main() {
         }
         Window(
             onCloseRequest = {
-                if (trayOk) {
+                if (trayOk && liveServices?.library?.pref("keep_running") != "false") {
                     mainVisible = false
                     io.max.paperplay.ui.AppForegroundState.isVisible = false
                     io.max.paperplay.ui.AppForegroundState.isForeground = false

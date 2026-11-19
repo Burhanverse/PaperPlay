@@ -140,7 +140,7 @@ class Uploader(
         paths: List<String>, chatId: Long, chatTitle: String, topicId: Long? = null, topicName: String? = null, temporary: Boolean = false,
     ): EnqueueResult {
         val skipKnown = pref("upload_skip_known") != "false"
-        val known = if (skipKnown) knownSongs() else emptySet()
+        val known = if (skipKnown) knownSongs().mapTo(HashSet()) { sentKey(it.first, it.second) } else emptySet()
         val sentBefore = if (skipKnown) sentFiles().keys else emptySet()
         var notAudio = 0
         var skipped = 0
@@ -163,7 +163,8 @@ class Uploader(
             // Known to the library, sent by this app before (the library only learns of a song after a scan), or already in the queue.
             val key = sentKey(name, size)
             val queuedAlready = skipKnown && _jobs.value.any { sentKey(it.name, it.size) == key && it.chatId == chatId && it.status != UploadStatus.Failed } || key in fresh.map { sentKey(it.name, it.size) }
-            if ((name to size) in known || key in sentBefore || queuedAlready) {
+            if (key in known || key in sentBefore || queuedAlready) {
+                appLog("enqueue", "skipped $name: library=${key in known} sentBefore=${key in sentBefore} queued=$queuedAlready")
                 skipped++
                 if (temporary) deleteFile(p)
                 continue
