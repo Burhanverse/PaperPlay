@@ -374,7 +374,7 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                 }
             }
         }
-        items(shown, key = { it.post.messageId }) { s ->
+        items(shown, key = { "${it.post.chatId}:${it.post.messageId}" }) { s ->
             val r = remember(s) { s.toRow() }
             SongPostRow(r, r.id in selection.picked,
                 onToggle = { selection = selection.toggle(r.id) },

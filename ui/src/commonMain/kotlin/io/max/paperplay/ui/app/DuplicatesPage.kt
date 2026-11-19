@@ -220,14 +220,14 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
                         for (g in inSection) {
                             val groupKey = "${g.keep.chatId}:${g.keep.messageId}"
                             val art = postsOf(g).firstNotNullOfOrNull { it.song?.cover_path }
-                            item(key = "group:$groupKey") {
+                            item(key = "group:$groupKey:$section") {
                                 SettingsRow(
                                     "${g.title} - ${g.artist}", icon = Icons.Rounded.ContentCopy,
                                     subtitle = describeDuplicate(g) { p -> p.topicId?.let { topicNames["topic:${p.chatId}:$it"] } },
                                     leading = { io.max.paperplay.ui.components.CoverImage(art, "${g.title}|${g.artist}", size = 52.dp, radius = 8.dp) },
                                 )
                             }
-                            items(postsOf(g), key = { "post:${it.chatId}:${it.messageId}" }) { p ->
+                            items(postsOf(g), key = { "post:$groupKey:${it.chatId}:${it.messageId}" }) { p ->
                                 val job = jobOf(p)
                                 val state = when (job?.status) {
                                     DeleteStatus.Queued -> "Waiting"
