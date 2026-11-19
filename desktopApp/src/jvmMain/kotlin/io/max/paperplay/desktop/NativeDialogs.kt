@@ -94,25 +94,29 @@ if (${'$'}d.ShowDialog(${'$'}host1) -eq 'OK') { ${'$'}d.FileName }
                 return d.files.firstOrNull()
             } finally { System.setProperty("apple.awt.fileDialogForDirectories", "false") }
         }
-        val script = FOLDER_SCRIPT.replace("__TITLE__", title.replace("'", "''"))
         val log = io.max.paperplay.player.PlayLog
-        val out = try {
+        // The answer goes through a UTF-8 file: console output is in the OEM code page, which garbles folder names with accents or other scripts.
+        val outFile = File.createTempFile("paperplay-folder", ".txt")
+        val script = FOLDER_SCRIPT.replace("__TITLE__", title.replace("'", "''")).replace("__OUT__", outFile.path.replace("'", "''"))
+        val t0 = System.currentTimeMillis()
+        var console = ""
+        val failed = try {
             val p = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                 java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE)))
                 .redirectErrorStream(true).start()
-            val text = p.inputStream.bufferedReader().readText()
+            console = p.inputStream.bufferedReader().readText().trim()
             p.waitFor()
-            text.lines().lastOrNull { it.isNotBlank() }?.trim()
+            false
         } catch (e: Throwable) {
             log.log("upload", "folder dialog could not start: ${e::class.simpleName} ${e.message}")
-            null
+            true
         }
-        // Blank output is a cancelled dialog; a path is the answer; anything else is an error text from PowerShell.
-        if (out == null || out.isNotEmpty() && !File(out).isDirectory) {
-            if (out != null) log.log("upload", "folder dialog failed: ${out.take(300)}")
-            return swingFolder(title)
-        }
-        return out.takeIf { it.isNotEmpty() }?.let(::File)
+        val answer = runCatching { outFile.readText(Charsets.UTF_8).trim() }.getOrDefault("")
+        outFile.delete()
+        log.log("upload", "folder dialog closed after ${System.currentTimeMillis() - t0} ms, answer \"$answer\"" + if (console.isNotEmpty()) ", console: ${console.take(300)}" else "")
+        // No answer file content with console text, or an exception, means the dialog broke (a cancel prints nothing): use Java's own chooser.
+        if (failed || (answer.isEmpty() && console.isNotEmpty())) return swingFolder(title)
+        return answer.takeIf { it.isNotEmpty() && File(it).isDirectory }?.let(::File)
     }
 
     /** Java's own folder chooser, used when the Windows dialog cannot be shown. */
@@ -172,6 +176,7 @@ public static class FolderPick {
   }
 }
 '@
-[FolderPick]::Pick('__TITLE__')
+${'$'}r = [FolderPick]::Pick('__TITLE__')
+[IO.File]::WriteAllText('__OUT__', ${'$'}r, (New-Object Text.UTF8Encoding ${'$'}false))
 """.trimIndent()
 }
