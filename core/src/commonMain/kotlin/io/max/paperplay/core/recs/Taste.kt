@@ -27,6 +27,8 @@ data class TasteSettings(
     val onlyFromLists: Boolean = false,
     val restRecent: Boolean = true,
     val lookups: Boolean = true,
+    /** Mixes learn from every listen (how much was heard, when, what came before). On unless turned off. */
+    val useListens: Boolean = true,
 ) {
     fun learnsFrom(key: String): Boolean = sources[key] ?: !key.endsWith(":$GENERAL_TOPIC_ID")
 
@@ -40,6 +42,7 @@ data class TasteSettings(
         put("onlyFromLists", onlyFromLists)
         put("restRecent", restRecent)
         put("lookups", lookups)
+        put("useListens", useListens)
     }.toString()
 
     companion object {
@@ -69,6 +72,7 @@ data class TasteSettings(
                     onlyFromLists = flag("onlyFromLists", false),
                     restRecent = flag("restRecent", true),
                     lookups = flag("lookups", true),
+                    useListens = flag("useListens", true),
                 )
             } catch (e: Exception) {
                 TasteSettings()

@@ -35,6 +35,27 @@ class PlayEventLog(private val driver: SqlDriver) {
         }
     }
 
+    /** "Does not fit" from a mix page: logged as a listen of nothing, which the recommender treats as an instant skip and mixes leave out. */
+    fun reject(uid: String, at: Long, durMs: Long) {
+        driver.execute(null, "INSERT INTO play_events (uid, at, hour, heard_ms, dur_ms, prev_uid) VALUES (?, ?, ?, 0, ?, NULL)", 4) {
+            bindString(0, uid); bindLong(1, at); bindLong(2, localHourOf(at).toLong()); bindLong(3, durMs)
+        }
+    }
+
+    fun unreject(uid: String) {
+        driver.execute(null, "DELETE FROM play_events WHERE uid = ? AND heard_ms = 0", 1) { bindString(0, uid) }
+    }
+
+    /** Forgets every listen (Settings, forget what was learned). */
+    fun clear() {
+        driver.execute(null, "DELETE FROM play_events", 0)
+        last = null
+    }
+
+    fun count(): Long = driver.executeQuery(null, "SELECT COUNT(*) FROM play_events", { c ->
+        QueryResult.Value(if (c.next().value) c.getLong(0) ?: 0L else 0L)
+    }, 0).value
+
     /** All events, oldest first. */
     fun all(): List<PlayEvent> = driver.executeQuery(null, "SELECT uid, at, hour, heard_ms, dur_ms, prev_uid FROM play_events ORDER BY at, id", { c ->
         val out = ArrayList<PlayEvent>()

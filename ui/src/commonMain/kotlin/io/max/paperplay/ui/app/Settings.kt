@@ -67,7 +67,7 @@ internal val categories = listOf(
     Category("style", "Appearance", "Theme, colors, icons, glass look, sidebar and bar", "style look glass material expressive blur theme dark amoled accent color icons nav bar sidebar floating radius selection", Icons.Rounded.AutoAwesome, CategoryGroup.Look),
     Category("glass", "Glass", "Blur and tint for every glass part", "glass blur refraction tint", Icons.Rounded.BlurOn, CategoryGroup.Look),
     Category("listening", "Listening", "ListenBrainz, volume levelling, equalizer", "listenbrainz scrobble listens loudness replaygain equalizer eq", Icons.Rounded.GraphicEq, CategoryGroup.Music),
-    Category("mixes", "Mixes", "Taste learning and weather mixes", "mix taste learning weather city", Icons.Rounded.AutoAwesome, CategoryGroup.Music),
+    Category("mixes", "Mixes", "Mixes learned from your listening", "mix taste learning weather city", Icons.Rounded.AutoAwesome, CategoryGroup.Music),
     Category("library", "Library", "Repair, sorting, duplicates, rescan, song info", "speed rate rescan duplicates sort general covers info repair fix missing songs metadata organize tidy", Icons.Rounded.LibraryMusic, CategoryGroup.Music),
     Category("uploads", "Uploads", "Upload pace and skipping known songs", "upload slow skip speed parallel", Icons.Rounded.Upload, CategoryGroup.Music),
     Category("spotify", "Spotify import", "Import playlists from Spotify", "spotify playlist import", Icons.Rounded.PlaylistAdd, CategoryGroup.Music),
@@ -405,7 +405,7 @@ internal fun SettingsPage(
         }
         "mixes" -> {
             NavRow("Mixes and learning", "What your taste is learned from, and clearing it", Icons.Rounded.AutoAwesome) { stack.add("mixlearn") }
-            NavRow("Weather", "Add your city for weather mixes", Icons.Rounded.Cloud) { stack.add("weather") }
+            NavRow("Weather", "Your city, for the weather on the standby screen", Icons.Rounded.Cloud) { stack.add("weather") }
         }
         "uploads" -> {
             NavRow("Upload songs", "Pick songs, see the queue, retry failures", Icons.Rounded.Upload) { stack.add("uploadhub") }

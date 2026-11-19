@@ -7,7 +7,6 @@ import io.max.paperplay.core.app.Repeat
 import io.max.paperplay.core.library.LibraryChat
 import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.recs.DailyMix
-import io.max.paperplay.core.recs.DailyMixes
 import io.max.paperplay.core.recs.HomeMix
 import io.max.paperplay.core.recs.HomeShelves
 import io.max.paperplay.core.recs.TasteList
@@ -242,6 +241,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun clearLearned() {
         scope.launch(Dispatchers.Default) {
             repo.repo.clearLearnedRows()
+            runCatching { services.playEvents.clear() }
             updateTaste { it.copy(resetAt = nowMoment().epochMs) }
             repo.invalidate()
         }
@@ -893,8 +893,9 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             // Tiles and shelves show at once; the slower daily mixes join when they are ready.
             if (!input.taste.showMixes) { emit(HomePlanState(plan = plan)); saveHome(plan, emptyList()); return@transformLatest }
             // Saved mixes show at once, even from an older day or library; fresh ones replace them when computed.
-            val votes = runCatching { io.max.paperplay.core.recs.MoodVotes.verdicts(repo.repo, input.songs) }.getOrDefault(emptyList())
-            val mixKey = "${now.dayKey}:${sizeBucket(input.songs.size)}:${input.favorites.size}:${input.taste.at}:${input.weather}:${votes.size}:${services.moodScanner.scanned / 50}"
+            // Rebuilt every three hours (the hour matters), and as listens and measured songs come in.
+            val mixKey = "${now.dayKey}:${now.hour / 3}:${sizeBucket(input.songs.size)}:${input.favorites.size}:${input.taste.at}:" +
+                "${runCatching { services.playEvents.count() / 10 }.getOrDefault(0)}:${runCatching { services.audioFeatures.count() / 50 }.getOrDefault(0)}"
             val cached = runCatching { DailyMixCache.decode(repo.pref(DailyMixCache.PREF), input.songs.associateBy { it.unique_id }) }.getOrNull()
             val shown = cached?.second.orEmpty().ifEmpty { lastMixes }
             if (shown.isNotEmpty()) lastMixes = shown
@@ -904,7 +905,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             // Building mixes is heavy: not while the library is scanning or covers are loading.
             if (input.busy) return@transformLatest
             val daily = runCatching {
-                DailyMixes.build(input.songs, now, votes = votes, weather = input.weather, lists = tasteLists(input.favorites, input.taste), options = input.taste)
+                io.max.paperplay.core.recs.RecMixes.build(
+                    input.songs, services.audioFeatures.all(),
+                    services.playEvents.all().let { ev -> if (input.taste.useListens) ev else ev.filter { it.heardMs == 0L } }, tasteLists(input.favorites, input.taste), now,
+                )
             }.getOrDefault(emptyList())
             val mixLead = daily.flatMap { it.songs.take(4) }.distinctBy { it.unique_id }
             if (mixLead.isNotEmpty()) services.covers.prioritize(mixLead)
@@ -966,9 +970,9 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun undoRejectFromMix(song: SongUi, moodId: String) = voteMix(song, moodId, 0)
 
-    private fun voteMix(song: SongUi, moodId: String, vote: Int) {
+    private fun voteMix(song: SongUi, @Suppress("UNUSED_PARAMETER") moodId: String, vote: Int) {
         val s = repo.songByUniqueId(song.id) ?: return
-        io.max.paperplay.core.recs.MoodVotes.vote(repo.repo, s, moodId, vote, kotlin.time.Clock.System.now().toEpochMilliseconds())
+        if (vote < 0) services.playEvents.reject(s.unique_id, nowMoment().epochMs, s.duration_sec * 1000L) else services.playEvents.unreject(s.unique_id)
     }
 
     private var queueCache: Triple<List<Song>, Long, List<SongUi>> = Triple(emptyList(), -1L, emptyList())
@@ -1645,7 +1649,7 @@ internal fun buildHomeUi(plan: io.max.paperplay.core.recs.HomeMix, mixList: List
         },
         mixes = mixList.map { m ->
             val ms = m.songs.map(fresh)
-            CollectionUi(m.mood.id, m.title, ms.take(3).joinToString(", ") { it.artist }, null, ms.map(Song::toUi), covers(ms))
+            CollectionUi(m.id, m.title, ms.take(3).joinToString(", ") { it.artist }, null, ms.map(Song::toUi), covers(ms))
         },
     )
 }

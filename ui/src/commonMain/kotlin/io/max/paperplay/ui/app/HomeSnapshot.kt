@@ -7,7 +7,6 @@ import io.max.paperplay.core.recs.MixGroup
 import io.max.paperplay.core.recs.MixShelf
 import io.max.paperplay.core.recs.MixTile
 import io.max.paperplay.core.recs.ShelfKind
-import io.max.paperplay.core.recs.moods
 
 /**
  * The Home page as it was last shown, saved as song ids in a preference. On launch it is read back and drawn at once, with its
@@ -30,7 +29,7 @@ internal object HomeSnapshot {
                 for (g in s.groups) appendLine("G$FIELD${clean(g.name)}$FIELD${g.cover.unique_id}$FIELD${ids(g.songs)}")
             }
         }
-        for (m in mixes) appendLine("M$FIELD${m.mood.id}$FIELD${clean(m.title)}$FIELD${ids(m.songs)}")
+        for (m in mixes) appendLine("M$FIELD${m.id}$FIELD${clean(m.title)}$FIELD${ids(m.songs)}")
     }
 
     /** Every token of the saved text that could be a song id, for one query that fetches them all. */
@@ -58,7 +57,7 @@ internal object HomeSnapshot {
                 "S" -> if (p.size >= 3) { closeGroups(); val l = list(p[2]); if (l.isNotEmpty()) shelves += MixShelf(p[1], ShelfKind.SONGS, l) }
                 "A" -> if (p.size >= 3) { closeGroups(); groupsOf = p[1] to (runCatching { ShelfKind.valueOf(p[2]) }.getOrNull() ?: ShelfKind.ALBUMS) }
                 "G" -> if (p.size >= 4 && groupsOf != null) { val c = song(p[2]); val l = list(p[3]); if (c != null && l.isNotEmpty()) groups += MixGroup(p[1], c, l) }
-                "M" -> if (p.size >= 4) { closeGroups(); val mood = moods.firstOrNull { it.id == p[1] }; val l = list(p[3]); if (mood != null && l.isNotEmpty()) mixes += DailyMix(mood, p[2], l) }
+                "M" -> if (p.size >= 4) { closeGroups(); val l = list(p[3]); if (l.isNotEmpty()) mixes += DailyMix(p[1], p[2], l) }
             }
         }
         closeGroups()

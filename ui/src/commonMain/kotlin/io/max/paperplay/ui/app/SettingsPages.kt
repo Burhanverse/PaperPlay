@@ -32,23 +32,19 @@ internal fun MixLearnPage(backend: CoreBackend, onClear: () -> Unit) {
     val t by backend.taste.collectAsState()
     SectionLabel("Mixes")
     SwitchRow("Show daily mixes on Home", t.showMixes, { v -> backend.updateTaste { it.copy(showMixes = v) } }, Icons.Rounded.AutoAwesome)
-    SwitchRow("Only use songs from the lists below", t.onlyFromLists, { v -> backend.updateTaste { it.copy(onlyFromLists = v) } },
-        subtitle = "When off, mixes can also bring in other songs you might like")
-    SwitchRow("Rest songs you just heard", t.restRecent, { v -> backend.updateTaste { it.copy(restRecent = v) } },
-        subtitle = "They come back over about a week")
     SectionLabel("Learn your taste from")
     SwitchRow("Favorites", t.learnsFrom(TasteSettings.FAVORITES_KEY), { v -> backend.updateTaste { it.copy(sources = it.sources + (TasteSettings.FAVORITES_KEY to v)) } }, Icons.Rounded.Favorite)
     for ((key, name) in remember { backend.playlistKeys() }) {
         SwitchRow(name, t.learnsFrom(key), { v -> backend.updateTaste { it.copy(sources = it.sources + (key to v)) } }, Icons.Rounded.QueueMusic, "Playlist")
     }
-    SwitchRow("What I play and skip", t.learnFromPlays, { v -> backend.updateTaste { it.copy(learnFromPlays = v) } },
-        subtitle = "Off by default, so mixes only learn from your lists")
+    SwitchRow("What I play and skip", t.useListens, { v -> backend.updateTaste { it.copy(useListens = v) } },
+        subtitle = "How much of each song you hear, at what time, and what you play after it. Stays on this device")
     SectionLabel("Song information")
     SwitchRow("Look up lyrics and genres", t.lookups, { v -> backend.updateTaste { it.copy(lookups = v) } },
         subtitle = "Looks up about one song a second in the background")
     SectionLabel("Learned data")
     SettingsRow("Clear what mixes have learned", icon = Icons.Rounded.DeleteSweep, onClick = onClear,
-        subtitle = "Play and skip counts, and the \"doesn't fit this mix\" choices")
+        subtitle = "Every listen, play and skip counts, and the \"doesn't fit this mix\" choices")
 }
 
 /** Settings > Mixes > Weather. Only the chosen city's coordinates are sent, to Open-Meteo. */
