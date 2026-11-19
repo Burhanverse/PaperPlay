@@ -218,6 +218,11 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         }
         if (notify) write(soft = true) { block() } else block()
     }
+    /** How many songs use the cover file at [path] (songs of one album share a file). */
+    fun coverPathUses(path: String): Long = songs.coverPathUses(path).executeAsOne()
+    fun distinctCoverPaths(): List<String> = songs.distinctCoverPaths().executeAsList().mapNotNull { it.cover_path }
+    /** Points every song that uses the cover file [from] at [to]. */
+    fun retargetCover(from: String, to: String) = write(soft = true) { songs.retargetCover(to, from) }
     fun fillEmbeddedTags(
         uniqueId: String, title: String?, artist: String?, album: String?, year: Long?, genre: String?, coverPath: String?,
     ) = write(soft = true) { songs.fillEmbeddedTags(title, artist, album, year, genre, coverPath, uniqueId) }

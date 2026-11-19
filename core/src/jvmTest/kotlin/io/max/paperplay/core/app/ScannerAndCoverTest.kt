@@ -323,7 +323,7 @@ class ScannerAndCoverTest {
         val s2 = repo.songByUniqueId("u2")!!
         val s3 = repo.songByUniqueId("u3")!!
         assertContentEquals(jpegHeader, File(s1.cover_path!!).readBytes())
-        assertTrue(s1.cover_path.startsWith("$dataDir/covers/u1_"))
+        assertTrue(s1.cover_path.startsWith("$dataDir/covers/c_"))
         assertContentEquals(deezerBytes, File(s2.cover_path!!).readBytes())
         assertEquals("Hurry Up", s2.album)
         assertEquals("deezer", s2.metadata_source)
@@ -436,5 +436,69 @@ class ScannerAndCoverTest {
         assertEquals("itunes", s20.metadata_source)
         assertTrue(urls.first { "itunes.apple.com" in it }.contains("country=TW"))
         assertEquals(2, itunesAttempts)
+    }
+
+    /** A smooth, album-art-like picture (large colour areas), so its size behaves like a real cover and not like noise. */
+    private fun bigJpeg(w: Int, h: Int, seed: Int = 1): ByteArray {
+        val img = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        for (y in 0 until h) for (x in 0 until w) {
+            val r = ((x * 255L / w + seed * 40) % 256).toInt(); val g = ((y * 255L / h + seed * 70) % 256).toInt(); val bl = (((x + y) * 255L / (w + h)) + seed * 20).toInt() % 256
+            img.setRGB(x, y, (r shl 16) or (g shl 8) or bl)
+        }
+        val out = java.io.ByteArrayOutputStream()
+        javax.imageio.ImageIO.write(img, "jpg", out)
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `shrink scales a big picture down to the longest side and leaves a small one alone`() {
+        val big = bigJpeg(2400, 1600)
+        val small = CoverImages.shrink(big, COVER_MAX_EDGE, COVER_JPEG_QUALITY)
+        assertNotNull(small)
+        val img = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(small))
+        assertEquals(COVER_MAX_EDGE, maxOf(img.width, img.height))
+        assertEquals(1000, img.width)
+        assertEquals(666, img.height)
+        assertTrue(small.size < big.size, "was ${big.size}, now ${small.size}")
+        assertNull(CoverImages.shrink(bigJpeg(600, 600), COVER_MAX_EDGE, COVER_JPEG_QUALITY))
+        assertNull(CoverImages.shrink(jpegHeader, COVER_MAX_EDGE, COVER_JPEG_QUALITY))
+    }
+
+    @Test
+    fun `the same picture gets the same name and a different one another`() {
+        val a = bigJpeg(300, 300, 1); val b = bigJpeg(300, 300, 2)
+        assertEquals(coverContentName(a), coverContentName(a.copyOf()))
+        assertTrue(coverContentName(a) != coverContentName(b))
+    }
+
+    @Test
+    fun `packing the saved covers shrinks them, shares one file per picture and keeps every song pointing at a file`() {
+        val (db, repo) = newRepo()
+        val dataDir = Files.createTempDirectory("pp-pack").toFile().apply { deleteOnExit() }.absolutePath
+        val coversDir = File(dataDir, "covers").apply { mkdirs() }
+        val album = bigJpeg(2000, 2000, 7)
+        val other = bigJpeg(2000, 1500, 8)
+        val files = listOf("u1_1.jpg" to album, "u2_2.jpg" to album, "u3_3.jpg" to other)
+        files.forEach { (n, b) -> File(coversDir, n).writeBytes(b) }
+        for (i in 1..3) {
+            insertSong(db, i.toLong())
+            repo.updateCover(uniqueId = "u$i", coverPath = File(coversDir, files[i - 1].first).path, notify = false)
+        }
+        val covers = CoverService(dataDir = dataDir, td = { null }, repo = repo, http = object : HttpFetcher { override suspend fun send(request: HttpRequest): HttpResponse = HttpResponse(404, emptyMap(), ByteArray(0)) }, scope = scope, maxWorkers = 1, requestPauseMs = 0L, backgroundPauseMs = 0L, debounceMs = 0L)
+        val before = coversDir.listFiles()!!.sumOf { it.length() }
+
+        val freed = runBlocking { covers.packExistingCovers() }
+
+        val p1 = repo.songByUniqueId("u1")!!.cover_path!!; val p2 = repo.songByUniqueId("u2")!!.cover_path!!; val p3 = repo.songByUniqueId("u3")!!.cover_path!!
+        assertEquals(p1, p2, "songs holding the same picture share one file")
+        assertTrue(p1 != p3)
+        listOf(p1, p3).forEach { assertTrue(File(it).exists() && File(it).name.startsWith("c_")) }
+        assertEquals(2, coversDir.listFiles()!!.size, "the old per-song files are gone")
+        assertTrue(coversDir.listFiles()!!.sumOf { it.length() } < before / 2, "was $before, now ${coversDir.listFiles()!!.sumOf { it.length() }}")
+        assertTrue(freed > 0, "freed $freed")
+        assertTrue(p1 != p3, "different pictures stay separate")
+        // A second run changes nothing.
+        assertEquals(0L, runBlocking { covers.packExistingCovers() })
+        assertEquals(p1, repo.songByUniqueId("u1")!!.cover_path)
     }
 }

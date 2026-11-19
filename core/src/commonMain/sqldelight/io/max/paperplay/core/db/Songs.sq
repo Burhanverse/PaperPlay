@@ -184,3 +184,12 @@ SET title = COALESCE(:title, title),
     genre = COALESCE(NULLIF(genre, ''), :genre),
     cover_path = COALESCE(cover_path, :coverPath)
 WHERE unique_id = :uniqueId;
+
+coverPathUses:
+SELECT COUNT(*) FROM songs WHERE cover_path = :path;
+
+distinctCoverPaths:
+SELECT DISTINCT cover_path FROM songs WHERE COALESCE(cover_path, '') <> '';
+
+retargetCover:
+UPDATE songs SET cover_path = :to WHERE cover_path = :from;

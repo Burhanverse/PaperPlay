@@ -167,6 +167,14 @@ class CoverService(
             }
             kick(retryTdMissing = true)
         }
+        // Covers saved before the display-size change are packed once, well after the app has settled.
+        scope.launch {
+            if (repo.pref(PACK_KEY) == "1") return@launch
+            delay(startDelayMs + 60_000L)
+            val freed = runCatching { packExistingCovers() }.onFailure { io.max.paperplay.player.PlayLog.log("covers", "packing stopped: ${it.message}") }.getOrNull() ?: return@launch
+            repo.setPref(PACK_KEY, "1")
+            io.max.paperplay.player.PlayLog.log("covers", "packed the saved covers: ${freed / 1_048_576} MB freed")
+        }
     }
 
     /** Queues [songs] ahead of background cover work so visible cards and playback populate immediately. */
@@ -585,7 +593,8 @@ class CoverService(
         if (old.isNullOrEmpty() || old == keep) return
         scope.launch {
             delay(10_000L)
-            runCatching { Fs.deleteRecursively(old) }
+            // Covers are shared by the songs of an album; the file goes only when no song points at it any more.
+            if (runCatching { repo.coverPathUses(old) }.getOrDefault(1L) == 0L) runCatching { Fs.deleteRecursively(old) }
         }
     }
 
@@ -764,15 +773,41 @@ class CoverService(
         )
     }
 
-    private fun writeCoverFile(uid: String, bytes: ByteArray): String? {
-        val safe = uid.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    /** Stores a cover at display size under a name made from its content, so the songs of one album share one file. */
+    private fun writeCoverFile(@Suppress("UNUSED_PARAMETER") uid: String, bytes: ByteArray): String? {
+        val data = CoverImages.shrink(bytes, COVER_MAX_EDGE, COVER_JPEG_QUALITY) ?: bytes
         val dir = coversDir()
-        val path = "$dir/${safe}_${clock()}.jpg"
+        val path = "$dir/${coverContentName(data)}.jpg"
         return runCatching {
             Fs.mkdirs(dir)
-            Fs.write(path, bytes)
+            if (!Fs.exists(path)) Fs.write(path, data)
             path
         }.getOrNull()
+    }
+
+    /**
+     * One time, in the background: shrinks the covers saved before this change and lets songs that hold the same picture share
+     * one file. Each file is replaced only after its new copy is written and every song points at it, so a stop in the middle
+     * leaves everything working. Returns how many bytes it freed.
+     */
+    suspend fun packExistingCovers(): Long {
+        var freed = 0L
+        for (old in runCatching { repo.distinctCoverPaths() }.getOrDefault(emptyList())) {
+            if (!Fs.exists(old) || old.substringAfterLast('/').startsWith("c_")) continue
+            kotlinx.coroutines.yield()
+            val bytes = CoverImages.readFile(old) ?: continue
+            val data = CoverImages.shrink(bytes, COVER_MAX_EDGE, COVER_JPEG_QUALITY) ?: bytes
+            val path = "${coversDir()}/${coverContentName(data)}.jpg"
+            val ok = runCatching { if (!Fs.exists(path)) Fs.write(path, data); Fs.exists(path) }.getOrDefault(false)
+            if (!ok) continue
+            runCatching { repo.retargetCover(old, path) }.onFailure { continue }
+            if (runCatching { repo.coverPathUses(old) }.getOrDefault(1L) == 0L) {
+                runCatching { Fs.deleteRecursively(old) }
+                freed += bytes.size.toLong()
+            }
+            delay(20)
+        }
+        return freed
     }
 
     private fun readWholeFile(path: String): ByteArray? {
@@ -807,6 +842,8 @@ class CoverService(
         const val GIVE_UP_MS = 3650L * 24 * 60 * 60 * 1000
     }
 }
+
+private const val PACK_KEY = "cover_pack_v1"
 
 private inline fun <T> runCatchingCancellable(block: () -> T): Result<T> = try {
     Result.success(block())
