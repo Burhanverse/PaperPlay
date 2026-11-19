@@ -245,6 +245,9 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         repo.addListen(repo.pref("device_id") ?: "self", dayOf(now), s.unique_id, ms, if (finished == true) 1 else 0)
     }
 
+    /** Puts [s] on Recently played now, without counting a play. */
+    fun markPlayedNow(s: Song) = write(soft = true) { songs.markPlayed(clock(), s.chat_id, s.message_id) }
+
     // Playlists
     fun createPlaylist(name: String): Long = write { repo.createPlaylist(name) }
     fun deletePlaylist(id: Long) = write { repo.deletePlaylist(id) }

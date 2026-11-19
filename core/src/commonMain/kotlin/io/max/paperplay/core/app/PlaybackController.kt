@@ -74,6 +74,7 @@ class PlaybackController(
     // Listen counting for the song that is currently playing.
     private var listening: Song? = null
     private var listenedMs = 0L
+    private var markedFor: String? = null
     private var prefetchedFor: String? = null
 
     /** Everything in [NowPlaying] except the ticking position and buffer; does not change on position ticks. */
@@ -130,6 +131,7 @@ class PlaybackController(
                     }
                     finishListening()
                     listening = song
+                    markedFor = null
                 }
                 prefetchedFor = null
                 val q = meta.value.queue
@@ -160,6 +162,11 @@ class PlaybackController(
             engine.positionMs.collect { pos ->
                 val step = pos - lastPos
                 if (step in 1..MAX_LISTEN_STEP_MS) listenedMs += step
+                val l = listening
+                if (l != null && listenedMs >= 5_000 && markedFor != l.unique_id && l.remote_id != NETPLAY_REMOTE) {
+                    markedFor = l.unique_id
+                    runCatching { repo.markPlayedNow(l) }
+                }
                 lastPos = pos
                 if (engine.state.value != PlayerState.Playing) return@collect
                 val idx = engine.currentIndex.value
