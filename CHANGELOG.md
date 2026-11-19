@@ -2,6 +2,14 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.9.10] - 2026-11-19
+
+### Other changes
+- Ui: cover outline in pure black or white, card radius matches cover radius plus padding ([`549d452`](https://github.com/maxcodl/PaperPlay/commit/549d452f0b5596342a2db0814efcd9a64d443eb2))
+- Cache: clearing the cache also clears audio the own account downloaded ([`09667b6`](https://github.com/maxcodl/PaperPlay/commit/09667b663b53a81c83abb2ee4ee99af11af39a8a))
+
+**Full changes:** [v1.9.9...v1.9.10](https://github.com/maxcodl/PaperPlay/compare/v1.9.9...v1.9.10)
+
 ## [1.9.9] - 2026-11-19
 
 ### Other changes
