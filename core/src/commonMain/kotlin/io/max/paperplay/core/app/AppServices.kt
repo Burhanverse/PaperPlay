@@ -376,6 +376,14 @@ class AppServices(
         local?.str("path")?.takeIf { it.isNotEmpty() && (local["is_downloading_completed"] as? JsonPrimitive)?.booleanOrNull == true && io.max.paperplay.core.backup.Fs.exists(it) }
     }
 
+    /** Every listen with how much was heard, for recommendations. */
+    val playEvents = io.max.paperplay.core.recs.PlayEventLog(driver).also { log ->
+        library.onListen = { s, ms, at ->
+            log.record(s.unique_id, at, ms, s.duration_sec * 1000L)
+            io.max.paperplay.player.PlayLog.log("recs", "listen \"${s.title}\" heard ${ms / 1000}s of ${s.duration_sec}s")
+        }
+    }
+
     /** Deletes duplicate posts and songs: bot, then Bot API, then the owner's account. */
     val deleteQueue: io.max.paperplay.core.dupes.DeleteQueue by lazy {
         val rules = io.max.paperplay.core.dupes.DefaultSongRules

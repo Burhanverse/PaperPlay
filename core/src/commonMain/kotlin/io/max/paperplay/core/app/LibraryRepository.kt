@@ -248,7 +248,11 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         songs.markPlayed(now, s.chat_id, s.message_id)
         if (finished != null) repo.countPlay(s, finished)
         repo.addListen(repo.pref("device_id") ?: "self", dayOf(now), s.unique_id, ms, if (finished == true) 1 else 0)
+        runCatching { onListen?.invoke(s, ms, now) }
     }
+
+    /** Told of every listen, for the recommender's play log. */
+    @kotlin.concurrent.Volatile var onListen: ((Song, Long, Long) -> Unit)? = null
 
     /** Puts [s] on Recently played now, without counting a play. */
     fun markPlayedNow(s: Song) = write(soft = true) { songs.markPlayed(clock(), s.chat_id, s.message_id) }

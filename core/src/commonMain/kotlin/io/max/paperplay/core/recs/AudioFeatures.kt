@@ -68,6 +68,7 @@ class AudioFeatureStore(
     private suspend fun measure(uid: String, path: String) = lock.withLock {
         if (measured(uid)) return@withLock
         val v = runCatching { AudioAnalysis.analyze(path) }.getOrNull()
+        io.max.paperplay.player.PlayLog.log("recs", if (v == null) "measure $uid: no result" else "measure $uid: ${v[14].toInt()} bpm, key ${v[17].toInt()} ${if (v[18] > 0.5f) "major" else "minor"}, ${v[0].toInt()} dB")
         driver.execute(null, "INSERT OR REPLACE INTO audio_features (unique_id, version, v, measured_at) VALUES (?, ?, ?, ?)", 4) {
             bindString(0, uid); bindLong(1, version.toLong()); bindString(2, v?.let(::encode)); bindLong(3, clock())
         }
