@@ -127,7 +127,8 @@ val LrclibSource = LyricsSource("LRCLIB", 150, 10_000) { http, q ->
     val rows = http.getJson("https://lrclib.net/api/search?track_name=${enc(q.title)}&artist_name=${enc(q.artist)}").arr()
         ?: http.getJson("https://lrclib.net/api/search?q=${enc(q.keyword)}").arr()
     var plain: String? = null
-    for (e in rows.orEmpty()) {
+    // Closest length first: a timed version cut for another length of the song drifts out of step.
+    for (e in rows.orEmpty().sortedBy { kotlin.math.abs((it.obj()?.get("duration").num() ?: 0.0) - q.durationSec) }) {
         val o = e.obj() ?: continue
         val d = o["duration"].num() ?: 0.0
         if (q.durationSec > 0 && d > 0 && kotlin.math.abs(d - q.durationSec) > 5) continue
@@ -354,4 +355,14 @@ suspend fun fetchLyrics(
     if (best == null && answered == 0 && failures > 0) throw LyricsUnavailable()
     LyricsCache.put(q.cacheKey, best)
     return best
+}
+
+/**
+ * [found] in the writing system [script] (a [lyricsScriptName] value) when the sources have a version in it, timed ones first;
+ * otherwise [found] unchanged. For owners who want e.g. Devanagari rather than romanized lyrics, even if that means plain text.
+ */
+suspend fun lyricsInScript(http: HttpFetcher, title: String, artist: String, album: String, durationSec: Int, found: String?, script: String?): String? {
+    if (script.isNullOrBlank() || found == null || lyricsScriptName(found) == script) return found
+    val match = lyricsChoices(http, title, artist, album, durationSec).filter { !it.label.contains("romanized") && lyricsScriptName(it.text) == script }
+    return (match.firstOrNull { isSyncedLyrics(it.text) } ?: match.firstOrNull())?.text ?: found
 }

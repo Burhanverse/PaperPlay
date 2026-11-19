@@ -346,13 +346,21 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         byId[song.id]?.let { s -> withPlayer { it.playNext(s) } }
     }
 
+    /** Looked-up lyrics, switched to the writing system chosen in Settings when the sources have one. */
+    private suspend fun fetchWantedLyrics(song: Song): String? {
+        val found = io.max.paperplay.core.integrations.fetchLyrics(http, song.title, song.artist, song.album, song.duration_sec.toInt())
+        return runCatching {
+            io.max.paperplay.core.integrations.lyricsInScript(http, song.title, song.artist, song.album, song.duration_sec.toInt(), found, pref("lyrics_script"))
+        }.getOrDefault(found)
+    }
+
     /** Lyrics for a song: the saved ones, else looked up on LRCLIB (unless lookups are off) and saved. Null when none. */
     override suspend fun lyricsFor(songId: String): String? {
         val song = byId[songId] ?: return null
         song.lyrics?.takeIf { it.isNotBlank() }?.let { return it }
         if (!taste.value.lookups) return null
         val found = runCatching {
-            io.max.paperplay.core.integrations.fetchLyrics(http, song.title, song.artist, song.album, song.duration_sec.toInt())
+            fetchWantedLyrics(song)
         }.getOrNull() ?: return null
         runCatching {
             services.driver.execute(null, "UPDATE songs SET lyrics = ? WHERE unique_id = ?", 2) { bindString(0, found); bindString(1, songId) }
@@ -444,7 +452,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                                 var attempt = 0
                                 while (true) {
                                     try {
-                                        result = io.max.paperplay.core.integrations.fetchLyrics(http, song.title, song.artist, song.album, song.duration_sec.toInt())
+                                        result = fetchWantedLyrics(song)
                                         break
                                     } catch (e: kotlinx.coroutines.CancellationException) {
                                         throw e

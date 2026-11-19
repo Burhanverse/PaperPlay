@@ -382,6 +382,11 @@ internal fun SettingsPage(
             val lyricsRunning by backend.lyricsRunning.collectAsState()
             var lyricsAuto by remember { mutableStateOf(backend.lyricsAuto) }
             SwitchRow("Fill in missing info in the background", lyricsAuto, { lyricsAuto = it; backend.setLyricsAuto(it) }, Icons.Rounded.Lyrics, "Looks up song info, covers, genres and lyrics for songs that lack them, ahead of time. Needs song lookups on")
+            val scripts = listOf("", "Devanagari script", "Tamil script", "Telugu script", "Kannada script", "Malayalam script", "Gurmukhi script", "Bengali script", "Arabic script", "Japanese", "Korean", "Chinese characters", "Cyrillic", "Latin letters")
+            var script by remember { mutableStateOf(pref("lyrics_script").orEmpty()) }
+            Text("Lyrics writing", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodyLarge)
+            Text("Picks lyrics in this writing when a source has them, even if only a plain version exists. New lookups only; Auto takes the best timed one", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ChoiceRow(scripts, script, { if (it.isEmpty()) "Auto" else it.removeSuffix(" script").removeSuffix(" letters") }, { script = it; backend.setPref("lyrics_script", it) })
             SettingsRow(
                 if (lyricsRunning) "Stop fetching lyrics" else "Fetch missing lyrics",
                 icon = Icons.Rounded.Lyrics,
