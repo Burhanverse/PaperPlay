@@ -30,8 +30,10 @@ fun searchWordsOf(text: String): List<String> = foldSearchText(text).split(NON_W
 
 /** A search typed by the owner: its words and the same text joined, ready to score many songs. */
 class SearchQuery(text: String) {
-    val words: List<String> = searchWordsOf(text)
-    val whole: String = words.joinToString(" ")
+    private val typed: List<String> = searchWordsOf(text)
+    /** A "by" between two parts ("contact by daft punk") only joins title and artist, so it is not a word a song must hold; "stand by me" still finds its song through the other words and the whole phrase. */
+    val words: List<String> = typed.filterIndexed { i, w -> !(w == "by" && i > 0 && i < typed.lastIndex && typed.size > 2) }
+    val whole: String = typed.joinToString(" ")
     val isEmpty: Boolean get() = words.isEmpty()
 }
 

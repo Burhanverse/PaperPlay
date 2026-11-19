@@ -13,6 +13,12 @@ class SongSearchTest {
         assertTrue(score("beyoncé", "Halo", "Beyonce") > 0)
     }
 
+    @Test fun titleByArtistFindsTheSong() {
+        assertTrue(score("contact by daft punk", "Contact", "Daft Punk") > 0)
+        assertTrue(score("stand by me", "Stand By Me", "Ben E. King") > 0)
+        assertEquals(0, score("contact by someone else", "Contact", "Daft Punk"))
+    }
+
     @Test fun typosStillFindTheSong() {
         assertTrue(score("wekend", "Hymn for the Weekend", "Coldplay") > 0)
         assertTrue(score("weeknd", "Starboy", "The Weeknd") > 0)
