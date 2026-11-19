@@ -197,7 +197,7 @@ fun HomeScreen(
             Column(Modifier.staggerIn(6)) {
                 Section("More for you")
                 LazyRow(contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    items(moreCards, key = { it.first }) { (title, art, list) ->
+                    items(moreCards.distinctBy { it.first }, key = { it.first }) { (title, art, list) ->
                         MediaCard(art, "more:$title", title, "${list.size} songs") { onOpen(Detail.Songs(title, list)) }
                     }
                 }

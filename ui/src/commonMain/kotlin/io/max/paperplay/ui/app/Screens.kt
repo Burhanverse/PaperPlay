@@ -436,7 +436,7 @@ fun SearchScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(recent, key = { it }) { term ->
+                    items(recent.distinct(), key = { it }) { term ->
                         AssistChip(onClick = { query = term }, label = { Text(term, maxLines = 1) })
                     }
                 }
