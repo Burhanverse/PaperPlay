@@ -16,6 +16,20 @@ class MpvFiltersTest {
     }
 
     @Test
+    fun `width and crossfeed add filters only when asked, and widening gets a limiter`() {
+        // The null case stays untouched: width 1 and no crossfeed is still no filter at all.
+        assertNull(MpvFilters.graph(null, normalize = false, profile = null, width = 1f, crossfeed = false))
+        assertNull(MpvFilters.graph(null, normalize = false, profile = null, width = 1.01f, crossfeed = false))
+        val cf = MpvFilters.graph(null, normalize = false, profile = null, crossfeed = true)!!
+        assertTrue(cf.startsWith("aformat=channel_layouts=stereo,crossfeed="), cf)
+        assertTrue("stereotools" !in cf)
+        val wide = MpvFilters.graph(null, normalize = false, profile = null, width = 1.4f)!!
+        assertTrue("stereotools=slev=1.400" in wide && "alimiter" in wide, wide)
+        val narrow = MpvFilters.graph(null, normalize = false, profile = null, width = 0.7f)!!
+        assertTrue("stereotools=slev=0.700" in narrow && "alimiter" !in narrow, narrow)
+    }
+
+    @Test
     fun `the fitted response passes through the drawn curve`() {
         val target = listOf(8f, 7f, 5f, 3f, 1f, 0f, 0f, 0f, 0f, 0f)
         val plan = assertNotNull(MpvFilters.plan(target, 0f))

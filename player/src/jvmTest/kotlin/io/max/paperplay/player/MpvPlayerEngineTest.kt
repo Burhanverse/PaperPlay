@@ -182,13 +182,13 @@ class MpvPlayerEngineTest {
     }
 
     /** Plays [input] with the given sound settings into a WAV file (mpv's pcm output) and returns the left channel and the rate. */
-    private fun render(input: String, eq: List<Float>?, bass: Float): Pair<FloatArray, Int> {
+    private fun render(input: String, eq: List<Float>?, bass: Float, channel: Int = 0, effects: ((MpvPlayerEngine) -> Unit)? = null): Pair<FloatArray, Int> {
         val l = lib ?: error("no libmpv")
         val outFile = File(dir, "out-${System.nanoTime()}.wav")
         val e = MpvPlayerEngine(l, mapOf("ao" to "pcm", "ao-pcm-file" to outFile.absolutePath, "ao-pcm-waveheader" to "yes"))
         try {
-            e.setEqualizer(eq); e.setBass(bass)
-            waitFor(what = "filters set") { e.filterResult == 0 || (eq == null && bass == 0f) }
+            e.setEqualizer(eq); e.setBass(bass); effects?.invoke(e)
+            waitFor(what = "filters set") { e.filterResult == 0 || (eq == null && bass == 0f && effects == null) }
             e.setQueue(listOf(QueueItem(input)))
             waitFor(what = "played to the end", ms = 30_000) { e.state.value == PlayerState.Ended }
         } finally { e.release() }
@@ -205,7 +205,7 @@ class MpvPlayerEngineTest {
                 val bytes = bits / 8
                 val n = (end - start) / (bytes * ch)
                 return FloatArray(n) { i ->
-                    val o = start + i * bytes * ch
+                    val o = start + i * bytes * ch + channel * bytes
                     when {
                         tag == 3 && bits == 32 -> b.getFloat(o)
                         bits == 16 -> b.getShort(o) / 32768f
@@ -252,5 +252,46 @@ class MpvPlayerEngineTest {
         val d = db(amp(a, ra * 2, 3000.0, ra) / amp(b, rb * 2, 3000.0, rb))
         assertTrue(kotlin.math.abs(d) < 1.0, "the bass moved the 3 kHz tone by $d dB")
         assertTrue(a.all { kotlin.math.abs(it) <= 1.0f })
+    }
+
+    /** A stereo WAV with a tone in the left channel only (the right one is silent), to see what crosses over. */
+    private fun leftOnlyTone(name: String, rate: Int, seconds: Double, hz: Double, amp: Double): String {
+        val frames = (rate * seconds).toInt()
+        val data = ByteBuffer.allocate(frames * 4).order(ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until frames) {
+            data.putShort((amp * sin(2 * PI * hz * i / rate) * 32767).toInt().toShort()); data.putShort(0)
+        }
+        val out = ByteArrayOutputStream()
+        fun w32(v: Int) = out.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array())
+        fun w16(v: Int) = out.write(ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN).putShort(v.toShort()).array())
+        out.write("RIFF".toByteArray()); w32(36 + data.capacity()); out.write("WAVEfmt ".toByteArray())
+        w32(16); w16(1); w16(2); w32(rate); w32(rate * 4); w16(4); w16(16)
+        out.write("data".toByteArray()); w32(data.capacity()); out.write(data.array())
+        return File(dir, name).apply { writeBytes(out.toByteArray()) }.absolutePath
+    }
+
+    @Test
+    fun `crossfeed lets some of a hard left sound reach the right ear, and off it stays silent`() {
+        if (lib == null) return
+        val src = leftOnlyTone("lt.wav", 48000, 4.0, 300.0, 0.5)
+        val (plainR, r0) = render(src, null, 0f, channel = 1)
+        val (fedR, r1) = render(src, null, 0f, channel = 1, effects = { it.setEngineOptions(4) })
+        val plain = amp(plainR, r0 * 2, 300.0, r0)
+        val fed = amp(fedR, r1 * 2, 300.0, r1)
+        assertTrue(plain < 0.001, "without crossfeed the right channel must stay silent, got $plain")
+        assertTrue(fed > 0.02, "crossfeed should put some of the left tone in the right channel, got $fed")
+        assertTrue(fedR.all { kotlin.math.abs(it) <= 1.0f })
+    }
+
+    @Test
+    fun `a wider image puts more side sound in, a narrower one less, without clipping`() {
+        if (lib == null) return
+        val src = leftOnlyTone("lw.wav", 48000, 4.0, 300.0, 0.5)
+        fun right(width: Float): Double {
+            val (r, rate) = render(src, null, 0f, channel = 1, effects = { it.setEngineOptions(4); it.setStereoWidth(width) })
+            assertTrue(r.all { kotlin.math.abs(it) <= 1.0f }, "clipped at width $width")
+            return amp(r, rate * 2, 300.0, rate)
+        }
+        assertTrue(right(0.5f) != right(1.5f), "width had no effect")
     }
 }

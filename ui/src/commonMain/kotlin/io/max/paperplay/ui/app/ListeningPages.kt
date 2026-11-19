@@ -73,7 +73,9 @@ private fun hz(f: Int) = if (f >= 1000) "${f / 1000}k" else "$f"
 /** Phone engine extras below the equalizer: stereo width and the listening check (exact level, compare with original). */
 @Composable
 internal fun EngineExtras(backend: PlayerControls) {
-    if (!io.max.paperplay.ui.isPhone) return
+    val phone = io.max.paperplay.ui.isPhone
+    // The PC engine has stereo width and crossfeed only; the rest of this page is the phone engine's.
+    if (!phone && !backend.hasBass) return
     val exact by backend.eqExact.collectAsState()
     val dry by backend.eqDry.collectAsState()
     val width by backend.eqWidth.collectAsState()
@@ -82,17 +84,20 @@ internal fun EngineExtras(backend: PlayerControls) {
     val options by backend.eqOptions.collectAsState()
     val output by backend.eqOutput.collectAsState()
     Text(
-        output?.let { "Settings for $it. Each output (earbuds, DAC, speaker) keeps its own and switches by itself." }
+        if (!phone) "Stereo width and crossfeed work while the equalizer is on and Bit-perfect is off."
+        else output?.let { "Settings for $it. Each output (earbuds, DAC, speaker) keeps its own and switches by itself." }
             ?: "Each output (earbuds, DAC, speaker) keeps its own settings once something has played on it.",
         Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    SectionLabel("Earphone correction")
-    val names = listOf("None") + io.max.paperplay.player.CorrectionProfile.EARPHONES.keys
-    ChoiceRow(names, earphone.ifEmpty { "None" }, { it }, { backend.setEqEarphone(if (it == "None") "" else it) })
-    Text(
-        "Evens out the earphone's own measured sound (AutoEq). Wired earphones only; choose None for earbuds.",
-        Modifier.padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    if (phone) {
+        SectionLabel("Earphone correction")
+        val names = listOf("None") + io.max.paperplay.player.CorrectionProfile.EARPHONES.keys
+        ChoiceRow(names, earphone.ifEmpty { "None" }, { it }, { backend.setEqEarphone(if (it == "None") "" else it) })
+        Text(
+            "Evens out the earphone's own measured sound (AutoEq). Wired earphones only; choose None for earbuds.",
+            Modifier.padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     SectionLabel("Stereo width")
     Text(
         "${kotlin.math.round(width * 100).toInt()}%" + when {
@@ -107,18 +112,21 @@ internal fun EngineExtras(backend: PlayerControls) {
         enabled = on, modifier = Modifier.padding(horizontal = 20.dp),
     )
     SectionLabel("Extras")
-    SwitchRow(
-        "Dynamic bass", options and EQ_DYNAMIC_BASS != 0, { backend.setEqOption(EQ_DYNAMIC_BASS, it) }, null,
-        "Full Bass lift in quiet parts, less where the bass is already heavy, so it stays clean when loud",
-    )
-    SwitchRow(
-        "De-esser", options and EQ_DE_ESSER != 0, { backend.setEqOption(EQ_DE_ESSER, it) }, null,
-        "Softens sharp s and t sounds in voices; leaves cymbals and normal treble alone",
-    )
+    if (phone) {
+        SwitchRow(
+            "Dynamic bass", options and EQ_DYNAMIC_BASS != 0, { backend.setEqOption(EQ_DYNAMIC_BASS, it) }, null,
+            "Full Bass lift in quiet parts, less where the bass is already heavy, so it stays clean when loud",
+        )
+        SwitchRow(
+            "De-esser", options and EQ_DE_ESSER != 0, { backend.setEqOption(EQ_DE_ESSER, it) }, null,
+            "Softens sharp s and t sounds in voices; leaves cymbals and normal treble alone",
+        )
+    }
     SwitchRow(
         "Crossfeed", options and EQ_CROSSFEED != 0, { backend.setEqOption(EQ_CROSSFEED, it) }, null,
         "Blends a little of each side into the other, like speakers; eases hard-panned old recordings",
     )
+    if (!phone) return
     SectionLabel("Listening check")
     SwitchRow(
         "Exact level", exact, backend::setEqExact, null,

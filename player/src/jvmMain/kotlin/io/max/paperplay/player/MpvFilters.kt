@@ -169,12 +169,20 @@ internal object MpvFilters {
         return Plan(bands, bass, low, high, max(pl, ph), bassCoefs, coefs.toList())
     }
 
+    /** How much of each side is blended into the other (ffmpeg crossfeed, 0 to 1); 0.3 is gentle, like speakers a little apart. */
+    private const val CROSSFEED_STRENGTH = 0.3
+
     private fun num(v: Double) = "%.3f".format(java.util.Locale.ROOT, v)
     private fun limiter(limit: Double) = "alimiter=limit=$limit:attack=1:release=$RELEASE_MS:level=0"
 
     /** The graph as one filter chain (no labels at its ends), or null when the plan is empty. */
-    fun graph(plan: Plan?, normalize: Boolean, profile: List<Pair<Double, Double>>?): String? {
+    fun graph(plan: Plan?, normalize: Boolean, profile: List<Pair<Double, Double>>?, width: Float = 1f, crossfeed: Boolean = false): String? {
         val parts = ArrayList<String>()
+        // Stereo effects: the filters take two channels, so anything wider is mixed down to stereo first. Nothing is added at width 1 and no crossfeed.
+        val widened = abs(width - 1f) >= 0.02f
+        if (widened || crossfeed) parts.add("aformat=channel_layouts=stereo")
+        if (crossfeed) parts.add("crossfeed=strength=$CROSSFEED_STRENGTH")
+        if (widened) parts.add("stereotools=slev=${num(width.toDouble())}")
         if (normalize) parts.add("dynaudnorm=f=500:g=15:p=0.95")
         if (profile != null && profile.size >= 2) parts.add("firequalizer=gain_entry='" + profile.joinToString(";") { "entry(${num(it.first)},${num(it.second)})" } + "'")
         if (plan != null) {
@@ -186,6 +194,8 @@ internal object MpvFilters {
             }
         }
         if (parts.isEmpty()) return null
+        // Widening can push peaks over full scale; the equalizer path has its own limiters, so this one is only for the effects alone.
+        if (plan == null && width > 1f + 0.02f) parts.add(limiter(LIMIT_OUT))
         val chain = parts.joinToString(",")
         if (plan == null) return chain
         // The rest was lowered to keep the bass clear; give back a quarter of that (at most 2 dB) on the high half only, so bass peaks are not squeezed.

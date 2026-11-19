@@ -52,6 +52,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     @Volatile private var eqGains: List<Float>? = null
     @Volatile private var bass = 0f
     @Volatile private var normalize = false
+    @Volatile private var width = 1f
+    @Volatile private var crossfeed = false
     @Volatile private var volume = 1f
     @Volatile private var speed = 1f
     @Volatile private var exclusive = false
@@ -304,6 +306,9 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     override fun setEqualizer(gainsDb: List<Float>?) { eqGains = gainsDb; cmd { applyFilters() } }
     override fun setBass(db: Float) { bass = db; cmd { applyFilters() } }
     override fun setNormalize(on: Boolean) { normalize = on; cmd { applyFilters() } }
+    override fun setStereoWidth(width: Float) { this.width = width.coerceIn(0.5f, 1.6f); cmd { applyFilters() } }
+    /** Only the crossfeed bit (4) means anything here; dynamic bass and the de-esser are phone engine options. */
+    override fun setEngineOptions(bits: Int) { crossfeed = bits and 4 != 0; cmd { applyFilters() } }
     override fun setCorrectionProfile(text: String?) { profile = text?.let { CorrectionProfile.parse(it) }; cmd { applyFilters() } }
 
     override fun setExclusiveOutput(on: Boolean) {
@@ -314,7 +319,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
 
     private fun applyFilters() {
         val p = MpvFilters.plan(eqGains, bass)
-        val g = MpvFilters.graph(p, normalize, profile)
+        val g = MpvFilters.graph(p, normalize, profile, width, crossfeed)
         plan = p; graph = g
         val rc = lib.mpv_set_property_string(ctx, "af", MpvFilters.afValue(g))
         filterResult = rc; lastGraph = g
@@ -345,6 +350,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             if (p != null && p.bassDb >= 0.05) add("Bass +${"%.1f".format(java.util.Locale.ROOT, p.bassDb)} dB")
             if (profile != null) add("Correction profile")
             if (normalize) add("Normalise")
+            if (crossfeed) add("Crossfeed")
+            if (abs(width - 1f) >= 0.02f) add("Stereo width ${(width * 100).toInt()}%")
             if (speed != 1f) add("Speed ${speed}x")
             if (volume < 0.995f) add("Volume ${(volume * 100).toInt()}%")
         }
