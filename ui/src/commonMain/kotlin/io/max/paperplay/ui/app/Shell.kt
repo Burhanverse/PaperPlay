@@ -445,18 +445,20 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 // Only on the Plain and Cover backgrounds: a blurred cover, gradient, wallpaper or animation the user chose stays.
                 val nowSong = if (showNow && (prefs.background == BgMode.Plain || prefs.background == BgMode.Cover)) pb.current else null
                 val shell: @Composable () -> Unit = {
+                val goPage: (String) -> Unit = { target ->
+                    navigate {
+                        detail = null; settingsStack.clear()
+                        if (target == "settings") { settings = true; settingsDeep = false } else if (target in toolPages.map { t -> t.id }) { settings = true; settingsStack.add(target) } else { page = target; settings = false }
+                    }
+                }
                 Column(Modifier.fillMaxSize().mouseBackButton(::handleBack).playerKeys(keys).then(backKey)) {
-                    Row(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp)) {
+                    DesktopTopBar(prefs, backend, canBack = history.isNotEmpty() || settings || detail != null, onBack = ::handleBack, onGo = goPage, Modifier.padding(start = 12.dp, top = 8.dp, end = 12.dp))
+                    Row(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, top = 8.dp, end = 12.dp)) {
                         Sidebar(
                             page, playlistId, lib.playlists,
                             expanded = sidebarExpanded,
                             onToggle = { sidebarExpanded = !sidebarExpanded },
-                            onPage = { target ->
-                                navigate {
-                                    detail = null; settingsStack.clear()
-                                    if (target == "settings") { settings = true; settingsDeep = false } else if (target in toolPages.map { t -> t.id }) { settings = true; settingsStack.add(target) } else { page = target; settings = false }
-                                }
-                            },
+                            onPage = goPage,
                             onPlaylist = { g -> navigate { detail = Detail.Playlist(g.id, g.name); settings = false } },
                             onNewPlaylist = { newPlaylist = true },
                             onTelegram = { t -> navigate { detail = Detail.Songs(t.name, t.songs); settings = false } },

@@ -166,7 +166,7 @@ class PlaybackController(
                 val step = pos - lastPos
                 if (step in 1..MAX_LISTEN_STEP_MS) listenedMs += step
                 val l = listening
-                if (l != null && listenedMs >= RECENT_AFTER_MS && markedFor != l.unique_id && l.remote_id != NETPLAY_REMOTE) {
+                if (l != null && listenedMs >= RECENT_AFTER_MS && markedFor != l.unique_id && l.remote_id != NETPLAY_REMOTE && !privateSession) {
                     markedFor = l.unique_id
                     runCatching { repo.markPlayedNow(l) }
                 }
@@ -247,9 +247,13 @@ class PlaybackController(
     @kotlin.concurrent.Volatile
     var onListened: ((Song, Long) -> Unit)? = null
 
+    /** A private session: what is played is not recorded anywhere (Recently played, listening history, the recommender). */
+    @kotlin.concurrent.Volatile
+    var privateSession = false
+
     private fun finishListening() {
         val song = listening ?: return
-        if (song.remote_id == NETPLAY_REMOTE) { listenedMs = 0; return }
+        if (song.remote_id == NETPLAY_REMOTE || privateSession) { listenedMs = 0; return }
         val ms = listenedMs
         listenedMs = 0
         if (ms <= 0) return

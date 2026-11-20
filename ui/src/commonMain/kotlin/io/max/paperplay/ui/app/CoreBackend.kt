@@ -259,6 +259,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
+    /** While on, nothing played is added to Recently played, to the listening history or to what mixes learn. Off at every start. */
+    val privateSession = MutableStateFlow(false)
+
+    fun setPrivateSession(on: Boolean) {
+        privateSession.value = on
+        withPlayer { it.privateSession = on }
+    }
+
     /** When a queue runs out (repeat off), play a related song picked from the whole library instead of stopping. */
     val keepPlaying = MutableStateFlow(repo.pref("keep_playing") != "false")
 
@@ -1056,6 +1064,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             if (speed.value != 1f) p.setSpeed(speed.value)
             if (normalizeOn.value && !bp) p.setNormalize(true)
             p.suggestNext = { queue -> suggestAfter(queue) }
+            p.privateSession = privateSession.value
             // A listen counts after half the song or four minutes, whichever comes first.
             p.onListened = { song, ms ->
                 val token = services.platform.secrets.get(io.max.paperplay.core.backup.SecretKeys.LISTENBRAINZ_TOKEN)

@@ -36,6 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.rounded.GraphicEq
 import io.max.paperplay.ui.components.AppIcon
 import io.max.paperplay.ui.state.SongUi
 import org.jetbrains.compose.ui.tooling.preview.Preview
@@ -55,23 +58,47 @@ fun LyricsPane(song: SongUi, backend: PlayerControls, large: Boolean, modifier: 
     val pos = backend.position.collectAsState()
     val current by remember(lines) { derivedStateOf { lines.indexOfLast { it.timeMs <= pos.value.positionMs } } }
     val list = rememberLazyListState()
-    LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem(maxOf(0, current - 2)) }
+    // The view follows the song until the person scrolls; then a "Sync" pill brings it back to the current line.
+    val dragged by list.interactionSource.collectIsDraggedAsState()
+    var following by remember(id) { mutableStateOf(true) }
+    LaunchedEffect(dragged) { if (dragged) following = false }
+    LaunchedEffect(current, following) {
+        if (following && current >= 0) {
+            // The current line rests about a third of the way down, so the next lines are already visible below it.
+            val offset = -(list.layoutInfo.viewportSize.height * 0.3f).toInt()
+            list.animateScrollToItem(current, offset)
+        }
+    }
     val ink = MaterialTheme.colorScheme.onPrimaryContainer
-    val style = if (large) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleLarge
+    val style = if (large) MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.ExtraBold, lineHeight = 46.sp)
+        else MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold, lineHeight = 32.sp)
     Box(modifier) {
         when {
             !loaded -> Text("Looking for lyrics", Modifier.padding(24.dp), style = style, color = ink.copy(alpha = 0.6f))
             text == null -> Text("No lyrics found for this song.", Modifier.padding(24.dp), style = style, color = ink.copy(alpha = 0.6f))
             lines.isEmpty() -> PlainLyrics(text.orEmpty(), style, ink, backend, song.durationSec * 1000L, Modifier.fillMaxSize())
-            else -> LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 48.dp)) {
+            else -> LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 120.dp, bottom = 320.dp)) {
                 itemsIndexed(lines) { i, l ->
+                    // Sung lines dim, the line being sung is full strength, and the lines still to come are a lighter tint.
+                    val alpha by androidx.compose.animation.core.animateFloatAsState(
+                        if (i == current) 1f else if (i < current) 0.32f else 0.62f, androidx.compose.animation.core.tween(300),
+                    )
                     Text(
                         l.text.ifBlank { " " },
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { backend.seekToMs(l.timeMs) }.padding(horizontal = 8.dp, vertical = 10.dp),
-                        style = style.copy(fontWeight = if (i == current) FontWeight.ExtraBold else FontWeight.SemiBold),
-                        color = if (i == current) ink else ink.copy(alpha = 0.4f),
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { following = true; backend.seekToMs(l.timeMs) }.padding(horizontal = 8.dp, vertical = if (large) 14.dp else 9.dp),
+                        style = style,
+                        color = ink.copy(alpha = alpha),
                     )
                 }
+            }
+        }
+        if (lines.isNotEmpty() && !following) androidx.compose.material3.Surface(
+            { following = true }, Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+            shape = RoundedCornerShape(50), color = ink, contentColor = MaterialTheme.colorScheme.primaryContainer,
+        ) {
+            Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppIcon(Icons.Rounded.GraphicEq, null, Modifier.size(18.dp))
+                Text("Sync", style = MaterialTheme.typography.titleSmall)
             }
         }
         androidx.compose.material3.IconButton({ choosing = true }, Modifier.align(Alignment.TopEnd)) {
