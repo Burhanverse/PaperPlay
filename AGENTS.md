@@ -86,6 +86,10 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - A cover or album match is never taken from a compilation ("Bravo Hits", "Top 100"): use `isCompilationAlbum` and `pickExternal(..., allowCompilation = false)` for covers.
 - Data that two devices both have is merged by one pure rule that gives the same answer on both sides (`remoteTagsWin`, `remoteLyricsWin`, `mergeSongData`); what was made by hand wins over what was found.
 - Tags from Telegram can be wrong (title and artist swapped, "Version - Artists" as the title). Fix them in `fixSwappedTags` and `repairSplitNames` (`Scanner.kt`), never by hand in the DB; a repair that must run again on existing libraries gets a new pref key (`split_names_vN`) and bumps `tags_at` so it wins the sync.
+- A song goes on Recently played after 30 s heard (`RECENT_AFTER_MS`), counted by playing time so seeking does not undercount; a private session (`PlaybackController.privateSession`) records nothing.
+- A device the person disconnected by hand (`LanSync.held`) is never dialled by `autoConnect` or `addDiscovered` and its dials are refused until `connect` is called for it.
+- True Audio (mpv exclusive output): seeks are coalesced and muted across the jump (`MpvPlayerEngine.seek`); no filters, so bit-perfect stays.
+- The phone visualizer is fed in `EngineAudioSink.tap`, because Media3 skips audio processors for float output.
 - Rewind: one press restarts the song, a second within 2.5 s goes back, the first song only restarts.
 
 ## Git

@@ -40,14 +40,18 @@ Built with Kotlin and Compose Multiplatform.
 - Queue editing, play next, shuffle and repeat, sleep timer, speed, a 10-band equalizer with presets, loudness
   levelling, and restore of your last session.
 - Synced lyrics (tap a line to jump) and plain lyrics that scroll along; format badge and an output-info dialog.
+- When a list ends (repeat off) a related song from your whole library is picked the way mixes are and plays on (Settings > Mixes >
+  Keep playing when a list ends). A song joins Recently played after 30 seconds. **Private session** (profile menu on the desktop) records
+  nothing for as long as it is on.
+- Lyrics are large and bold, sung lines dim, and a Sync pill returns to the current line after you scroll away.
 - Rewind restarts the song; a second press within 2.5 seconds goes to the song before it, and on the first song it only restarts.
 - Lyrics can be switched per song (translate button in the lyrics view: original, romanized, translation, other records) and the
   choice follows you to your other devices.
 - Artists in a credit like "A, B & C" are separate: each is its own tap target in the player, the song menu has "Go to" for
   every artist and the album, and an artist page lists every song they are credited on.
 - Android: media notification, **standby mode** (a dark clock screen with the song, a grayscale cover tile and a Lyrics
-  style that scrolls several lines with faded edges), volume follows the system volume.
-- Desktop: now playing view, full-screen player, always-on-top mini player, tray menu, media keys, keyboard shortcuts. With the optional mpv engine: one **Bit-perfect** switch (exclusive WASAPI output, equalizer and effects bypassed), equalizer, bass, crossfeed and stereo width.
+  style that scrolls several lines with faded edges; a button turns it to landscape, either side picked by the motion sensor, only while standby is open), volume follows the system volume.
+- Desktop: a top bar with back, home, search and the profile menu; now playing view, full-screen player, always-on-top mini player, tray menu, media keys, keyboard shortcuts. With the optional mpv engine: one **Bit-perfect** switch (exclusive WASAPI output, equalizer and effects bypassed), equalizer, bass, crossfeed and stereo width.
 - The cache limit also covers what your own account and extra bots download, and Clear cache clears all of it.
 
 **Info, covers and mixes**
@@ -67,8 +71,9 @@ Built with Kotlin and Compose Multiplatform.
   favorites, plays, playlists (with their Spotify link and waiting list), edited tags, song info, lyrics, covers and deleted
   songs. What you made by hand wins over what was found automatically; a deletion removes the song on the other device too
   (a sync that would remove more than 2% of the library removes nothing and says so in the log).
-- Linked devices show what the other plays and where the sound goes (headphones, speakers), can play, pause, skip and seek it,
-  and the source can be switched from the player. The PC reads its real Windows output.
+- Linked devices show what the other plays and where the sound goes (headphones, speakers), can play, pause, skip and seek it.
+  **Play on** sends the song and queue to the other device while this one keeps playing, **Move to** hands playback over, and a
+  device you disconnect by hand stays disconnected until you connect it again. The PC reads its real Windows output.
 - **Network play**: let other people on your Wi-Fi join a listening session with a PIN or link.
 
 **Backup**

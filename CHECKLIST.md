@@ -812,3 +812,14 @@ elease` must say Java 25 and the setup exe must start.
 - [ ] CI run 146 on `main`: every build job passed, "Publish release" failed at "Release notes and checksums" (log needed from GitHub).
 - [ ] `RecommenderTest.replay_learns_better_than_a_coin` fails every time (another session's uncommitted recs work, not covers).
 - [ ] Phone and PC library gap: after both scans, compare song counts; clear the deletion record first if the phone is lower.
+
+### Seek, devices, autoplay, recents, lyrics, top bar (20 Nov)
+- [~] PC True Audio: fast seeking no longer gives static (seeks coalesced 80 ms, muted across the jump, output reloaded on an under-run right after a seek).
+- [~] Linked devices: Disconnect sticks (`lan_held`, "bye" to the other side); Play on keeps both devices playing; Move to / Move back hands over; the queue is sent (`queue:<index>:<ms>`), so next and previous work there.
+- [~] A finished list (repeat off) continues with a related song (`RecMixes.next`, setting "Keep playing when a list ends").
+- [~] Recently played: 30 s, one row per song, last song of a list counted; Private session on the desktop profile menu.
+- [~] Visualizer fed again on the phone (`EngineAudioSink.tap`). Phone standby landscape button (gravity sensor, only in standby).
+- [~] Output pill: short name over a detail line. Lyrics: large bold lines, dim past, Sync pill. Desktop top bar with profile menu.
+- [ ] Try on the phone and PC: seek static, Play on / Move between PC and phone, autoplay at list end, recents after 30 s, private session, landscape standby sides (gravity x sign is a guess), lyrics Sync pill.
+- [ ] `JvmPlayerEngineTest.queuePlaysAdvancesSeeksAndStreamsViaRanges` (VLC) timed out once; not checked whether it fails without these changes.
+- [ ] PC visualizer (mpv/VLC have no `AudioTap` feed). Full-screen cover view and a scrolling now playing page (credits, artist, next in queue).
