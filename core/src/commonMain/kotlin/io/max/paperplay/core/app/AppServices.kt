@@ -125,10 +125,10 @@ class AppServices(
      * Both devices keep playing on their own. Nothing changes until the other side has answered.
      * False (nothing changed) when the other device did not answer in time or cannot play that song.
      */
-    suspend fun switchOutput(deviceId: String?): Boolean {
+    suspend fun switchOutput(deviceId: String?, move: Boolean = false): Boolean {
         val lan = lanSync ?: return false
         val from = _activeOutput.value
-        if (deviceId == from) return true
+        if (deviceId == from && !move) return true
         if (deviceId != null) {
             val np = if (playbackStarted) playback.nowPlaying.value else null
             val uid = np?.song?.unique_id
@@ -137,7 +137,7 @@ class AppServices(
                 _activeOutput.value = deviceId
                 return true
             }
-            if (!lan.sendControl(deviceId, "play:$uid:${np.positionMs}")) return false
+            if (!sendQueue(lan, deviceId, np.queue, np.index, np.positionMs)) return false
             val answered = kotlinx.coroutines.withTimeoutOrNull(6_000) {
                 while (true) {
                     val n = lan.remoteNow.value[deviceId]
@@ -147,13 +147,47 @@ class AppServices(
                 @Suppress("UNREACHABLE_CODE") false
             } == true
             if (!answered) { lan.sendControl(deviceId, "pause"); return false }
-            // This device keeps playing: each device plays its own song, and this screen only controls the chosen one.
+            // "Play on": this device keeps playing, each device plays its own song, and this screen controls the chosen one.
+            // "Move": the song and queue go over and this device stops.
+            if (move) playback.pause()
             _activeOutput.value = deviceId
             return true
         }
-        // Back to this device's own player; the other device keeps playing what it plays.
+        if (move && from != null) {
+            // Move back here: the song the other device plays (and the queue, when it sent one) continues here, and it stops.
+            val now = lan.remoteNow.value[from]
+            val uid = now?.uniqueId
+            if (uid != null && !playHere(uid, now.positionAt(System.currentTimeMillis()))) return false
+            lan.sendControl(from, "pause")
+        }
+        // Back to this device's own player; without "move" the other device keeps playing what it plays.
         _activeOutput.value = null
         return true
+    }
+
+    /** Sends [queue] to [deviceId] to play from [index] at [positionMs]; capped so the message stays small. */
+    suspend fun sendQueue(lan: io.max.paperplay.core.sync.LanSync, deviceId: String, queue: List<io.max.paperplay.core.library.Song>, index: Int, positionMs: Long): Boolean {
+        if (queue.isEmpty()) return false
+        val from = (index - 20).coerceAtLeast(0)
+        val part = queue.drop(from).take(400)
+        return lan.sendControl(deviceId, "queue:${index - from}:$positionMs", part.map { it.unique_id })
+    }
+
+    /** Plays [uids] from [index] here, as a queue sent by another device. Songs this library lacks are left out. */
+    private fun playHereQueue(uids: List<String>, index: Int, positionMs: Long) {
+        val songs = uids.mapNotNull { library.songByUniqueId(it) }
+        if (songs.isEmpty()) return
+        val want = uids.getOrNull(index)
+        val start = songs.indexOfFirst { it.unique_id == want }.coerceAtLeast(0)
+        playback.setQueue(songs, start)
+        scope.launch {
+            repeat(40) {
+                val np = playback.nowPlayingStatic.value
+                if (np.song?.unique_id == songs[start].unique_id && np.durationMs > 0) { if (positionMs > 0) playback.seek(positionMs); return@launch }
+                kotlinx.coroutines.delay(100)
+            }
+            if (positionMs > 0) playback.seek(positionMs)
+        }
     }
 
     /** Lets a paired device drive playback here, and tells linked devices what is playing and where the sound goes. */
@@ -161,7 +195,16 @@ class AppServices(
         scope.launch {
             lan.messages.collect { m ->
                 if (m.type != "control") return@collect
-                val action = runCatching { (kotlinx.serialization.json.Json.parseToJsonElement(m.body) as kotlinx.serialization.json.JsonObject)["action"]?.let { (it as kotlinx.serialization.json.JsonPrimitive).content } }.getOrNull()
+                val obj = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(m.body) as kotlinx.serialization.json.JsonObject }.getOrNull()
+                val action = runCatching { obj?.get("action")?.let { (it as kotlinx.serialization.json.JsonPrimitive).content } }.getOrNull()
+                if (action != null && action.startsWith("queue:")) {
+                    val parts = action.removePrefix("queue:").split(':')
+                    val uids = (obj?.get("uids") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty()
+                    val idx = parts.getOrNull(0)?.toIntOrNull()
+                    val pos = parts.getOrNull(1)?.toLongOrNull()
+                    if (idx != null && pos != null) playHereQueue(uids, idx, pos.coerceAtLeast(0))
+                    return@collect
+                }
                 when (val a = io.max.paperplay.core.sync.RemoteAction.parse(action)) {
                     io.max.paperplay.core.sync.RemoteAction.Play -> playback.play()
                     io.max.paperplay.core.sync.RemoteAction.Pause -> playback.pause()

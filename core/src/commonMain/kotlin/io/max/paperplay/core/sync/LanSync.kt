@@ -179,7 +179,10 @@ interface LanSync {
     /** What each linked device says it is playing, by device id. */
     val remoteNow: StateFlow<Map<String, RemoteNow>> get() = kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
     /** Asks a linked device to "play", "pause", "next", "previous", "seek:<ms>" or "play:<uniqueId>:<ms>" (play that song from there). False when it is not linked. */
-    suspend fun sendControl(deviceId: String, action: String): Boolean = false
+    suspend fun sendControl(deviceId: String, action: String): Boolean = sendControl(deviceId, action, emptyList())
+
+    /** As above, with "queue:<index>:<ms>" and [uids] to play that list from that song and place. */
+    suspend fun sendControl(deviceId: String, action: String, uids: List<String>): Boolean = false
 }
 
 /** The song a linked device is playing. */

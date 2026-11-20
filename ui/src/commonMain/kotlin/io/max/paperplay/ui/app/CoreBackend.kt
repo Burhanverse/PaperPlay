@@ -1136,9 +1136,9 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun songCover(uniqueId: String): String? = (byId[uniqueId] ?: repo.songByUniqueId(uniqueId))?.cover_path
 
     /** Moves playback to [deviceId] (null: this device). Tells the user when it cannot be done. */
-    fun switchOutput(deviceId: String?, notice: (String) -> Unit = {}) {
+    fun switchOutput(deviceId: String?, move: Boolean = false, notice: (String) -> Unit = {}) {
         scope.launch {
-            if (!services.switchOutput(deviceId)) notice(if (deviceId == null) "Could not take playback back" else "Could not reach that device")
+            if (!services.switchOutput(deviceId, move)) notice(if (deviceId == null) "Could not take playback back" else "Could not reach that device")
         }
     }
 
@@ -1255,7 +1255,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         // While another device is chosen, the song plays there; this device keeps what it plays.
         val target = services.activeOutput.value
         val lan = services.lanSync
-        if (target != null && lan != null) { scope.launch { lan.sendControl(target, "play:${list[start].unique_id}:0") }; return }
+        if (target != null && lan != null) { scope.launch { services.sendQueue(lan, target, list, start, 0) }; return }
         withPlayer { it.setQueue(list, start) }
     }
 

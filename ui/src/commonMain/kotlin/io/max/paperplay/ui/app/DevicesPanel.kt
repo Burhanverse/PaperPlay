@@ -58,9 +58,18 @@ fun rememberLanSync(backend: CoreBackend): LanSync? {
 }
 
 /** Where the player's controls go, and the way to change it. [active] is null for this device, else a linked device's id. */
-class OutputSwitch(val active: kotlinx.coroutines.flow.StateFlow<String?>, val switchTo: (String?) -> Unit)
+class OutputSwitch(val active: kotlinx.coroutines.flow.StateFlow<String?>, val switchTo: (String?) -> Unit, val moveTo: (String?) -> Unit)
 
 val LocalOutputSwitch = compositionLocalOf<OutputSwitch?> { null }
+
+/** "Headphones (Realtek(R) Audio)" becomes "Headphones" and "Realtek Audio"; a name without a trailing bracket is kept whole. */
+internal fun splitDeviceName(raw: String): Pair<String, String?> {
+    val name = raw.trim()
+    val cut = name.indexOf(" (")
+    if (cut <= 0 || !name.endsWith(")")) return name to null
+    val detail = name.substring(cut + 2).removeSuffix(")").replace("(R)", "").replace("(TM)", "").replace(Regex("\\s+"), " ").trim()
+    return name.substring(0, cut).trim() to detail.ifBlank { null }
+}
 
 /**
  * Other PaperPlay devices for the player's device pickers (desktop popup, phone sheet): each linked device with what it plays
@@ -92,7 +101,7 @@ fun LanDevicesSection(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AppIcon(Icons.Rounded.Devices, null, Modifier.size(28.dp), tint = scheme.primary)
-            Text("Play on this device", Modifier.weight(1f).padding(horizontal = 14.dp), style = MaterialTheme.typography.titleMedium, color = scheme.primary)
+            Text("Control this device", Modifier.weight(1f).padding(horizontal = 14.dp), style = MaterialTheme.typography.titleMedium, color = scheme.primary)
         }
         for (d in connected) {
             val n = now[d.id]
@@ -121,6 +130,11 @@ fun LanDevicesSection(modifier: Modifier = Modifier) {
                         listOfNotNull(if (isActive) "Controlled from here" else null, via?.let { "via $it" }).joinToString(" · "),
                         style = muted, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
+                    // Play on: both keep playing. Move: the song and queue go over and the other one stops.
+                    if (d.paired && output != null) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        androidx.compose.material3.FilterChip(false, { output.switchTo(if (isActive) null else d.id) }, { Text(if (isActive) "Control here" else "Play on", style = muted) })
+                        androidx.compose.material3.FilterChip(false, { output.moveTo(if (isActive) null else d.id) }, { Text(if (isActive) "Move back" else "Move to", style = muted) })
+                    }
                 }
                 if (d.paired) {
                     IconButton({ scope.launch { lan.sendControl(d.id, "previous") } }, Modifier.size(36.dp)) { AppIcon(Icons.Rounded.SkipPrevious, "Previous on ${d.name}", Modifier.size(22.dp)) }
@@ -188,8 +202,9 @@ internal fun PhoneDevicesDialog(onOpen: (String) -> Unit, switchOutput: (() -> U
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(out.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("This phone", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                    val (outTitle, outDetail) = splitDeviceName(out.name)
+                    Text(outTitle, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(listOfNotNull("This phone", outDetail).joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (current != null) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         AppIcon(Icons.Rounded.GraphicEq, null, Modifier.size(18.dp), tint = scheme.primary)
                         Text(

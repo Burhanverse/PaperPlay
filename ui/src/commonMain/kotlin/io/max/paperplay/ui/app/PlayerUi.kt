@@ -291,8 +291,8 @@ private fun PlayerBody(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     Row(
                         Modifier.clip(RoundedCornerShape(50)).background(scheme.onSurface.copy(alpha = 0.14f))
-                            .clickable(enabled = switchOutput != null || onDevices != null) { if (onDevices != null) devicesOpen = true else switchOutput?.invoke() }.padding(horizontal = 18.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            .clickable(enabled = switchOutput != null || onDevices != null) { if (onDevices != null) devicesOpen = true else switchOutput?.invoke() }.padding(horizontal = 20.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         AppIcon(
                             when {
@@ -301,8 +301,15 @@ private fun PlayerBody(
                                 else -> Icons.Rounded.PhoneAndroid
                             }, null, Modifier.size(20.dp),
                         )
-                        Text(
-                            if (remoteDevice != null) "Playing on ${remoteDevice.name}" + (LocalLanSync.current?.remoteNow?.collectAsState()?.value?.get(remoteDevice.id)?.outName?.let { " via $it" } ?: "") else out.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, modifier = Modifier.widthIn(max = 200.dp))
+                        // A short name with a quiet line under it: "Headphones" over "Realtek Audio", or "Playing on Phone" over "via Buds".
+                        val (title, caption) = if (remoteDevice != null) {
+                            val via = LocalLanSync.current?.remoteNow?.collectAsState()?.value?.get(remoteDevice.id)?.outName?.let { splitDeviceName(it).first }
+                            "Playing on ${remoteDevice.name}" to via?.let { "via $it" }
+                        } else splitDeviceName(out.name)
+                        Column(Modifier.widthIn(max = 220.dp)) {
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                            if (caption != null) Text(caption, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = scheme.onSurface.copy(alpha = 0.6f))
+                        }
                     }
                 }
                 if (devicesOpen && onDevices != null) PhoneDevicesDialog(onDevices, switchOutput, if (remoteDevice == null) song else null) { devicesOpen = false }

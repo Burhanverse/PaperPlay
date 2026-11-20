@@ -852,9 +852,14 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         }.isSuccess
     }
 
-    override suspend fun sendControl(deviceId: String, action: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun sendControl(deviceId: String, action: String, uids: List<String>): Boolean = withContext(Dispatchers.IO) {
         val p = peers[deviceId] ?: return@withContext false
-        runCatching { p.send(buildJsonObject { put("t", "control"); put("action", action) }) }.isSuccess
+        runCatching {
+            p.send(buildJsonObject {
+                put("t", "control"); put("action", action)
+                if (uids.isNotEmpty()) put("uids", buildJsonArray { for (u in uids) add(u) })
+            })
+        }.isSuccess
     }
 
     /** Dials every paired device that is not linked, now and then, so devices find each other without a tap. */
