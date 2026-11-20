@@ -13,6 +13,13 @@ expect fun clockNow(): ClockParts
 @Composable
 expect fun StandbyWindowEffect(brightness: Float)
 
+/**
+ * While composed and [on]: turns the screen to match how the phone is held (either landscape side or upright), read from the
+ * gravity sensor. The system auto-rotate setting is not touched and the orientation is given back when this leaves. No-op on desktop.
+ */
+@Composable
+expect fun StandbyOrientation(on: Boolean)
+
 /** Battery level 0..100, or null where unknown (desktop). */
 @Composable
 expect fun rememberBatteryPercent(): Int?

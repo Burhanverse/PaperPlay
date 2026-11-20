@@ -57,7 +57,9 @@ favorites:
 SELECT * FROM songs WHERE favorite = 1 ORDER BY title ASC;
 
 recent:
-SELECT * FROM songs WHERE last_played_at IS NOT NULL ORDER BY last_played_at DESC LIMIT :limit;
+SELECT s.* FROM songs s WHERE s.last_played_at IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM songs o WHERE o.unique_id = s.unique_id AND (o.last_played_at > s.last_played_at OR (o.last_played_at = s.last_played_at AND o.rowid > s.rowid)))
+ORDER BY s.last_played_at DESC LIMIT :limit;
 
 songsInChat:
 SELECT * FROM songs WHERE chat_id = :chatId ORDER BY message_id ASC;

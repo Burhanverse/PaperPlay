@@ -23,6 +23,8 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
     private var handle = 0L
     private var active = false
     private var enc = C.ENCODING_INVALID
+    private var channels = 2
+    private var rate = 44100
     private var applied: List<Float>? = null
     private var appliedBass = 0f
     private var appliedExact = false
@@ -45,6 +47,8 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         PlaybackCore.engineOut = if (active) "32-bit float, ${f.sampleRate} Hz, ${f.channelCount} ch" else null
         if (!active) { super.configure(config); return }
         enc = e
+        channels = f.channelCount
+        rate = f.sampleRate
         handle = EngineNative.create(f.sampleRate, f.channelCount)
         applied = null
         appliedBass = 0f
@@ -98,6 +102,7 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         if (corr !== appliedCorrection) { EngineNative.setCorrection(handle, corr ?: FloatArray(0)); appliedCorrection = corr; PlayLog.log("engine", "correction ${(corr?.size ?: 0) / 4} filters") }
         val opts = PlaybackCore.options
         if (opts != appliedOptions) { EngineNative.setOptions(handle, opts); appliedOptions = opts; PlayLog.log("engine", "options $opts") }
+        tap(src, samples)
         val kind = when (enc) { C.ENCODING_PCM_16BIT -> 0; C.ENCODING_PCM_24BIT -> 1; C.ENCODING_PCM_FLOAT -> 3; else -> 2 }
         // Decoder buffers are direct, so Rust reads them in place; anything else is converted here first.
         if (!src.isDirect || EngineNative.processPcm(handle, src, src.position(), kind, samples, out) != samples) {
@@ -122,8 +127,27 @@ internal class EngineAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
         return out
     }
 
-    override fun flush() { pending = null; if (handle != 0L) EngineNative.reset(handle); super.flush() }
-    override fun reset() { freeEngine(); super.reset() }
+    /**
+     * Feeds a mono mix of [samples] samples of [src] to [AudioTap], for the standby visualizer. The wrapped sink gets float, and
+     * Media3 skips its processors for float, so the tap in [TapProcessor] never sees the audio while the engine is on.
+     */
+    private fun tap(src: ByteBuffer, samples: Int) {
+        val ch = channels.coerceAtLeast(1)
+        val s = src.duplicate().order(ByteOrder.nativeOrder())
+        repeat(samples / ch) {
+            var sum = 0f
+            for (c in 0 until ch) sum += when (enc) {
+                C.ENCODING_PCM_FLOAT -> s.getFloat()
+                C.ENCODING_PCM_16BIT -> s.getShort() / 32768f
+                C.ENCODING_PCM_24BIT -> (((s.get().toInt() and 0xff) or ((s.get().toInt() and 0xff) shl 8) or (s.get().toInt() shl 16)) / 8388608f)
+                else -> s.getInt() / 2147483648f
+            }
+            AudioTap.push(rate, sum / ch)
+        }
+    }
+
+    override fun flush() { pending = null; if (handle != 0L) EngineNative.reset(handle); AudioTap.reset(); super.flush() }
+    override fun reset() { freeEngine(); AudioTap.reset(); super.reset() }
     private fun freeEngine() { pending = null; if (handle != 0L) EngineNative.destroy(handle); handle = 0; active = false; PlaybackCore.engineActive = false }
 }
 

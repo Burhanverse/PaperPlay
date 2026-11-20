@@ -61,6 +61,10 @@ class StandbyPrefs(private val read: (String) -> String?, private val write: (St
         private set
     var pixelShift by mutableStateOf(read("standby_shift") != "false")
         private set
+    /** Turn standby with the phone (the motion sensor picks the side), whatever the system's auto-rotate says. Only while standby is on. */
+    var landscape by mutableStateOf(read("standby_landscape") == "true")
+        private set
+    fun putLandscape(on: Boolean) { landscape = on; write("standby_landscape", "$on") }
     private val widgets = mutableStateOf(StandbyWidget.entries.filter { read("standby_w_${it.key}")?.let { v -> v == "true" } ?: it.default }.toSet())
 
     fun shows(w: StandbyWidget) = w in widgets.value

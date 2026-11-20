@@ -121,8 +121,8 @@ class AppServices(
     }
 
     /**
-     * Hands playback to [deviceId], or back here when null. Nothing changes until the other side has answered: this device keeps
-     * playing and keeps its screen until [deviceId] reports the song, and only then pauses and shows the other device.
+     * Sends the song playing here to [deviceId] and makes this screen control that device, or back to this device when null.
+     * Both devices keep playing on their own. Nothing changes until the other side has answered.
      * False (nothing changed) when the other device did not answer in time or cannot play that song.
      */
     suspend fun switchOutput(deviceId: String?): Boolean {
@@ -147,15 +147,11 @@ class AppServices(
                 @Suppress("UNREACHABLE_CODE") false
             } == true
             if (!answered) { lan.sendControl(deviceId, "pause"); return false }
-            playback.pause()
+            // This device keeps playing: each device plays its own song, and this screen only controls the chosen one.
             _activeOutput.value = deviceId
             return true
         }
-        // Back here: take over the song and position the other device reports, then silence it.
-        val now = lan.remoteNow.value[from]
-        val uid = now?.uniqueId
-        if (uid != null && !playHere(uid, now.positionAt(System.currentTimeMillis()))) return false
-        if (from != null) lan.sendControl(from, "pause")
+        // Back to this device's own player; the other device keeps playing what it plays.
         _activeOutput.value = null
         return true
     }
@@ -174,8 +170,6 @@ class AppServices(
                     is io.max.paperplay.core.sync.RemoteAction.Seek -> playback.seek(a.positionMs)
                     is io.max.paperplay.core.sync.RemoteAction.PlaySong -> {
                         playHere(a.uniqueId, a.positionMs)
-                        // This device plays now, so it no longer controls another one.
-                        _activeOutput.value = null
                     }
                     null -> Unit
                 }
@@ -203,8 +197,8 @@ class AppServices(
                 val np = if (started) playback.nowPlayingStatic.value else null
                 val uid = np?.song?.unique_id
                 val playing = np?.isPlaying == true
-                // Playing here again ends control of another device.
-                if (playing && _activeOutput.value != null) _activeOutput.value = null
+                // A device that was disconnected (by hand or by distance) is no longer the output, or the controls keep aiming at it.
+                _activeOutput.value?.let { id -> if (lan.connected.value.none { it.id == id }) _activeOutput.value = null }
                 // Nothing plays here (stopped or paused) and a paired device plays: this screen switches to what that device plays,
                 // after a moment so a quick pause is not taken for it.
                 val leader = if (playing || _activeOutput.value != null) null

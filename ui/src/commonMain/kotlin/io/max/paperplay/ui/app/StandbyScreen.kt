@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
@@ -54,6 +55,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.max.paperplay.core.recs.WeatherKind
 import io.max.paperplay.ui.AlertIcon
+import io.max.paperplay.ui.StandbyOrientation
 import io.max.paperplay.ui.StandbyWindowEffect
 import io.max.paperplay.ui.rememberCharging
 import io.max.paperplay.ui.rememberStandbyAlerts
@@ -77,6 +79,7 @@ fun StandbyScreen(state: PlaybackUiState, backend: PlayerControls, prefs: Standb
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         StandbyWindowEffect(prefs.dim)
+        StandbyOrientation(prefs.landscape)
         StandbyContent(state, backend, prefs, onClose)
     }
 }
@@ -185,8 +188,14 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
         var hint by remember { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(3000); hint = false }
         val hintAlpha by androidx.compose.animation.core.animateFloatAsState(if (armed) 0.7f else if (hint) 0.35f else 0f, androidx.compose.animation.core.tween(1500))
-        IconButton({ sheet = true }, Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-            AppIcon(Icons.Rounded.Settings, "Customise standby", tint = tone.copy(alpha = hintAlpha))
+        androidx.compose.foundation.layout.Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+            IconButton({ p.putLandscape(!p.landscape) }) {
+                AppIcon(Icons.Rounded.ScreenRotation, if (p.landscape) "Landscape standby on" else "Landscape standby off",
+                    tint = tone.copy(alpha = if (p.landscape) maxOf(hintAlpha, 0.5f) else hintAlpha))
+            }
+            IconButton({ sheet = true }) {
+                AppIcon(Icons.Rounded.Settings, "Customise standby", tint = tone.copy(alpha = hintAlpha))
+            }
         }
         if (sheet) StandbyCustomiseSheet(p) { sheet = false }
     }

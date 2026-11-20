@@ -11,6 +11,9 @@ actual fun clockNow(): ClockParts {
 actual fun StandbyWindowEffect(brightness: Float) {}
 
 @Composable
+actual fun StandbyOrientation(on: Boolean) {}
+
+@Composable
 actual fun rememberBatteryPercent(): Int? = null
 
 /** The default Windows output ("Speakers (Realtek(R) Audio)", "Headphones (...)"), looked at again every few seconds. */

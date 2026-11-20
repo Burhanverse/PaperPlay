@@ -31,6 +31,9 @@ private const val SESSION_POS = "session_pos"
 /** The largest step between two position updates that is playing; a bigger forward jump is a seek, not listening. */
 private const val MAX_LISTEN_STEP_MS = 5_000L
 
+/** A song goes on Recently played once this much of it was heard, from any screen or source. */
+const val RECENT_AFTER_MS = 30_000L
+
 /** A second rewind press within this long goes to the song before; one press only plays the song again from the start. */
 const val PREVIOUS_AGAIN_MS = 2_500L
 
@@ -163,7 +166,7 @@ class PlaybackController(
                 val step = pos - lastPos
                 if (step in 1..MAX_LISTEN_STEP_MS) listenedMs += step
                 val l = listening
-                if (l != null && listenedMs >= 5_000 && markedFor != l.unique_id && l.remote_id != NETPLAY_REMOTE) {
+                if (l != null && listenedMs >= RECENT_AFTER_MS && markedFor != l.unique_id && l.remote_id != NETPLAY_REMOTE) {
                     markedFor = l.unique_id
                     runCatching { repo.markPlayedNow(l) }
                 }
@@ -192,10 +195,12 @@ class PlaybackController(
                     launch { runCatching { resolver.pauseAll() } }
                 }
                 if (state != PlayerState.Ended) return@collect
+                // The last song of the queue has no song change after it, so its listen is closed here.
+                finishListening()
                 when (meta.value.repeat) {
                     Repeat.ONE -> engine.play()
                     Repeat.ALL -> restart()
-                    Repeat.OFF -> Unit
+                    Repeat.OFF -> launch { continueWithSuggestion() }
                 }
             }
         }
@@ -215,6 +220,26 @@ class PlaybackController(
             // TODO: use the non-notifying (notify=false) variant once LibraryRepository has it.
             if (h != null) repo.setAudioDetails(song.unique_id, h)
             return
+        }
+    }
+
+    /**
+     * Picks the song that should follow a queue that ran out, given the queue so far; null for none. Set by the owner,
+     * from the recommender. Left null, a finished queue just ends.
+     */
+    @kotlin.concurrent.Volatile
+    var suggestNext: (suspend (List<Song>) -> Song?)? = null
+
+    private suspend fun continueWithSuggestion() {
+        val q = meta.value.queue
+        if (q.isEmpty()) return
+        val pick = runCatching { suggestNext?.invoke(q) }.getOrNull() ?: return
+        // The user may have started something else while the suggestion was worked out.
+        if (engine.state.value != PlayerState.Ended || meta.value.queue !== q) return
+        command {
+            original = original + pick
+            apply(q + pick, q.size, 0)
+            engine.play()
         }
     }
 

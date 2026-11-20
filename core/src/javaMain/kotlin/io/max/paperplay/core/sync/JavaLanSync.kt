@@ -128,6 +128,19 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private val _remoteNow = MutableStateFlow<Map<String, RemoteNow>>(emptyMap())
     private var autoJob: Job? = null
 
+    // Devices the person disconnected by hand: never dialled, and their dials are refused, until the person connects them again.
+    private val _held = MutableStateFlow(lib.pref("lan_held")?.split(',')?.filter { it.isNotBlank() }?.toSet().orEmpty())
+    // Devices that said goodbye to this one: not dialled by the rounds below until they dial in or this one connects them.
+    private val byed = ConcurrentHashMap.newKeySet<String>()
+    override val held: StateFlow<Set<String>> get() = _held
+
+    private fun setHeld(id: String, on: Boolean) {
+        _held.update { if (on) it + id else it - id }
+        lib.setPref("lan_held", _held.value.joinToString(","))
+    }
+
+    private fun autoBlocked(id: String) = id in _held.value || id in byed
+
     override val listening: StateFlow<Boolean> get() = _listening
     override val port: StateFlow<Int> get() = _port
     override val deviceName: StateFlow<String> get() = _name
@@ -294,6 +307,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         when (method) {
             "key" -> {
                 val p = _paired.value.firstOrNull { it.id == id } ?: throw AuthFail(LanFailure.NotPaired)
+                if (id in _held.value) throw AuthFail(LanFailure.NotReady)
                 if (!b64d(p.publicKey).contentEquals(spub)) throw AuthFail(LanFailure.BadProof)
                 val dh = X25519.shared(identityPriv, spub)
                 if (!constantEq(proof(dh, "key", "client", t, spub), theirProof)) throw AuthFail(LanFailure.BadProof)
@@ -351,6 +365,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     }
 
     private fun register(p: Peer) {
+        // The other device dialled in on purpose: it wants the link back.
+        byed.remove(p.info.id)
         peers.put(p.info.id, p)?.close()
         publishConnected()
         // A new link exchanges song data at once (what one device lacks, the other fills in), then now and then while it lasts.
@@ -421,6 +437,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 _messages.tryEmit(LanMessage(p.info.id, "nowplaying", m.toString()))
             }
             "queue" -> _messages.tryEmit(LanMessage(p.info.id, "queue", m.toString()))
+            "bye" -> byed.add(p.info.id)
             // Only a paired device may drive playback; a device that linked with the token alone may not.
             "control" -> if (p.info.paired) _messages.tryEmit(LanMessage(p.info.id, "control", m.toString()))
             else -> Unit
@@ -531,6 +548,9 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
 
     override suspend fun connect(deviceId: String): ConnectResult = withContext(Dispatchers.IO) {
         peers[deviceId]?.let { return@withContext ConnectResult(true, null, it.info) }
+        // Asked for, by the person or by a round that already skipped the held ones.
+        if (deviceId in _held.value) setHeld(deviceId, false)
+        byed.remove(deviceId)
         val label = _paired.value.firstOrNull { it.id == deviceId }?.name ?: deviceId
         _connecting.update { it + label }
         try { dialPaired(deviceId) } finally { _connecting.update { it - label } }
@@ -552,7 +572,13 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     }
 
     override suspend fun disconnect(deviceId: String) {
-        peers[deviceId]?.close()
+        // Remembered, or the rounds that link paired devices would dial it again within seconds.
+        setHeld(deviceId, true)
+        peers[deviceId]?.let { p ->
+            // Tells the other device, so it does not dial back either.
+            runCatching { p.send(buildJsonObject { put("t", "bye") }) }
+            p.close()
+        }
     }
 
     // Sync
@@ -615,6 +641,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     override suspend fun unpair(deviceId: String) {
         withContext(Dispatchers.IO) {
             synchronized(lock) { savePaired(_paired.value.filter { it.id != deviceId }) }
+            if (deviceId in _held.value) setHeld(deviceId, false)
             peers[deviceId]?.close()
         }
     }
@@ -763,12 +790,12 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         if (known) bk { learn(d.host, d.port, d.id, d.name, AddressState.Seen) }
         _discovered.value = (listOf(d) + _discovered.value.filter { it.id != d.id && it.lastSeen >= cutoff }).sortedByDescending { it.lastSeen }
         // A paired device that shows up, at its old address or a new one, is linked at once instead of at the next 20 second round.
-        if (d.paired && _listening.value && !peers.containsKey(d.id) && autoDialing.add(d.id)) {
+        if (d.paired && _listening.value && !peers.containsKey(d.id) && !autoBlocked(d.id) && autoDialing.add(d.id)) {
             io.launch {
                 try {
                     // Both sides see each other's announcement; a short random wait and a second look keep double dials rare.
                     delay((150..900).random().toLong())
-                    if (!peers.containsKey(d.id) && _connecting.value.isEmpty()) runCatching { connect(d.id) }
+                    if (!peers.containsKey(d.id) && !autoBlocked(d.id) && _connecting.value.isEmpty()) runCatching { connect(d.id) }
                 } finally { autoDialing.remove(d.id) }
             }
         }
@@ -835,10 +862,10 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         delay(2_000)
         while (_listening.value) {
             for (d in _paired.value) {
-                if (peers.containsKey(d.id) || _connecting.value.isNotEmpty()) continue
+                if (peers.containsKey(d.id) || autoBlocked(d.id) || _connecting.value.isNotEmpty()) continue
                 // Both sides may dial at once; a short random wait and a second look keep that rare.
                 delay((200..2_500).random().toLong())
-                if (peers.containsKey(d.id)) continue
+                if (peers.containsKey(d.id) || autoBlocked(d.id)) continue
                 runCatching { connect(d.id) }
             }
             delay(20_000)

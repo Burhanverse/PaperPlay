@@ -24,6 +24,37 @@ object RecMixes {
     private const val PER_ARTIST = 3
     private const val REST_MS = 2 * 86_400_000L
 
+    /**
+     * The song to play after [queue] ran out: the model's pick that sounds like, or tends to follow, the last song, from the whole
+     * library. Never a song already in the queue, one the person rejected, or one by the last song's artist more than once in a row.
+     */
+    suspend fun next(
+        songs: List<Song>,
+        vectors: Map<String, FloatArray>,
+        events: List<PlayEvent>,
+        lists: List<TasteList>,
+        now: Moment,
+        queue: List<Song>,
+    ): Song? = withContext(Dispatchers.Default) {
+        val last = queue.lastOrNull() ?: return@withContext null
+        val inLists = HashMap<String, Int>()
+        for (l in lists) for (id in l.songIds) inLists[id] = (inLists[id] ?: 0) + 1
+        val rec = Recommender.build(
+            songs.map { RecSong(it.unique_id, it.artist, it.genre, it.favorite, inLists[it.unique_id] ?: 0) }, vectors, events, now.epochMs,
+        )
+        val byId = songs.associateBy { it.unique_id }
+        val taken = queue.map { it.unique_id }.toSet()
+        val rejected = events.filter { it.heardMs == 0L }.map { it.uid }.toSet()
+        val lastArtist = firstArtist(last.artist).lowercase()
+        val after = rec.rank(now.hour, after = last.unique_id, exclude = taken + rejected).toMap()
+        val close = rec.similar(last.unique_id, 40).filter { it.first !in taken && it.first !in rejected }
+        // Close songs first, ordered by how much the model expects them to land; the rest of the ranking fills in when few are close.
+        val pool = close.map { it.first }.sortedByDescending { after[it] ?: 0.0 } + after.entries.sortedByDescending { it.value }.map { it.key }
+        pool.asSequence().mapNotNull { byId[it] }
+            .firstOrNull { firstArtist(it.artist).lowercase() != lastArtist }
+            ?: pool.firstNotNullOfOrNull { byId[it] }
+    }
+
     suspend fun build(
         songs: List<Song>,
         vectors: Map<String, FloatArray>,

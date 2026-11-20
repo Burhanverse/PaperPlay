@@ -259,6 +259,24 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
+    /** When a queue runs out (repeat off), play a related song picked from the whole library instead of stopping. */
+    val keepPlaying = MutableStateFlow(repo.pref("keep_playing") != "false")
+
+    fun setKeepPlaying(on: Boolean) {
+        keepPlaying.value = on
+        repo.setPref("keep_playing", "$on")
+    }
+
+    private suspend fun suggestAfter(queue: List<Song>): Song? {
+        if (!keepPlaying.value) return null
+        val songs = repo.allSongs().first()
+        val t = taste.value
+        val events = services.playEvents.all().let { ev -> if (t.useListens) ev else ev.filter { it.heardMs == 0L } }
+        return io.max.paperplay.core.recs.RecMixes.next(
+            songs, services.audioFeatures.all(), events, tasteLists(songs.filter { it.favorite }, t), nowMoment(), queue,
+        )
+    }
+
     val http: HttpFetcher = io.max.paperplay.core.integrations.defaultHttpFetcher()
 
     /** Cover art for tracks a playlist lists but the library does not have (saved in the covers folder, fetched once). */
@@ -1037,6 +1055,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)
             if (speed.value != 1f) p.setSpeed(speed.value)
             if (normalizeOn.value && !bp) p.setNormalize(true)
+            p.suggestNext = { queue -> suggestAfter(queue) }
             // A listen counts after half the song or four minutes, whichever comes first.
             p.onListened = { song, ms ->
                 val token = services.platform.secrets.get(io.max.paperplay.core.backup.SecretKeys.LISTENBRAINZ_TOKEN)
@@ -1233,6 +1252,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val list = songs.mapNotNull { byId[it.id] }
         if (list.isEmpty()) return
         val start = list.indexOfFirst { it.unique_id == songs.getOrNull(index)?.id }.coerceAtLeast(0)
+        // While another device is chosen, the song plays there; this device keeps what it plays.
+        val target = services.activeOutput.value
+        val lan = services.lanSync
+        if (target != null && lan != null) { scope.launch { lan.sendControl(target, "play:${list[start].unique_id}:0") }; return }
         withPlayer { it.setQueue(list, start) }
     }
 

@@ -135,7 +135,11 @@ interface LanSync {
     suspend fun connectWithToken(host: String, port: Int): ConnectResult
     /** Links to a paired device, trying every saved address of it, newest first (then a discovered one). */
     suspend fun connect(deviceId: String): ConnectResult
+    /** Disconnects and keeps it that way: the device is not dialled, and its dials are refused, until [connect] is called for it. */
     suspend fun disconnect(deviceId: String)
+
+    /** Paired devices the person disconnected by hand and who stay disconnected. */
+    val held: StateFlow<Set<String>>
 
     /** Merges song data with one linked device, or with all when [deviceId] is null; both sides end equal. */
     suspend fun syncNow(deviceId: String? = null): SyncResult

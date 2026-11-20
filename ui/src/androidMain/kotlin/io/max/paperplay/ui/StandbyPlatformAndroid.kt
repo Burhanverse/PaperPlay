@@ -60,6 +60,48 @@ actual fun StandbyWindowEffect(brightness: Float) {
 }
 
 @Composable
+actual fun StandbyOrientation(on: Boolean) {
+    val ctx = LocalContext.current
+    DisposableEffect(on) {
+        val activity = generateSequence(ctx) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+        if (!on || activity == null || sm == null || sensor == null) return@DisposableEffect onDispose {}
+        val before = activity.requestedOrientation
+        var current = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        var candidate = current
+        var since = 0L
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                val x = e.values[0]
+                val y = e.values[1]
+                // Gravity along the screen's long edge: upright. Along the short edge: lying on one side. Flat on a table: keep what it is.
+                val want = when {
+                    x > 6.5f && x > kotlin.math.abs(y) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                    x < -6.5f && -x > kotlin.math.abs(y) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                    y > 6.5f && y > kotlin.math.abs(x) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    y < -6.5f && -y > kotlin.math.abs(x) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+                    else -> return
+                }
+                val now = e.timestamp / 1_000_000L
+                if (want != candidate) { candidate = want; since = now; return }
+                // Held for a third of a second, so a jolt does not turn the screen.
+                if (want != current && now - since >= 350) {
+                    current = want
+                    runCatching { activity.requestedOrientation = want }
+                }
+            }
+        }
+        sm.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+        onDispose {
+            runCatching { sm.unregisterListener(listener) }
+            runCatching { activity.requestedOrientation = before }
+        }
+    }
+}
+
+@Composable
 actual fun rememberBatteryPercent(): Int? {
     val ctx = LocalContext.current
     var pct by remember { mutableStateOf<Int?>(null) }

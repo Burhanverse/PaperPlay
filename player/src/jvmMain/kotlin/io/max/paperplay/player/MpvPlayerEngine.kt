@@ -120,7 +120,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 MpvC.EVENT_START_FILE -> cmd { onStartFile() }
                 MpvC.EVENT_FILE_LOADED -> cmd { onFileLoaded() }
                 MpvC.EVENT_AUDIO_RECONFIG -> cmd { onAudioReconfig() }
-                MpvC.EVENT_PLAYBACK_RESTART -> cmd { publishInfo() }
+                MpvC.EVENT_PLAYBACK_RESTART -> cmd { endSeekMute(); publishInfo() }
                 MpvC.EVENT_END_FILE -> { val reason = ev.getPointer(16)?.getInt(0) ?: MpvC.END_EOF; cmd { onEndFile(reason) } }
             }
         }
@@ -159,7 +159,10 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         val prefix = p.getPointer(0)?.getString(0, "UTF-8") ?: return
         val text = p.getPointer(16)?.getString(0, "UTF-8")?.trim() ?: return
         // The output has fallen behind for good (heard as static and slow sound): open it again, the way switching bit-perfect off and on does.
-        if (exclusive && prefix.startsWith("ao") && text.startsWith("Under-run") && underruns.hit()) cmd { reloadOutput("under-runs") }
+        // Right after a seek one under-run is enough: that is the burst that leaves the exclusive buffer starved.
+        if (exclusive && prefix.startsWith("ao") && text.startsWith("Under-run") && (underruns.hit() || System.currentTimeMillis() - seekAt < 500)) {
+            cmd { reloadOutput("under-runs"); endSeekMute() }
+        }
         val line = "$prefix: $text"
         if (line == lastLog) return
         lastLog = line
@@ -188,6 +191,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     }
 
     private fun onStartFile() {
+        endSeekMute()
         val pos = int("playlist-playing-pos") ?: 0
         // mpv moved on to the appended song by itself: drop what already played from its list.
         if (pos > 0 && pos < playlist.size) repeat(pos) { playlist.removeAt(0); command("playlist-remove", "0") }
@@ -284,12 +288,27 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         if (i > 0 && _positionMs.value <= RESTART_THRESHOLD_MS) start(i - 1)
         else if (i >= 0) command("seek", "0", "absolute+exact")
     }
-    override fun seek(positionMs: Long) = cmd {
-        seekTarget = positionMs; seekAt = System.currentTimeMillis()
-        // Nothing loaded yet (a session being restored): remember the place, the song is opened there once it has loaded.
-        if (!loaded) { resumeAtMs = positionMs.coerceAtLeast(0); return@cmd }
-        command("seek", "%.3f".format(java.util.Locale.ROOT, positionMs.coerceAtLeast(0) / 1000.0), "absolute+exact")
+    @Volatile private var pendingSeek = Long.MIN_VALUE
+    @Volatile private var seekMuted = false
+
+    override fun seek(positionMs: Long) {
+        pendingSeek = positionMs
+        cmd {
+            // A burst of seeks (dragging, tapping lyrics) is cut to the last one: each seek in exclusive output restarts the device
+            // buffer, and restarting it again and again is heard as static.
+            if (pendingSeek != positionMs) return@cmd
+            if (loaded && exclusive) Thread.sleep(SEEK_SETTLE_MS)
+            if (pendingSeek != positionMs) return@cmd
+            seekTarget = positionMs; seekAt = System.currentTimeMillis()
+            // Nothing loaded yet (a session being restored): remember the place, the song is opened there once it has loaded.
+            if (!loaded) { resumeAtMs = positionMs.coerceAtLeast(0); return@cmd }
+            // Exclusive output has no mixer to hide the jump: mute across it, and unmute when playback has restarted.
+            if (exclusive && !seekMuted) { setProp("mute", "yes"); seekMuted = true }
+            command("seek", "%.3f".format(java.util.Locale.ROOT, positionMs.coerceAtLeast(0) / 1000.0), "absolute+exact")
+        }
     }
+
+    private fun endSeekMute() { if (seekMuted) { seekMuted = false; setProp("mute", "no") } }
 
     // ---- sound settings
 
@@ -399,5 +418,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
 
     private companion object {
         const val RESTART_THRESHOLD_MS = 3000L
+        /** Seeks closer together than this are one seek, to the last place. */
+        const val SEEK_SETTLE_MS = 80L
     }
 }

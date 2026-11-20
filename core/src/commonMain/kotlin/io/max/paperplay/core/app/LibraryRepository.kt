@@ -245,7 +245,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     /** Stores [ms] listened to [s] today and, when [finished] is not null, counts a play (true) or skip (false). */
     fun recordListen(s: Song, ms: Long, finished: Boolean?, notify: Boolean = true) = write(soft = true, notify = notify) {
         val now = clock()
-        songs.markPlayed(now, s.chat_id, s.message_id)
+        if (ms >= RECENT_AFTER_MS) songs.markPlayed(now, s.chat_id, s.message_id)
         if (finished != null) repo.countPlay(s, finished)
         repo.addListen(repo.pref("device_id") ?: "self", dayOf(now), s.unique_id, ms, if (finished == true) 1 else 0)
         runCatching { onListen?.invoke(s, ms, now) }

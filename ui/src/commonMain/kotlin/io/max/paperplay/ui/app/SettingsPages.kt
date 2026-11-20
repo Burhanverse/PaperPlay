@@ -32,6 +32,9 @@ internal fun MixLearnPage(backend: CoreBackend, onClear: () -> Unit) {
     val t by backend.taste.collectAsState()
     SectionLabel("Mixes")
     SwitchRow("Show daily mixes on Home", t.showMixes, { v -> backend.updateTaste { it.copy(showMixes = v) } }, Icons.Rounded.AutoAwesome)
+    val keep by backend.keepPlaying.collectAsState()
+    SwitchRow("Keep playing when a list ends", keep, { v -> backend.setKeepPlaying(v) },
+        subtitle = "Adds a related song from your whole library, picked the way mixes are, instead of stopping")
     SectionLabel("Learn your taste from")
     SwitchRow("Favorites", t.learnsFrom(TasteSettings.FAVORITES_KEY), { v -> backend.updateTaste { it.copy(sources = it.sources + (TasteSettings.FAVORITES_KEY to v)) } }, Icons.Rounded.Favorite)
     for ((key, name) in remember { backend.playlistKeys() }) {
