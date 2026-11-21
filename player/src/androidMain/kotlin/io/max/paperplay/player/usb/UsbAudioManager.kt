@@ -354,12 +354,13 @@ class UsbAudioManager(private val context: Context) {
             UsbRingLog.CODE_GENERIC
         )
 
-        val fu = finalDescription.featureUnits.firstOrNull { it.hasMasterVolume || it.hasChannelVolume }
+        val fu = finalDescription.resolvePlaybackFeatureUnit(finalDescription.playbackAltSettings.firstOrNull())
+            ?.takeIf { it.hasMasterVolume || it.hasChannelVolume }
         if (fu != null) {
             hardwareVolume = UsbHardwareVolume(
                 connection = connection,
                 uacVersion = finalDescription.uacVersion,
-                controlInterfaceId = 0,
+                controlInterfaceId = finalDescription.acInterfaceNumber,
                 featureUnit = fu,
                 caps = probedCaps,
                 nativeHandleProvider = { activeStreamer?.handle ?: 0L }
@@ -405,7 +406,7 @@ class UsbAudioManager(private val context: Context) {
         UsbEngineNative.ensureLoaded()
         val desc = stateVal.description
         return try {
-            val caps = UsbEngineNative.parseCapabilities(conn.fileDescriptor)
+            val caps = UsbEngineNative.parseCapabilities(conn.fileDescriptor, desc)
             if (caps != null && caps.sampleRates.isNotEmpty()) {
                 val updatedAltSettings = desc.altSettings.map { alt ->
                     if (alt.dataEndpoint?.isOut == true && alt.sampleRates.isEmpty()) {
@@ -417,12 +418,13 @@ class UsbAudioManager(private val context: Context) {
                 val updatedDesc = desc.copy(altSettings = updatedAltSettings)
                 cachedDescriptions[dev.deviceId] = updatedDesc
                 cachedCaps[dev.deviceId] = caps
-                val fu = updatedDesc.featureUnits.firstOrNull { it.hasMasterVolume || it.hasChannelVolume }
+                val fu = updatedDesc.resolvePlaybackFeatureUnit(updatedDesc.playbackAltSettings.firstOrNull())
+                    ?.takeIf { it.hasMasterVolume || it.hasChannelVolume }
                 if (fu != null) {
                     hardwareVolume = UsbHardwareVolume(
                         connection = conn,
                         uacVersion = updatedDesc.uacVersion,
-                        controlInterfaceId = 0,
+                        controlInterfaceId = updatedDesc.acInterfaceNumber,
                         featureUnit = fu,
                         caps = caps,
                         nativeHandleProvider = { activeStreamer?.handle ?: 0L }
@@ -502,8 +504,7 @@ class UsbAudioManager(private val context: Context) {
 
         val outEp = audioEp ?: return null
 
-        val linkedInput = desc.inputTerminals.firstOrNull { it.id == altSetting.terminalLink }
-        val clockId = linkedInput?.clockSourceId ?: desc.clockSources.firstOrNull()?.id ?: 1
+        val clockId = desc.resolvePlaybackClockSourceId(altSetting) ?: 1
         val isUac2 = desc.uacVersion == UacVersion.UAC_2_0
 
         val streamer = UsbAudioStreamer(
@@ -516,7 +517,7 @@ class UsbAudioManager(private val context: Context) {
             feedbackEndpoint = fbEp,
             isUac2 = isUac2,
             clockSourceId = clockId,
-            controlInterfaceId = 0,
+            controlInterfaceId = desc.acInterfaceNumber,
             sampleRate = targetRate,
             bitDepth = altSetting.bitResolution,
             channels = altSetting.channelCount,

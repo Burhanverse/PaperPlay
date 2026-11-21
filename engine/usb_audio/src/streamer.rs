@@ -11,14 +11,16 @@ use rusb::UsbContext;
 
 use super::device::UsbDeviceSession;
 use super::ring_buffer::SpscRingBuffer;
+use super::session::apply_pcm_ramp_frame;
 use super::transfer::IsoTransferSlot;
-use crate::usb::log::{
+use crate::log::{
     GLOBAL_NATIVE_LOG, TAG_HOT_UNPLUG, TAG_PERIODIC_STATS, TAG_STREAM_START, TAG_STREAM_STOP,
     TAG_URB_PACKET_ERR, TAG_URB_REAP_ERR, TAG_URB_SUBMIT_ERR,
 };
 
 pub const NUM_AUDIO_SLOTS: usize = 8;
 
+#[derive(Clone)]
 pub struct StreamConfig {
     pub endpoint: u8,
     pub sample_rate: u32,
@@ -37,16 +39,32 @@ pub struct UsbStreamer {
     running: Arc<AtomicBool>,
     pub paused: Arc<AtomicBool>,
     pub flushing: Arc<AtomicBool>,
+    pub mute_ramp: Arc<AtomicBool>,
     thread_handle: Option<JoinHandle<()>>,
 }
 
 impl UsbStreamer {
     pub fn new(session: Arc<UsbDeviceSession>, config: StreamConfig) -> Self {
-        let ring_buffer = Arc::new(SpscRingBuffer::new(1048576));
-        let running = Arc::new(AtomicBool::new(false));
-        let paused = Arc::new(AtomicBool::new(false));
-        let flushing = Arc::new(AtomicBool::new(false));
+        Self::with_shared(
+            session,
+            config,
+            Arc::new(SpscRingBuffer::new(1048576)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
 
+    pub fn with_shared(
+        session: Arc<UsbDeviceSession>,
+        config: StreamConfig,
+        ring_buffer: Arc<SpscRingBuffer>,
+        running: Arc<AtomicBool>,
+        paused: Arc<AtomicBool>,
+        flushing: Arc<AtomicBool>,
+        mute_ramp: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             config,
             session,
@@ -54,8 +72,13 @@ impl UsbStreamer {
             running,
             paused,
             flushing,
+            mute_ramp,
             thread_handle: None,
         }
+    }
+
+    pub fn update_config(&mut self, config: StreamConfig) {
+        self.config = config;
     }
 
     #[inline]
@@ -70,13 +93,22 @@ impl UsbStreamer {
     pub fn resume(&self) {
         self.paused.store(false, Ordering::Release);
         self.flushing.store(false, Ordering::Release);
+        self.mute_ramp.store(false, Ordering::Release);
     }
 
     pub fn resume_after_flush(&self) {
         self.flushing.store(false, Ordering::Release);
     }
 
+    pub fn set_mute_ramp(&self, muted: bool) {
+        self.mute_ramp.store(muted, Ordering::Release);
+    }
+
     pub fn start(&mut self) -> Result<(), i32> {
+        self.start_with_fade_in(false)
+    }
+
+    pub fn start_with_fade_in(&mut self, fade_in: bool) -> Result<(), i32> {
         if self.running.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -84,26 +116,27 @@ impl UsbStreamer {
         self.running.store(true, Ordering::Release);
         self.paused.store(false, Ordering::Release);
         self.flushing.store(false, Ordering::Release);
-        let config = StreamConfig {
-            endpoint: self.config.endpoint,
-            sample_rate: self.config.sample_rate,
-            bit_depth: self.config.bit_depth,
-            channels: self.config.channels,
-            subslot_size: self.config.subslot_size,
-            is_high_speed: self.config.is_high_speed,
-            is_dop: self.config.is_dop,
-            feedback_ep: self.config.feedback_ep,
-        };
+        let config = self.config.clone();
         let session = Arc::clone(&self.session);
         let ring_buffer = Arc::clone(&self.ring_buffer);
         let running = Arc::clone(&self.running);
         let paused = Arc::clone(&self.paused);
         let flushing = Arc::clone(&self.flushing);
+        let mute_ramp = Arc::clone(&self.mute_ramp);
 
         let handle = std::thread::Builder::new()
             .name("UsbIsoAudio".into())
             .spawn(move || {
-                run_streaming_loop(config, session, ring_buffer, running, paused, flushing);
+                run_streaming_loop(
+                    config,
+                    session,
+                    ring_buffer,
+                    running,
+                    paused,
+                    flushing,
+                    mute_ramp,
+                    fade_in,
+                );
             })
             .map_err(|_| -1)?;
 
@@ -179,6 +212,8 @@ fn run_streaming_loop(
     running: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     flushing: Arc<AtomicBool>,
+    mute_ramp: Arc<AtomicBool>,
+    fade_in_on_start: bool,
 ) {
     let _handle_pin = Arc::clone(&session.handle);
     let _context_pin = Arc::clone(&session.context);
@@ -240,14 +275,23 @@ fn run_streaming_loop(
     };
     let mut target_rate_hz: f64 = nominal_rate as f64;
 
-    let init_playing = !paused.load(Ordering::Acquire) && !flushing.load(Ordering::Acquire);
+    let init_playing = !fade_in_on_start
+        && !paused.load(Ordering::Acquire)
+        && !flushing.load(Ordering::Acquire)
+        && !mute_ramp.load(Ordering::Acquire);
     let mut current_gain: f32 = if init_playing { 1.0 } else { 0.0 };
-    let ramp_frames = (nominal_rate as f32 * 0.005).max(1.0); // 5 ms linear gain ramp
+    let ramp_frames = (nominal_rate as f32 * 0.003).max(1.0); // 3 ms linear gain ramp (2-4 ms spec)
     let gain_step = 1.0f32 / ramp_frames;
     let bit_depth = config.bit_depth;
 
-    // Fill and submit all audio slots initially
-    let initial_target_gain = if init_playing { 1.0f32 } else { 0.0f32 };
+    let initial_target_gain = if !paused.load(Ordering::Acquire)
+        && !flushing.load(Ordering::Acquire)
+        && !mute_ramp.load(Ordering::Acquire)
+    {
+        1.0f32
+    } else {
+        0.0f32
+    };
     for (slot_idx, slot) in slots.iter_mut().enumerate() {
         fill_and_submit_audio_slot(
             slot,
@@ -309,7 +353,10 @@ fn run_streaming_loop(
             }
         }
 
-        let target_gain = if !paused.load(Ordering::Acquire) && !flushing.load(Ordering::Acquire) {
+        let target_gain = if !paused.load(Ordering::Acquire)
+            && !flushing.load(Ordering::Acquire)
+            && !mute_ramp.load(Ordering::Acquire)
+        {
             1.0f32
         } else {
             0.0f32
@@ -423,9 +470,7 @@ fn fill_and_submit_audio_slot(
 
     for (_p_idx, pkt_len) in packet_lengths.iter_mut().enumerate() {
         // Integer remainder packet scheduler (exact, no IEEE-754 float drift)
-        *nominal_accum += effective_rate * service_interval_us;
-        let scheduled_frames = (*nominal_accum / 1_000_000) as usize;
-        *nominal_accum %= 1_000_000;
+        let scheduled_frames = schedule_packet_frames(nominal_accum, effective_rate, service_interval_us);
 
         // Panic-free bounds clamp against the pre-allocated transfer buffer
         let frames = clamp_packet_frames(scheduled_frames, total_bytes, buf.len(), bytes_per_frame);
@@ -509,57 +554,15 @@ fn fill_and_submit_audio_slot(
                             *current_gain = (*current_gain - gain_step).max(target_gain);
                         }
                         let g = *current_gain;
-                        if g < 0.999f32 {
-                            match bytes_per_sample {
-                                2 => {
-                                    for c in 0..channels {
-                                        let off = f * bytes_per_frame + c * 2;
-                                        let sample = i16::from_le_bytes([pkt_slice[off], pkt_slice[off + 1]]);
-                                        let scaled = (sample as f32 * g).round().clamp(-32768.0, 32767.0) as i16;
-                                        let b = scaled.to_le_bytes();
-                                        pkt_slice[off] = b[0];
-                                        pkt_slice[off + 1] = b[1];
-                                    }
-                                }
-                                3 => {
-                                    for c in 0..channels {
-                                        let off = f * bytes_per_frame + c * 3;
-                                        let raw = (pkt_slice[off] as i32)
-                                            | ((pkt_slice[off + 1] as i32) << 8)
-                                            | ((pkt_slice[off + 2] as i8 as i32) << 16);
-                                        let scaled = (raw as f64 * g as f64).round().clamp(-8388608.0, 8388607.0) as i32;
-                                        pkt_slice[off] = (scaled & 0xFF) as u8;
-                                        pkt_slice[off + 1] = ((scaled >> 8) & 0xFF) as u8;
-                                        pkt_slice[off + 2] = ((scaled >> 16) & 0xFF) as u8;
-                                    }
-                                }
-                                4 => {
-                                    if bit_depth == 32 {
-                                        for c in 0..channels {
-                                            let off = f * bytes_per_frame + c * 4;
-                                            let sample = i32::from_le_bytes([
-                                                pkt_slice[off], pkt_slice[off + 1], pkt_slice[off + 2], pkt_slice[off + 3],
-                                            ]);
-                                            let scaled = (sample as f64 * g as f64).round().clamp(-2147483648.0, 2147483647.0) as i32;
-                                            let b = scaled.to_le_bytes();
-                                            pkt_slice[off..off + 4].copy_from_slice(&b);
-                                        }
-                                    } else {
-                                        for c in 0..channels {
-                                            let off = f * bytes_per_frame + c * 4;
-                                            let raw = (pkt_slice[off] as i32)
-                                                | ((pkt_slice[off + 1] as i32) << 8)
-                                                | ((pkt_slice[off + 2] as i8 as i32) << 16);
-                                            let scaled = (raw as f64 * g as f64).round().clamp(-8388608.0, 8388607.0) as i32;
-                                            pkt_slice[off] = (scaled & 0xFF) as u8;
-                                            pkt_slice[off + 1] = ((scaled >> 8) & 0xFF) as u8;
-                                            pkt_slice[off + 2] = ((scaled >> 16) & 0xFF) as u8;
-                                            pkt_slice[off + 3] = 0;
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
+                        if g < 0.9999f32 {
+                            let off = f * bytes_per_frame;
+                            apply_pcm_ramp_frame(
+                                &mut pkt_slice[off..off + bytes_per_frame],
+                                channels,
+                                bit_depth,
+                                bytes_per_sample,
+                                g,
+                            );
                         }
                     }
                 } else {
@@ -620,6 +623,18 @@ fn process_feedback_report(
 }
 
 #[inline]
+pub(crate) fn schedule_packet_frames(
+    nominal_accum: &mut u64,
+    effective_rate: u64,
+    service_interval_us: u64,
+) -> usize {
+    *nominal_accum += effective_rate.saturating_mul(service_interval_us);
+    let frames = (*nominal_accum / 1_000_000) as usize;
+    *nominal_accum %= 1_000_000;
+    frames
+}
+
+#[inline]
 pub(crate) fn clamp_packet_frames(
     scheduled_frames: usize,
     total_bytes: usize,
@@ -657,5 +672,18 @@ mod tests {
         process_feedback_report(&wild_raw.to_le_bytes(), true, 44100, &mut target);
         assert!(target <= 44100.0 * 1.02 + 0.01);
         assert!(target > 44100.0);
+    }
+
+    #[test]
+    fn integer_remainder_scheduler_maintains_exact_average_rate() {
+        for (rate, interval_us, packets) in [(44100u64, 125u64, 8000usize), (48000, 125, 8000), (176400, 1000, 1000)] {
+            let mut accum = 0u64;
+            let mut total_frames = 0u64;
+            for _ in 0..packets {
+                total_frames += schedule_packet_frames(&mut accum, rate, interval_us) as u64;
+            }
+            assert_eq!(total_frames, rate, "drift at rate={rate}, interval={interval_us}us");
+            assert_eq!(accum, 0);
+        }
     }
 }

@@ -146,7 +146,7 @@ internal val LocalPageBottomPadding = androidx.compose.runtime.compositionLocalO
 internal val subTitles = mapOf(
     "channels" to "Channels and chats", "bots" to "Bots", "account" to "Your account", "log" to "Activity log",
     "repair" to "Scan library", "recover" to "Recover songs", "folders" to "Music folders", "exports" to "Saved export lists", "cache" to "Cache manager", "sort" to "Sort General", "dupes" to "Find duplicates", "missing" to "Song info left", "uploadhub" to "Upload songs", "mixlearn" to "Mixes and learning", "weather" to "Weather",
-    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB exclusive mode", "usb_probe" to "USB probe",
+    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB DAC", "usb_probe" to "USB probe",
 )
 
 @Composable
@@ -421,9 +421,62 @@ internal fun SettingsPage(
         }
         "spotify" -> SpotifyPage(backend)
         "listening" -> {
-            NavRow("USB exclusive mode", if (isPhone) "Bit-perfect direct USB DAC playback" else "Exclusive audio output", Icons.Rounded.Usb) { stack.add("usb_audio") }
+            val devUnlocked by backend.devOptionsUnlocked.collectAsState()
+            val bitPerfect by backend.bitPerfect.collectAsState()
+            if (isPhone && !bitPerfect) {
+                val pendingHint by backend.pendingUsbDiscoveryHint.collectAsState()
+                pendingHint?.let { hint ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "USB DAC detected: ${hint.deviceName} (${hint.vidPid})",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            text = "Enable Bit-perfect to stream directly to this USB DAC without Android mixing or DSP?",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                backend.setBitPerfect(true)
+                                backend.dismissUsbDiscoveryHint(hint.vidPid)
+                            }) {
+                                Text("Enable Bit-perfect")
+                            }
+                            TextButton(onClick = { backend.dismissUsbDiscoveryHint(hint.vidPid) }) {
+                                Text("Dismiss")
+                            }
+                        }
+                    }
+                }
+            }
+            if (!isPhone) {
+                var engine by remember { mutableStateOf(backend.pcEngine()) }
+                SwitchRow("Use the mpv audio engine", engine == "mpv", { engine = if (it) "mpv" else "vlc"; backend.setPcEngine(engine) }, Icons.Rounded.GraphicEq,
+                    "Equalizer with bass, exclusive output and earphone profiles. Needs libmpv next to the app; without it the player stays on VLC. Restart to apply")
+            }
+            // Unified Bit-perfect switch across Android and desktop.
+            SwitchRow(
+                "Bit-perfect",
+                bitPerfect,
+                backend::setBitPerfect,
+                io.max.paperplay.ui.components.TrueAudioIcon,
+                if (isPhone) {
+                    "Streams eligible audio untouched through verified USB DACs or bit-perfect mixers. Equalizer, bass, normalise and profile are bypassed. Off by default."
+                } else {
+                    "mpv engine only. Takes the sound device for itself so the samples reach it unchanged, with no equalizer, levelling or profile. Other apps are silent meanwhile"
+                },
+            )
             if (isPhone) {
-                NavRow("USB probe", "Hardware descriptor probe and bit-perfect mixer spike", Icons.Rounded.BugReport) { stack.add("usb_probe") }
+                NavRow("USB DAC", "Direct USB Audio Class playback, hardware volume, and status", Icons.Rounded.Usb) { stack.add("usb_audio") }
             }
             NavRow("Listening statistics", "Time listened, top songs and artists", Icons.Rounded.BarChart) { stack.add("stats") }
             NavRow("ListenBrainz", "Send what you listen to", Icons.Rounded.Sync) { stack.add("listenbrainz") }
@@ -432,13 +485,6 @@ internal fun SettingsPage(
             SwitchRow("Even out loudness", levelOn, backend::setNormalize, Icons.Rounded.GraphicEq,
                 if (isPhone) "Pulls loud peaks down and lifts quiet songs. Needs Android 9 or newer" else "Evens out loud and quiet songs. Applies from the next song")
             if (!isPhone) {
-                var engine by remember { mutableStateOf(backend.pcEngine()) }
-                SwitchRow("Use the mpv audio engine", engine == "mpv", { engine = if (it) "mpv" else "vlc"; backend.setPcEngine(engine) }, Icons.Rounded.GraphicEq,
-                    "Equalizer with bass, exclusive output and earphone profiles. Needs libmpv next to the app; without it the player stays on VLC. Restart to apply")
-                // The same switch as the Equalizer dialog's Bit-perfect: exclusive output with the equalizer, bass, levelling and profile bypassed.
-                val bitPerfect by backend.bitPerfect.collectAsState()
-                SwitchRow("Bit-perfect", bitPerfect, backend::setBitPerfect, Icons.Rounded.GraphicEq,
-                    "mpv engine only. Takes the sound device for itself so the samples reach it unchanged, with no equalizer, levelling or profile. Other apps are silent meanwhile")
                 var taskbar by remember { mutableStateOf(backend.taskbarButtons()) }
                 SwitchRow("Taskbar player buttons", taskbar, { taskbar = it; backend.setTaskbarButtons(it) }, Icons.Rounded.GraphicEq,
                     "Previous, play or pause and next under the taskbar preview of the window. Restart to apply")
@@ -452,10 +498,18 @@ internal fun SettingsPage(
             var restore by remember { mutableStateOf(backend.sessionRestore) }
             SwitchRow("Restore last session", restore, { restore = it; backend.setSessionRestore(it) }, Icons.Rounded.Sync,
                 "Opens with the last queue and position, paused")
-            val devUnlocked by backend.devOptionsUnlocked.collectAsState()
             if (isPhone && devUnlocked) {
                 val chain by backend.sinkChain.collectAsState()
+                val devApi34 by backend.devApi34Mixer.collectAsState()
                 SectionLabel("Developer")
+                NavRow("USB probe", "Hardware descriptor probe and bit-perfect mixer spike", Icons.Rounded.BugReport) { stack.add("usb_probe") }
+                SwitchRow(
+                    "API 34+ bit-perfect mixer",
+                    devApi34,
+                    backend::setDevApi34Mixer,
+                    Icons.Rounded.Science,
+                    "Experimental Android 14+ integer 24/32-bit USB mixer route (5-gate verified). Off by default.",
+                )
                 DropdownRow(
                     title = "Sink chain",
                     selected = io.max.paperplay.player.SinkChainMode.fromId(chain),

@@ -10,17 +10,8 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[features]
-default = []
-usb = ["dep:claxon", "dep:hound", "dep:rusb", "dep:libusb1-sys", "dep:libc"]
-
 [dependencies]
 jni = { version = "0.21", default-features = false }
-claxon = { version = "0.4", optional = true }
-hound = { version = "3.5", optional = true }
-rusb = { version = "0.9", optional = true }
-libusb1-sys = { version = "0.7", default-features = false, optional = true }
-libc = { version = "0.2", optional = true }
 
 [profile.release]
 opt-level = "z"

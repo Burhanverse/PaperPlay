@@ -29,6 +29,7 @@ import java.io.File
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -401,7 +402,14 @@ class MainActivity : ComponentActivity() {
                 AppEnv(
                     restore = RestoreHooks(
                         pickBackup = { onPicked -> pending[0] = onPicked; picker.launch(arrayOf("*/*")) },
-                        restore = { source, pw -> shared = null; BackupRestorer().restore(source, target, RestoreOptions(password = pw)) },
+                        restore = { source, pw ->
+                            shared = null
+                            BackupRestorer().restore(source, target, RestoreOptions(password = pw)).onEach { ev ->
+                                if (ev is io.max.paperplay.core.backup.RestoreEvent.Finished) {
+                                    syncRestoredBitPerfectPrefs(target.libraryPath)
+                                }
+                            }
+                        },
                     ),
                     libraryExists = { library.exists() },
                     // One AppServices per process. A recreated activity (theme, dark mode, rotation) used to build a second
@@ -481,6 +489,27 @@ class MainActivity : ComponentActivity() {
             io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission = null
         }
         super.onDestroy()
+    }
+
+    private fun syncRestoredBitPerfectPrefs(libraryPath: String) {
+        val dbFile = File(libraryPath)
+        if (!dbFile.exists()) return
+        val restored = runCatching {
+            val map = linkedMapOf<String, String>()
+            android.database.sqlite.SQLiteDatabase.openDatabase(
+                dbFile.path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY,
+            ).use { db ->
+                db.rawQuery("SELECT \"key\", value FROM prefs", null).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        map[cursor.getString(0)] = cursor.getString(1)
+                    }
+                }
+            }
+            map
+        }.getOrNull() ?: return
+        io.max.paperplay.player.syncRestoredPrefsFromAndroidContext(applicationContext, restored)
     }
 
     companion object {

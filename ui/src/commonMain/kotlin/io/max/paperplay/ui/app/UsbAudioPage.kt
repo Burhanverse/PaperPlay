@@ -28,20 +28,22 @@ import kotlinx.coroutines.launch
 import org.jetbrains.compose.ui.tooling.preview.Preview
 
 /**
- * Settings > Audio > USB exclusive mode:
+ * Settings > Listening > USB DAC:
  * Direct bit-perfect USB Audio Class (UAC 1.0 & UAC 2.0) playback status and diagnostics.
  */
 @Composable
 internal fun UsbAudioPage(backend: CoreBackend, stack: MutableList<String>? = null) {
-    val exclusiveOn by backend.usbExclusiveMode.collectAsState()
+    val bitPerfect by backend.bitPerfect.collectAsState()
+    val bitPerfectStatus by backend.bitPerfectStatus.collectAsState()
     val status by backend.usbExclusiveStatus.collectAsState()
     val devUnlocked by backend.devOptionsUnlocked.collectAsState()
     val sinkChain by backend.sinkChain.collectAsState()
 
     UsbAudioContent(
-        exclusiveOn = exclusiveOn,
+        exclusiveOn = bitPerfect,
         status = status,
-        onToggleExclusive = backend::setUsbExclusiveMode,
+        bitPerfectStatus = bitPerfectStatus,
+        onToggleExclusive = backend::setBitPerfect,
         onRequestPermission = backend::requestUsbPermission,
         onOpenProbe = { stack?.add("usb_probe") },
         onRunPlaybackTest = backend::runUsbPlaybackTest,
@@ -66,6 +68,7 @@ internal fun UsbAudioContent(
     devOptionsUnlocked: Boolean = false,
     sinkChain: String = io.max.paperplay.player.SinkChainMode.FULL.id,
     onSelectSinkChain: ((String) -> Unit)? = null,
+    bitPerfectStatus: io.max.paperplay.player.BitPerfectStatus = io.max.paperplay.player.BitPerfectStatus.Off,
 ) {
     val scope = rememberCoroutineScope()
     var isTesting by remember { mutableStateOf(false) }
@@ -73,14 +76,14 @@ internal fun UsbAudioContent(
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SwitchRow(
-            title = "USB exclusive mode",
+            title = "Bit-perfect",
             checked = exclusiveOn,
             onChange = onToggleExclusive,
-            icon = Icons.Rounded.Usb,
-            subtitle = "Bypasses the Android audio mixer, DSP, sample-rate conversion, volume scaling, and equalizer for direct bit-perfect streaming. Requires microphone access so Android allows saving DAC permissions permanently (TRRS headset input)."
+            icon = io.max.paperplay.ui.components.TrueAudioIcon,
+            subtitle = "Streams eligible audio directly to your USB DAC without Android mixing, DSP, sample-rate conversion, or software volume scaling. Off by default."
         )
 
-        if (onOpenProbe != null) {
+        if (devOptionsUnlocked && onOpenProbe != null) {
             SettingsRow(
                 title = "USB probe",
                 icon = Icons.Rounded.BugReport,
@@ -108,7 +111,7 @@ internal fun UsbAudioContent(
             )
         }
 
-        if (onRunPlaybackTest != null) {
+        if (devOptionsUnlocked && onRunPlaybackTest != null) {
             SettingsRow(
                 title = if (isTesting) "Running playback test..." else "Device playback test",
                 icon = Icons.Rounded.PlayCircle,
@@ -131,12 +134,22 @@ internal fun UsbAudioContent(
         }
 
         val st = status
+        val derivedSubtitle = when (val bp = bitPerfectStatus) {
+            is io.max.paperplay.player.BitPerfectStatus.Bypassed -> "Bit-perfect bypassed: ${bp.reason}"
+            is io.max.paperplay.player.BitPerfectStatus.Fallback -> "Fallback: ${bp.reason}"
+            is io.max.paperplay.player.BitPerfectStatus.Unsupported -> "Not supported: ${bp.reason}"
+            is io.max.paperplay.player.BitPerfectStatus.PermissionRequired -> "USB permission required for ${bp.deviceName}"
+            is io.max.paperplay.player.BitPerfectStatus.Standby -> bp.reason
+            is io.max.paperplay.player.BitPerfectStatus.Active -> "Bit-perfect active via ${bp.transportLabel}"
+            io.max.paperplay.player.BitPerfectStatus.Off -> st?.statusReason ?: "Connect a USB audio DAC or dongle to stream bit-perfect audio."
+        }
         if (st == null || !st.isConnected) {
-            val isTapToAllow = st?.statusReason?.contains("tap to allow", ignoreCase = true) == true
+            val isTapToAllow = st?.statusReason?.contains("tap to allow", ignoreCase = true) == true ||
+                bitPerfectStatus is io.max.paperplay.player.BitPerfectStatus.PermissionRequired
             SettingsRow(
                 title = st?.deviceName ?: "No USB DAC connected",
                 icon = if (st != null) Icons.Rounded.Usb else Icons.Rounded.UsbOff,
-                subtitle = st?.statusReason ?: "Connect a USB audio DAC or dongle to stream bit-perfect audio.",
+                subtitle = st?.statusReason ?: derivedSubtitle,
                 onClick = if (isTapToAllow) { { onRequestPermission?.invoke() } } else null
             )
             return@Column

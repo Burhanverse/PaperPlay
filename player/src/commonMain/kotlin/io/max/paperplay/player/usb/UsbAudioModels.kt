@@ -150,6 +150,7 @@ data class UsbAudioDeviceDescription(
     val uacVersion: UacVersion,
     val isSupported: Boolean,
     val unsupportedReason: String? = null,
+    val acInterfaceNumber: Int = 0,
     val clockSources: List<UsbClockSource> = emptyList(),
     val clockSelectors: List<UsbClockSelector> = emptyList(),
     val clockMultipliers: List<UsbClockMultiplier> = emptyList(),

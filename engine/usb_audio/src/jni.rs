@@ -8,7 +8,9 @@ use jni::objects::{JByteBuffer, JClass, JLongArray};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use jni::JNIEnv;
 
+#[cfg(feature = "dev")]
 use super::debug::generate_debug_buffer;
+use super::session::{EndpointFormatConfig, RealUsbControlTransport, UsbSessionInstance};
 use super::streamer::{StreamConfig, UsbStreamer};
 
 pub fn ensure_no_device_discovery() {
@@ -402,31 +404,38 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_getStats
 pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_playDebugTest(
     _env: JNIEnv,
     _c: JClass,
-    handle: jlong,
-    test_type: jint,
-    duration_ms: jint,
+    _handle: jlong,
+    _test_type: jint,
+    _duration_ms: jint,
 ) -> jint {
-    let result = catch_unwind(|| {
-        if handle == 0 {
-            return -1;
-        }
-        let instance = unsafe { &mut *(handle as *mut UsbNativeInstance) };
-        let dur = duration_ms.max(10) as u32;
+    #[cfg(feature = "dev")]
+    {
+        let result = catch_unwind(|| {
+            if _handle == 0 {
+                return -1;
+            }
+            let instance = unsafe { &mut *(_handle as *mut UsbNativeInstance) };
+            let dur = _duration_ms.max(10) as u32;
 
-        let debug_bytes = generate_debug_buffer(
-            test_type,
-            instance.sample_rate,
-            instance.bit_depth,
-            instance.subslot_size,
-            instance.channels,
-            dur,
-        );
+            let debug_bytes = generate_debug_buffer(
+                _test_type,
+                instance.sample_rate,
+                instance.bit_depth,
+                instance.subslot_size,
+                instance.channels,
+                dur,
+            );
 
-        let ring = instance.streamer.ring_buffer();
-        let written = ring.write(&debug_bytes);
-        written as jint
-    });
-    result.unwrap_or(-1)
+            let ring = instance.streamer.ring_buffer();
+            let written = ring.write(&debug_bytes);
+            written as jint
+        });
+        result.unwrap_or(-1)
+    }
+    #[cfg(not(feature = "dev"))]
+    {
+        -38 // ENOSYS: debug signal generator is excluded from release builds
+    }
 }
 
 #[no_mangle]
@@ -478,8 +487,8 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_controlT
             }
         }
 
-        crate::usb::log::GLOBAL_NATIVE_LOG.record(
-            crate::usb::log::TAG_CONTROL_REQ,
+        crate::log::GLOBAL_NATIVE_LOG.record(
+            crate::log::TAG_CONTROL_REQ,
             ((request as i32) << 8) | (request_type as i32 & 0xFF),
             ((index as i64) << 16) | (value as i64 & 0xFFFF),
         );
@@ -506,8 +515,8 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_controlT
                 transferred as jint
             }
             Err(errno) => {
-                crate::usb::log::GLOBAL_NATIVE_LOG.record(
-                    crate::usb::log::TAG_CONTROL_ERR,
+                crate::log::GLOBAL_NATIVE_LOG.record(
+                    crate::log::TAG_CONTROL_ERR,
                     errno,
                     request_type as i64,
                 );
@@ -524,7 +533,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_dumpNati
     _c: JClass,
 ) -> jstring {
     let result = catch_unwind(|| {
-        let lines = crate::usb::log::GLOBAL_NATIVE_LOG.dump_lines();
+        let lines = crate::log::GLOBAL_NATIVE_LOG.dump_lines();
         let joined = lines.join("\n");
         match env.new_string(joined) {
             Ok(js) => js.into_raw(),
@@ -594,10 +603,28 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_probeDac
     env: JNIEnv,
     _c: JClass,
     fd: jint,
+    ac_iface: jint,
+    streaming_iface: jint,
+    is_uac2: jboolean,
+    clock_source_id: jint,
+    feature_unit_id: jint,
+    fu_has_volume: jboolean,
+    fu_has_master_volume: jboolean,
+    fu_has_mute: jboolean,
 ) -> jstring {
     let result = catch_unwind(|| {
         ensure_no_device_discovery();
-        match super::probe::probe_dac(fd) {
+        match super::probe::probe_dac(
+            fd,
+            ac_iface.max(0) as u8,
+            streaming_iface.max(0) as u8,
+            is_uac2 != 0,
+            clock_source_id.max(0) as u8,
+            feature_unit_id.max(0) as u8,
+            fu_has_volume != 0,
+            fu_has_master_volume != 0,
+            fu_has_mute != 0,
+        ) {
             Ok(caps) => {
                 let json = format!(
                     r#"{{"rates":{:?},"depths":{:?},"channels":{:?},"clockId":{},"uac":{},"volMin":{},"volMax":{},"volRes":{},"hasVol":{},"hasMute":{}}}"#,
@@ -621,4 +648,310 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_probeDac
         }
     });
     result.unwrap_or(std::ptr::null_mut())
+}
+
+// ---- Coarse UsbSession JNI entry points (Stage 2) ------------------------------------------
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionOpen(
+    _env: JNIEnv,
+    _c: JClass,
+    fd: jint,
+    control_iface: jint,
+    streaming_iface: jint,
+    is_uac2: jboolean,
+    clock_source_id: jint,
+    has_hardware_volume: jboolean,
+    feature_unit_id: jint,
+) -> jlong {
+    let result = catch_unwind(|| {
+        ensure_no_device_discovery();
+        if fd < 0 {
+            return 0;
+        }
+        match RealUsbControlTransport::open_device(
+            fd,
+            control_iface.max(0) as u8,
+            streaming_iface.max(0) as u8,
+            is_uac2 != 0,
+            clock_source_id.max(0) as u8,
+            has_hardware_volume != 0,
+            feature_unit_id.max(0) as u8,
+        ) {
+            Ok(inst) => Box::into_raw(Box::new(inst)) as jlong,
+            Err(_) => 0,
+        }
+    });
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionReconfigure(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+    endpoint: jint,
+    streaming_iface: jint,
+    target_alt: jint,
+    sample_rate: jint,
+    bit_depth: jint,
+    channels: jint,
+    subslot_size: jint,
+    is_high_speed: jboolean,
+    is_dop: jboolean,
+    feedback_ep: jint,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 || sample_rate <= 0 || channels <= 0 || subslot_size <= 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let Ok(mut core) = instance.core.lock() else {
+            return -1;
+        };
+        let cfg = EndpointFormatConfig {
+            streaming_iface: streaming_iface.max(0) as u8,
+            target_alt: target_alt.max(0) as u8,
+            endpoint: (endpoint & 0xFF) as u8,
+            sample_rate: sample_rate as u32,
+            bit_depth: bit_depth.max(0) as u32,
+            channels: channels as u32,
+            subslot_size: subslot_size as u32,
+            is_high_speed: is_high_speed != 0,
+            is_dop: is_dop != 0,
+            feedback_ep: (feedback_ep & 0xFF) as u8,
+        };
+        match core.reconfigure(cfg) {
+            Ok(()) => 0,
+            Err(code) => code,
+        }
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionApplyVolume(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+    fu_id: jint,
+    control_iface: jint,
+    channel: jint,
+    volume_raw: jint,
+    mute: jboolean,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let Ok(mut core) = instance.core.lock() else {
+            return -1;
+        };
+        match core.apply_volume(
+            fu_id.max(0) as u8,
+            control_iface.max(0) as u8,
+            channel.max(0) as u8,
+            volume_raw as i16,
+            mute != 0,
+        ) {
+            Ok((read_vol, _mute)) => (read_vol as u16) as jint,
+            Err(code) => code,
+        }
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionStart(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let Ok(mut core) = instance.core.lock() else {
+            return -1;
+        };
+        match core.start() {
+            Ok(()) => 0,
+            Err(code) => code,
+        }
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionPauseGrace(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let Ok(mut core) = instance.core.lock() else {
+            return -1;
+        };
+        match core.pause_grace() {
+            Ok(()) => 0,
+            Err(code) => code,
+        }
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionStop(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let Ok(mut core) = instance.core.lock() else {
+            return -1;
+        };
+        match core.stop() {
+            Ok(()) => 0,
+            Err(code) => code,
+        }
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionWritePcm(
+    env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+    buffer: JByteBuffer,
+    offset: jint,
+    length: jint,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 || length <= 0 || offset < 0 {
+            return if handle == 0 { -22 } else { 0 };
+        }
+        let (Ok(ptr), Ok(cap)) = (
+            env.get_direct_buffer_address(&buffer),
+            env.get_direct_buffer_capacity(&buffer),
+        ) else {
+            return -1;
+        };
+        let Some(end) = (offset as usize).checked_add(length as usize) else {
+            return -22;
+        };
+        if ptr.is_null() || end > cap {
+            return -22;
+        }
+        // Lock-free write on SpscRingBuffer + AtomicBool resume (zero mutex on audio path).
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let src = unsafe { ptr.add(offset as usize) };
+        let written = unsafe { instance.ring_buffer.write_raw(src, length as usize) };
+        if written > 0 {
+            instance.flushing.store(false, Ordering::Release);
+        }
+        written as jint
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionSetMuteRamp(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+    muted: jboolean,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        instance.mute_ramp.store(muted != 0, Ordering::Release);
+        0
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionFlush(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        instance.flushing.store(true, Ordering::Release);
+        instance.ring_buffer.clear();
+        0
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionGetStats(
+    env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+    out_stats: JLongArray,
+) -> jint {
+    let result = catch_unwind(|| {
+        if handle == 0 {
+            return -22;
+        }
+        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let consumed = instance.ring_buffer.frames_consumed.load(Ordering::Relaxed) as i64;
+        let underruns = instance.ring_buffer.underruns.load(Ordering::Relaxed) as i64;
+        let urb_errors = instance.ring_buffer.urb_errors.load(Ordering::Relaxed) as i64;
+        let fill = instance.ring_buffer.available_read() as i64;
+        let cap = instance.ring_buffer.capacity() as i64;
+        let is_running = if instance.streaming_running.load(Ordering::Acquire) { 1i64 } else { 0i64 };
+        let rate = instance.sample_rate.load(Ordering::Acquire) as i64;
+        let is_paused = if instance.paused.load(Ordering::Acquire) { 1i64 } else { 0i64 };
+        let is_flushing = if instance.flushing.load(Ordering::Acquire) { 1i64 } else { 0i64 };
+        let state_ord = instance
+            .core
+            .try_lock()
+            .map(|c| c.state() as i64)
+            .unwrap_or(-1);
+
+        let stats = [consumed, underruns, urb_errors, fill, cap, is_running, rate, is_paused, is_flushing, state_ord];
+        let len = match env.get_array_length(&out_stats) {
+            Ok(l) => (l.max(0) as usize).min(stats.len()),
+            Err(_) => return -22,
+        };
+        let _ = env.set_long_array_region(&out_stats, 0, &stats[..len]);
+        0
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionClose(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+) {
+    let _ = catch_unwind(|| {
+        if handle != 0 {
+            let instance = unsafe { Box::from_raw(handle as *mut UsbSessionInstance) };
+            if let Ok(mut core) = instance.core.lock() {
+                core.close();
+            }
+            drop(instance);
+        }
+    });
 }

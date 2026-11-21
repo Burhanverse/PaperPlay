@@ -53,7 +53,17 @@ interface UsbEngineBridge {
     fun getCurrentAlt(handle: Long): Int
     val available: Boolean get() = true
     fun restoreDefaultVolume(handle: Long): Int
-    fun probeDac(fd: Int): String?
+    fun probeDac(
+        fd: Int,
+        acIface: Int = 0,
+        streamingIface: Int = 1,
+        isUac2: Boolean = true,
+        clockSourceId: Int = 9,
+        featureUnitId: Int = 0,
+        fuHasVolume: Boolean = false,
+        fuHasMasterVolume: Boolean = false,
+        fuHasMute: Boolean = false,
+    ): String?
     fun getNativeLog(): String?
 }
 
@@ -417,7 +427,17 @@ class FakeUsbEngineBridge : UsbEngineBridge {
         return 0
     }
 
-    override fun probeDac(fd: Int): String? {
+    override fun probeDac(
+        fd: Int,
+        acIface: Int,
+        streamingIface: Int,
+        isUac2: Boolean,
+        clockSourceId: Int,
+        featureUnitId: Int,
+        fuHasVolume: Boolean,
+        fuHasMasterVolume: Boolean,
+        fuHasMute: Boolean,
+    ): String? {
         probeCount++
         callOrder.add("probeDac:$fd")
         return null

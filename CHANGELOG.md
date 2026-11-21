@@ -5,14 +5,10 @@ All notable changes to PaperPlay are listed here, newest first. Each stable rele
 ## [Unreleased]
 
 ### Added
-- Player: USB direct exclusive audio playback (UAC 1.0 & UAC 2.0) via raw usbfs ioctls and isochronous streaming
-- Player: Bit-perfect audio path bypassing software resamplers, DSP, and software volume scaling
-- Player: UAC Feature Unit hardware volume control with GET_CUR verification and zero digital attenuation
-- Player: Clean-room decoders for FLAC (claxon), WAV (hound), and Sony DSF / Philips DFF with DoP (DSD over PCM) and native DSD packing
-- Player: Screen-off and Doze CPU wakelock via Media3 C.WAKE_MODE_LOCAL and hot-unplug recovery with kernel driver reattachment (USBDEVFS_CONNECT)
-- Ui: Settings > Audio > "USB exclusive mode" page with bit-perfect indicator, device info, active rate/bit depth/endpoint mode, and live underrun diagnostics
-- Ui: Settings > Audio > "USB probe" on-device diagnostic spike with descriptor parsing, Android 14 mixer checks, and direct control transfer tests
-- Player: In-memory zero-allocation ring log (UsbRingLog), native streamer log export, automatic fallback log capture, and share sheet export
+- Shared Bit-perfect architecture across Android and desktop: one unified `Bit-perfect` switch (off by default), `BitPerfectRouter`, verified-only `BitPerfectEvaluator`, exact 2^23 float32<->int24 round-trip and integer widening, speed bypass at non-1.0x, DoP hard-stop safety, and platform-isolated backup keys (`bit_perfect_mode.android` / `bit_perfect_mode.desktop`) with Android backup restore SharedPreferences re-sync
+- Android: split standalone lazily-loaded `libusb_audio.so` (`engine/usb_audio/`, dynamically linked to LGPL `libusb-1.0.so`, 16 KB aligned) from pure DSP `libengine.so`; moved UAC 1.0/2.0 descriptor and topology resolution into Kotlin (`UsbDescriptorParser`, `UsbTopologyResolver`); added 25 s pause timeout release and immediate release on screen-off/route change/hot-unplug
+- UI: unified `Bit-perfect` switch in Settings > Listening, Equalizer page/dialog (`BitPerfectRow`), and player bar (`BitPerfectButton`); renamed Android Settings > Listening subpage to `USB DAC` (hidden on desktop); one-time `vid:pid` USB discovery hint card; dev-gated `USB probe`
+- Player: Screen-off and Doze CPU wakelock via Media3 `C.WAKE_MODE_LOCAL` and in-memory diagnostic ring log (`UsbRingLog`) with `PHASE0_SUMMARY` export
 
 ## [1.9.12] - 2026-11-19
 

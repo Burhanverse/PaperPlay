@@ -22,9 +22,11 @@ internal object PlaybackCore {
     const val EXTRA_NORMALIZE = "on"
     const val ACTION_SET_SINK_CHAIN = "io.max.paperplay.player.SET_SINK_CHAIN"
     const val EXTRA_SINK_CHAIN = "mode"
+    const val ACTION_REBUILD_FOR_BIT_PERFECT = "io.max.paperplay.player.REBUILD_BIT_PERFECT"
     val CMD_SET_NORMALIZE = SessionCommand(ACTION_SET_NORMALIZE, Bundle.EMPTY)
     val CMD_SET_EQUALIZER = SessionCommand(ACTION_SET_EQUALIZER, Bundle.EMPTY)
     val CMD_SET_SINK_CHAIN = SessionCommand(ACTION_SET_SINK_CHAIN, Bundle.EMPTY)
+    val CMD_REBUILD_FOR_BIT_PERFECT = SessionCommand(ACTION_REBUILD_FOR_BIT_PERFECT, Bundle.EMPTY)
 
     @Volatile var appContext: Context? = null
     @Volatile var upstream: DataSource.Factory? = null
@@ -49,11 +51,14 @@ internal object PlaybackCore {
     @Volatile var engineStats: FloatArray? = null
     @Volatile var normalize = false
     @Volatile var speed = 1f
+    @Volatile var useUnifiedBitPerfect = USE_UNIFIED_BIT_PERFECT_DEFAULT
+    @Volatile var devApi34MixerEnabled = false
     @Volatile var usbExclusiveMode = false
     @Volatile var sinkChainMode: SinkChainMode = SinkChainMode.FULL
     @Volatile var usbActive = false
     @Volatile var usbStatus: String? = null
     @Volatile var onUsbReconfigurationRequested: (() -> Unit)? = null
+    @Volatile var onRebuildPlayerForBitPerfect: (() -> Unit)? = null
     @Volatile var activePlayer: ExoPlayer? = null
     @Volatile var playerPlaybackState: Int = androidx.media3.common.Player.STATE_IDLE
     @Volatile var playerPlayWhenReady: Boolean = false
@@ -103,6 +108,13 @@ internal object PlaybackCore {
 
     fun loadPersistedUsbExclusiveMode(context: Context): Boolean {
         val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        devApi34MixerEnabled = sp.getBoolean("dev_api34_bitperfect_mixer", false)
+        if (useUnifiedBitPerfect) {
+            val mode = PlatformBitPerfectPrefs.load()
+            val v = mode == BitPerfectMode.ON
+            usbExclusiveMode = v
+            return v
+        }
         if (sp.contains(KEY_USB_EXCLUSIVE)) {
             val v = sp.getBoolean(KEY_USB_EXCLUSIVE, false)
             usbExclusiveMode = v
@@ -128,7 +140,7 @@ internal object PlaybackCore {
                 }
             }
         } catch (_: Throwable) {}
-        val defaultVal = true
+        val defaultVal = false
         sp.edit().putBoolean(KEY_USB_EXCLUSIVE, defaultVal).apply()
         usbExclusiveMode = defaultVal
         return defaultVal

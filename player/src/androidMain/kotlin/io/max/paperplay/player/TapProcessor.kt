@@ -258,15 +258,55 @@ internal class TapProcessor : BaseAudioProcessor() {
     override fun onReset() { AudioTap.reset() }
 }
 
+/**
+ * Upstream 1:1 normal Android sink chain (`origin/main`): [EngineAudioSink] wrapping [DefaultAudioSink]
+ * with float output enabled and [TapProcessor] for visualizer capture. Zero USB wrappers or diagnostic hooks.
+ */
+@OptIn(UnstableApi::class)
+internal fun buildUpstreamNormalAudioSink(
+    context: Context,
+    enableAudioOutputPlaybackParams: Boolean,
+): AudioSink {
+    val defaultSink = DefaultAudioSink.Builder(context)
+        .setEnableFloatOutput(true)
+        .setEnableAudioTrackPlaybackParams(enableAudioOutputPlaybackParams)
+        .setAudioProcessors(arrayOf(TapProcessor()))
+        .build()
+    return EngineAudioSink(defaultSink)
+}
+
 @OptIn(UnstableApi::class)
 internal class TapRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
     init {
-        // Prefer integer PCM (PCM_24BIT / PCM_32BIT) from MediaCodec decoder for bit-perfect USB exclusive streaming
-        setEnableAudioFloatOutput(false)
+        if (PlaybackCore.useUnifiedBitPerfect) {
+            setEnableAudioFloatOutput(!PlaybackCore.usbExclusiveMode)
+        } else {
+            // Prefer integer PCM (PCM_24BIT / PCM_32BIT) from MediaCodec decoder for legacy USB streaming
+            setEnableAudioFloatOutput(false)
+        }
     }
 
     override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): AudioSink {
         val chainMode = PlaybackCore.sinkChainMode
+        if (PlaybackCore.useUnifiedBitPerfect) {
+            if (!PlaybackCore.usbExclusiveMode && chainMode == SinkChainMode.FULL) {
+                PlaybackCore.usbActive = false
+                io.max.paperplay.player.usb.Api34BitPerfectMixer.clear(context)
+                return buildUpstreamNormalAudioSink(context, enableAudioOutputPlaybackParams)
+            }
+            if (PlaybackCore.devApi34MixerEnabled && PlaybackCore.usbExclusiveMode && android.os.Build.VERSION.SDK_INT >= 34) {
+                io.max.paperplay.player.usb.Api34BitPerfectMixer.buildVerifiedSinkOrNull(
+                    context = context,
+                    enableAudioOutputPlaybackParams = enableAudioOutputPlaybackParams,
+                )?.let { verifiedSink ->
+                    PlaybackCore.usbActive = false
+                    PlaybackCore.engineActive = false
+                    return verifiedSink
+                }
+            }
+            val normalSink = buildUpstreamNormalAudioSink(context, enableAudioOutputPlaybackParams)
+            return io.max.paperplay.player.usb.UnifiedUsbAudioSink(context, normalSink)
+        }
         val sinkFloat = chainMode.sinkFloatOutput
         DelegateSinkDiag.onSinkChainBuilt(chainMode.id, factoryFloatOut = enableFloatOutput, sinkFloatOut = sinkFloat)
         if (chainMode.isPlain) {

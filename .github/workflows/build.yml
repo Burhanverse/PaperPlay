@@ -71,8 +71,10 @@ jobs:
 
       - name: Verify USB sink thread safety (no Player methods called from sink)
         run: |
-          if grep -E "activePlayer|\.playbackState|\.playWhenReady|\.currentPosition" player/src/androidMain/kotlin/io/max/paperplay/player/usb/UsbAudioSink.kt; then
-            echo "ERROR: UsbAudioSink.kt calls Player methods from sink-thread code! Violates ExoPlayer thread safety."
+          if grep -E "activePlayer|\.playbackState|\.playWhenReady|\.currentPosition|\.seekTo\(|\.prepare\(" \
+            player/src/androidMain/kotlin/io/max/paperplay/player/usb/UsbAudioSink.kt \
+            player/src/androidMain/kotlin/io/max/paperplay/player/usb/UnifiedUsbAudioSink.kt; then
+            echo "ERROR: USB audio sink calls Player methods from sink-thread code! Violates ExoPlayer thread safety."
             exit 1
           fi
 
@@ -107,14 +109,20 @@ jobs:
         working-directory: engine
         run: |
           export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}"
-          cargo test --release
-          cargo test --release --features usb
-          cargo ndk -t arm64-v8a -o ../androidApp/src/main/jniLibs build --release
+          cargo test --release -p engine
+          cargo test --release -p usb_audio
+          cargo test --release -p usb_audio --features dev
+          cargo ndk -t arm64-v8a -o ../androidApp/src/main/jniLibs build --release -p engine
           cargo ndk -t arm64-v8a -o ../androidApp/src/main/jniLibs build --release -p usb_audio
           ls -l ../androidApp/src/main/jniLibs/arm64-v8a/libengine.so ../androidApp/src/main/jniLibs/arm64-v8a/libusb_audio.so ../androidApp/src/main/jniLibs/arm64-v8a/libusb-1.0.so
           # Verify libengine.so has zero libusb dependency (lazy USB native loading)
           if readelf -d ../androidApp/src/main/jniLibs/arm64-v8a/libengine.so | grep -q "libusb"; then
             echo "ERROR: libengine.so must not depend on libusb-1.0.so!"
+            exit 1
+          fi
+          # Verify libusb_audio.so dynamically links libusb-1.0.so (LGPL dynamic link)
+          if ! readelf -d ../androidApp/src/main/jniLibs/arm64-v8a/libusb_audio.so | grep -qE "NEEDED.*libusb-1\.0\.so"; then
+            echo "ERROR: libusb_audio.so must dynamically depend on libusb-1.0.so!"
             exit 1
           fi
           # Verify 16 KB ELF LOAD alignment on every native .so

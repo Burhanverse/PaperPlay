@@ -1,17 +1,16 @@
 //! Native USB DAC probing engine.
-//! Queries UAC 1.0 / UAC 2.0 descriptors, Clock Source sample frequency ranges via GET_RANGE,
-//! and Feature Unit volume/mute capabilities via direct usbfs ioctls without libusb/rusb.
-//! Zero directory discovery, eliminating SELinux avc: denied noise.
+//! Probes UAC Clock Source sample frequency ranges via GET_RANGE and Feature Unit volume
+//! ranges via direct usbfs ioctls using Kotlin-parsed topology IDs (`UsbDescriptorParser`).
+//! Zero directory discovery and zero descriptor duplication in Rust.
 
 use std::time::Duration;
 
-use crate::usb::descriptor::parse_audio_topology_from_raw;
-use crate::usb::log::{
+use crate::log::{
     GLOBAL_NATIVE_LOG, TAG_CLAIM_INTERFACE, TAG_CLOCK_GET_RANGE, TAG_DETACH_DRIVER,
     TAG_OPEN_DEVICE, TAG_PROBE_COMPLETE, TAG_PROBE_RATES, TAG_PROBE_START,
     TAG_REATTACH_DRIVER, TAG_RELEASE_INTERFACE,
 };
-use crate::usb::usbfs;
+use crate::usbfs;
 
 /// Ensures any interface detached or claimed during probing is always released and
 /// re-bound to the kernel driver (`snd-usb-audio`), even on early return.
@@ -111,58 +110,33 @@ pub struct ProbedDacCapabilities {
     pub has_mute: bool,
 }
 
-/// Probes a connected USB Audio DAC by using its Android file descriptor directly
-/// via Linux usbfs ioctls: reads raw configuration descriptor, temporarily claims
-/// Audio interfaces, queries the UAC 2.0 Clock Source GET_RANGE, discovers supported
-/// bit depths and sample rates, queries volume ranges, and releases all interfaces.
-pub fn probe_dac(fd: i32) -> Result<ProbedDacCapabilities, i32> {
-    crate::usb::jni::ensure_no_device_discovery();
+/// Probes hardware clock sample-rate ranges and Feature Unit volume dB ranges via usbfs ioctls
+/// using the topology IDs resolved in Kotlin ([UsbDescriptorParser]).
+pub fn probe_dac(
+    fd: i32,
+    ac_iface: u8,
+    streaming_iface: u8,
+    is_uac2: bool,
+    clock_source_id: u8,
+    feature_unit_id: u8,
+    fu_has_volume: bool,
+    fu_has_master_volume: bool,
+    fu_has_mute: bool,
+) -> Result<ProbedDacCapabilities, i32> {
+    crate::jni::ensure_no_device_discovery();
     GLOBAL_NATIVE_LOG.record(TAG_PROBE_START, fd, 0);
 
     if fd < 0 {
         GLOBAL_NATIVE_LOG.record(TAG_OPEN_DEVICE, -22, fd as i64);
-        return Err(-22); // EINVAL
+        return Err(-22);
     }
 
     GLOBAL_NATIVE_LOG.record(TAG_OPEN_DEVICE, 0, fd as i64);
 
-    // 1. Read USB Configuration Descriptor header (9 bytes) to find total length
-    let mut header = [0u8; 9];
-    let res = usbfs::control_transfer(fd, 0x80, 0x06, 0x0200, 0, &mut header, 1000);
-    if res.is_err() || header[1] != 2 {
-        GLOBAL_NATIVE_LOG.record(TAG_OPEN_DEVICE, -1, fd as i64);
-        return Err(-1);
-    }
-
-    let total_len = (u16::from_le_bytes([header[2], header[3]]) as usize).clamp(9, 4096);
-    let mut raw_desc = vec![0u8; total_len];
-    if let Err(e) = usbfs::control_transfer(fd, 0x80, 0x06, 0x0200, 0, &mut raw_desc, 1000) {
-        GLOBAL_NATIVE_LOG.record(TAG_OPEN_DEVICE, -e, fd as i64);
-        return Err(-e);
-    }
-
-    // 2. Parse AudioTopology from raw descriptors
-    let topology = match parse_audio_topology_from_raw(&raw_desc) {
-        Ok(t) => t,
-        Err(code) => {
-            return Err(code);
-        }
-    };
-
-    let uac_version = topology.uac_version;
-    let ac_iface = topology.ac_interface_number;
-    let playback_alts = topology.find_playback_streaming_alts();
-
-    // 3. Collect audio interface numbers to claim
-    let mut audio_interfaces = vec![ac_iface];
-    for alt in &topology.streaming_alts {
-        audio_interfaces.push(alt.interface_number);
-    }
+    let uac_version: u8 = if is_uac2 { 2 } else { 1 };
+    let mut audio_interfaces = vec![ac_iface, streaming_iface];
     audio_interfaces.sort();
     audio_interfaces.dedup();
-    if audio_interfaces.is_empty() {
-        audio_interfaces = vec![0, 1];
-    }
 
     let mut claim_guard = ProbeClaimGuard::new(fd);
     let max_attempts = 10;
@@ -198,53 +172,10 @@ pub fn probe_dac(fd: i32) -> Result<ProbedDacCapabilities, i32> {
         }
     }
 
-    let mut bit_depths = Vec::new();
-    let mut channel_counts = Vec::new();
-    let mut uac1_sample_rates = Vec::new();
-
-    for alt in &playback_alts {
-        bit_depths.push(alt.bit_resolution);
-        channel_counts.push(alt.channels);
-        for &rate in &alt.discrete_sample_rates {
-            uac1_sample_rates.push(rate);
-        }
-        if let Some((min_r, max_r)) = alt.continuous_range {
-            for &common in COMMON_SAMPLE_RATES {
-                if common >= min_r && common <= max_r {
-                    uac1_sample_rates.push(common);
-                }
-            }
-        }
-    }
-
-    channel_counts.push(2); // USB audio stereo default
-    channel_counts.sort_unstable();
-    channel_counts.dedup();
-
-    bit_depths.sort_unstable();
-    bit_depths.dedup();
-    if bit_depths.is_empty() {
-        bit_depths = vec![16, 24, 32];
-    }
-
-    // Accurately resolve Clock Source entity ID from playback path
-    let clock_source_id = playback_alts
-        .first()
-        .and_then(|alt| topology.resolve_playback_clock_source_id(alt))
-        .unwrap_or_else(|| {
-            topology.clock_sources.first().map(|cs| cs.id).unwrap_or(9)
-        });
-
-    // Resolve Feature Unit along playback path for volume/mute controls
-    let feature_unit = playback_alts
-        .first()
-        .and_then(|alt| topology.resolve_playback_feature_unit(alt))
-        .or_else(|| topology.feature_units.first());
-    let fu_has_volume = feature_unit.map_or(false, |fu| fu.has_master_volume || fu.has_channel_volume);
-    let fu_has_master_volume = feature_unit.map_or(false, |fu| fu.has_master_volume);
-    let fu_has_mute = feature_unit.map_or(false, |fu| fu.has_master_mute);
-    let feature_unit_id = feature_unit.map(|fu| fu.id);
-
+    let bit_depths = Vec::new();
+    let channel_counts = vec![2];
+    let feature_unit_id = if feature_unit_id > 0 { Some(feature_unit_id) } else { None };
+    let clock_source_id = if clock_source_id > 0 { clock_source_id } else { 9 };
     let mut sample_rates = Vec::new();
 
     if uac_version == 2 {
@@ -305,14 +236,14 @@ pub fn probe_dac(fd: i32) -> Result<ProbedDacCapabilities, i32> {
             }
         }
     } else {
-        sample_rates = uac1_sample_rates;
+        sample_rates.clear();
     }
 
     sample_rates.sort_unstable();
     sample_rates.dedup();
 
-    if sample_rates.is_empty() {
-        // Fallback default rates if probe was non-responsive
+    if uac_version == 2 && sample_rates.is_empty() {
+        // Fallback default rates only if UAC2 probe was non-responsive
         sample_rates = vec![44100, 48000, 96000];
     }
 

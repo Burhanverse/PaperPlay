@@ -38,4 +38,24 @@ class UnderrunWatchTest {
         repeat(2) { w.hit(); now += 10 }
         assertTrue(w.hit())
     }
+
+    @Test
+    fun `reconfigure escalator triggers on two repairs within 15 seconds`() {
+        var now = 0L
+        val e = ReconfigureEscalator(clock = { now })
+        assertFalse(e.recordReconfigureAndShouldFallback())
+        now += 5_000
+        assertTrue(e.recordReconfigureAndShouldFallback())
+    }
+
+    @Test
+    fun `reconfigure escalator forgets slow repairs and resets cleanly`() {
+        var now = 0L
+        val e = ReconfigureEscalator(clock = { now })
+        assertFalse(e.recordReconfigureAndShouldFallback())
+        now += 20_000
+        assertFalse(e.recordReconfigureAndShouldFallback())
+        e.reset()
+        assertFalse(e.recordReconfigureAndShouldFallback())
+    }
 }

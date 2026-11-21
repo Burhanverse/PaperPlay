@@ -333,7 +333,10 @@ class PlaybackController(
     fun seek(positionMs: Long) = engine.seek(positionMs)
     fun setVolume(volume: Float) { baseVolume = volume; if (fadeJob?.isActive != true) engine.setVolume(volume) }
     val outputInfo get() = engine.outputInfo
-    val usbExclusiveStatus get() = engine.usbExclusiveStatus
+    val supportsBitPerfect: Boolean get() = engine.supportsBitPerfect
+    val bitPerfectStatus get() = engine.bitPerfectStatus
+    val dacController get() = engine.dacController
+    fun setBitPerfect(on: Boolean) = engine.setBitPerfect(on)
     fun setEqualizer(gainsDb: List<Float>?) = engine.setEqualizer(gainsDb)
     fun setBass(db: Float) = engine.setBass(db)
     fun setExactLevel(on: Boolean) = engine.setExactLevel(on)
@@ -342,17 +345,6 @@ class PlaybackController(
     fun setEarphoneCorrection(text: String?) = engine.setEarphoneCorrection(text)
     fun setEngineOptions(bits: Int) = engine.setEngineOptions(bits)
     fun setExclusiveOutput(on: Boolean) = engine.setExclusiveOutput(on)
-    fun setUsbExclusive(on: Boolean) = engine.setUsbExclusive(on)
-    fun setSinkChain(mode: String) = engine.setSinkChain(mode)
-    fun getSinkChain(): String = engine.getSinkChain()
-    suspend fun runUsbProbe(): String = engine.runUsbProbe()
-    suspend fun runUsbPlaybackTest(): String = engine.runUsbPlaybackTest()
-    fun requestUsbPermission() = engine.requestUsbPermission()
-    suspend fun exportUsbDebugLog(): String = engine.exportUsbDebugLog()
-    fun triggerUsbPcmDump(enable: Boolean = true): String = engine.triggerUsbPcmDump(enable)
-    fun getUsbPcmDumpStatus(): String = engine.getUsbPcmDumpStatus()
-    fun getUsbPcmDumpPath(): String? = engine.getUsbPcmDumpPath()
-    fun getLastUsbFallbackLogPath(): String? = engine.getLastUsbFallbackLogPath()
     fun setCorrectionProfile(text: String?) = engine.setCorrectionProfile(text)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)
     fun setNormalize(on: Boolean) = engine.setNormalize(on)

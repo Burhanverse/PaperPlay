@@ -225,5 +225,11 @@ class UsbAudioSinkThreadSafetyTest {
         val streamerSrc = readSrc("player/src/androidMain/kotlin/io/max/paperplay/player/usb/UsbAudioStreamer.kt")
         val getStatsHeader = streamerSrc.substringBefore("override fun getStats()").takeLast(40)
         assertFalse(getStatsHeader.contains("@Synchronized"), "UsbAudioStreamer.getStats must be lock-free")
+
+        // UnifiedUsbAudioSink must likewise never touch ExoPlayer/Player or block/sleep
+        val unifiedSinkSrc = readSrc("player/src/androidMain/kotlin/io/max/paperplay/player/usb/UnifiedUsbAudioSink.kt")
+        for (forbidden in listOf("activePlayer", ".playbackState", ".playWhenReady", ".currentPosition", ".seekTo(", ".prepare()", "CountDownLatch", "Thread.sleep")) {
+            assertFalse(unifiedSinkSrc.contains(forbidden), "UnifiedUsbAudioSink.kt must not contain $forbidden")
+        }
     }
 }

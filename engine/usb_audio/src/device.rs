@@ -7,8 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use rusb::{Context, DeviceHandle, UsbContext};
 
-use crate::usb::descriptor::parse_audio_topology;
-use crate::usb::log::{
+use crate::log::{
     GLOBAL_NATIVE_LOG, TAG_CLAIM_INTERFACE, TAG_CLOCK_GET_CUR, TAG_CLOCK_GET_RANGE,
     TAG_CLOCK_SET_CUR, TAG_DETACH_DRIVER, TAG_OPEN_DEVICE, TAG_REATTACH_DRIVER,
     TAG_RELEASE_INTERFACE, TAG_SET_ALT_SETTING,
@@ -70,7 +69,7 @@ fn release_and_reattach_interfaces(handle: &DeviceHandle<Context>, claimed: &[u8
     }
 }
 
-fn program_sample_rate(
+pub(crate) fn program_sample_rate(
     handle: &DeviceHandle<Context>,
     is_uac2: bool,
     clock_source_id: u8,
@@ -282,19 +281,17 @@ pub fn get_active_session() -> Option<Arc<UsbDeviceSession>> {
 
 impl UsbDeviceSession {
     /// Open the USB device from the Android file descriptor, detach kernel drivers,
-    /// claim audio interfaces (0, 1, and 2 if present), set alt 0, configure clock rate,
-    /// and select the target alternate setting.
-    pub fn open_and_configure(
+    /// claim audio interfaces (0, 1, and 2 if present), capture pre-session FU mute/vol,
+    /// and leave the streaming interface in Alt 0 ready for [reconfigure_format].
+    pub fn open_claimed(
         fd: i32,
         streaming_iface: u8,
-        target_alt: u8,
         is_uac2: bool,
         clock_source_id: u8,
         control_iface: u8,
-        sample_rate: u32,
-        endpoint: u8,
+        explicit_fu_id: u8,
     ) -> Result<Self, i32> {
-        super::jni::ensure_no_device_discovery();
+        crate::jni::ensure_no_device_discovery();
         #[cfg(unix)]
         let _ = rusb::disable_device_discovery();
 
@@ -305,8 +302,6 @@ impl UsbDeviceSession {
             return Err(-err);
         }
 
-        // Initialize libusb context with LIBUSB_OPTION_NO_DEVICE_DISCOVERY (option = 2)
-        // to bypass scanning /dev/bus/usb on Android and eliminate SELinux AVC denials.
         #[repr(C)]
         struct LibusbInitOption {
             option: std::os::raw::c_int,
@@ -363,9 +358,6 @@ impl UsbDeviceSession {
             }
         };
 
-        // Determine all Audio class interfaces (bInterfaceClass == 1)
-        // Interface 0 (Audio Control) first, then Interface 1 (Audio Streaming OUT),
-        // and Interface 2 (Audio Streaming IN / mic) if present. Interface 3 (HID) left untouched.
         let mut audio_interfaces = Vec::new();
         let active_config = handle.device().active_config_descriptor().ok();
         if let Some(ref config) = active_config {
@@ -376,7 +368,13 @@ impl UsbDeviceSession {
             }
         }
         if audio_interfaces.is_empty() {
-            audio_interfaces = vec![0, streaming_iface];
+            audio_interfaces = vec![control_iface, streaming_iface];
+        }
+        if !audio_interfaces.contains(&control_iface) {
+            audio_interfaces.push(control_iface);
+        }
+        if !audio_interfaces.contains(&streaming_iface) {
+            audio_interfaces.push(streaming_iface);
         }
         audio_interfaces.sort();
         audio_interfaces.dedup();
@@ -385,15 +383,13 @@ impl UsbDeviceSession {
         let delay_ms = 30;
         let mut claimed_interfaces = Vec::new();
 
-        // Detach kernel driver (snd-usb-audio) and claim each audio interface
         for &iface in &audio_interfaces {
             let mut claimed = false;
             for attempt in 1..=max_attempts {
-                // Detach kernel driver
                 let detach_code = match handle.detach_kernel_driver(iface) {
                     Ok(_) => 0,
                     Err(e) => match e {
-                        rusb::Error::NotFound => 0, // No driver was attached
+                        rusb::Error::NotFound => 0,
                         _ => -1,
                     },
                 };
@@ -430,77 +426,67 @@ impl UsbDeviceSession {
                 }
             }
 
-            if !claimed {
-                // If Interface 0 (Control) or the streaming OUT interface fails, we cannot proceed
-                if iface == control_iface || iface == streaming_iface {
-                    release_and_reattach_interfaces(&handle, &claimed_interfaces);
-                    return Err(-16); // EBUSY
-                }
+            if !claimed && (iface == control_iface || iface == streaming_iface) {
+                release_and_reattach_interfaces(&handle, &claimed_interfaces);
+                return Err(-16);
             }
         }
 
         let mut feature_units_list = Vec::new();
+        if explicit_fu_id > 0 {
+            feature_units_list.push((explicit_fu_id, control_iface));
+        }
+
         let mut saved_volumes_list = Vec::new();
         let mut saved_mutes_list = Vec::new();
+        let get_cur_req = fu_get_cur_request(is_uac2);
+        for &(fu_id, ac_iface) in &feature_units_list {
+            let w_idx = fu_w_index(fu_id, ac_iface);
+            for ch in 0..=2 {
+                let w_val_mute = fu_mute_w_value(ch);
+                let mut mute_buf = [0u8; 1];
+                if let Ok(1) = handle.read_control(
+                    0xA1,
+                    get_cur_req,
+                    w_val_mute,
+                    w_idx,
+                    &mut mute_buf,
+                    Duration::from_millis(100),
+                ) {
+                    let is_muted = mute_buf[0] != 0;
+                    saved_mutes_list.push((fu_id, ac_iface, ch, is_muted));
+                    GLOBAL_NATIVE_LOG.record(
+                        crate::log::TAG_GET_CUR_MUTE,
+                        (0xA1 << 8) | (get_cur_req as i32),
+                        ((w_idx as i64) << 32)
+                            | ((w_val_mute as i64) << 16)
+                            | (if is_muted { 1 } else { 0 }),
+                    );
+                }
 
-        // Query and save initial volume and mute settings from DAC Feature Units via GET_CUR
-        if let Some(ref config) = active_config {
-            if let Ok(topology) = parse_audio_topology(config) {
-                let get_cur_req = fu_get_cur_request(is_uac2);
-                for fu in &topology.feature_units {
-                    feature_units_list.push((fu.id, topology.ac_interface_number));
-                    let w_idx = fu_w_index(fu.id, topology.ac_interface_number);
-                    for ch in 0..=2 {
-                        // 1. Read initial mute via GET_CUR (selector 0x01 = MUTE_CONTROL)
-                        let w_val_mute = fu_mute_w_value(ch);
-                        let mut mute_buf = [0u8; 1];
-                        if let Ok(1) = handle.read_control(
-                            0xA1,
-                            get_cur_req,
-                            w_val_mute,
-                            w_idx,
-                            &mut mute_buf,
-                            Duration::from_millis(100),
-                        ) {
-                            let is_muted = mute_buf[0] != 0;
-                            saved_mutes_list.push((fu.id, topology.ac_interface_number, ch, is_muted));
-                            GLOBAL_NATIVE_LOG.record(
-                                crate::usb::log::TAG_GET_CUR_MUTE,
-                                (0xA1 << 8) | (get_cur_req as i32),
-                                ((w_idx as i64) << 32)
-                                    | ((w_val_mute as i64) << 16)
-                                    | (if is_muted { 1 } else { 0 }),
-                            );
-                        }
-
-                        // 2. Read initial volume via GET_CUR (selector 0x02 = VOLUME_CONTROL)
-                        let w_val_vol = fu_volume_w_value(ch);
-                        let mut vol_buf = [0u8; 2];
-                        if let Ok(2) = handle.read_control(
-                            0xA1,
-                            get_cur_req,
-                            w_val_vol,
-                            w_idx,
-                            &mut vol_buf,
-                            Duration::from_millis(100),
-                        ) {
-                            let vol_raw = i16::from_le_bytes(vol_buf);
-                            saved_volumes_list.push((fu.id, topology.ac_interface_number, ch, vol_raw));
-                            GLOBAL_NATIVE_LOG.record(
-                                crate::usb::log::TAG_GET_CUR_VOL,
-                                (0xA1 << 8) | (get_cur_req as i32),
-                                ((w_idx as i64) << 32)
-                                    | ((w_val_vol as i64) << 16)
-                                    | (vol_raw as u16 as i64),
-                            );
-                        }
-                    }
+                let w_val_vol = fu_volume_w_value(ch);
+                let mut vol_buf = [0u8; 2];
+                if let Ok(2) = handle.read_control(
+                    0xA1,
+                    get_cur_req,
+                    w_val_vol,
+                    w_idx,
+                    &mut vol_buf,
+                    Duration::from_millis(100),
+                ) {
+                    let vol_raw = i16::from_le_bytes(vol_buf);
+                    saved_volumes_list.push((fu_id, ac_iface, ch, vol_raw));
+                    GLOBAL_NATIVE_LOG.record(
+                        crate::log::TAG_GET_CUR_VOL,
+                        (0xA1 << 8) | (get_cur_req as i32),
+                        ((w_idx as i64) << 32)
+                            | ((w_val_vol as i64) << 16)
+                            | (vol_raw as u16 as i64),
+                    );
                 }
             }
         }
 
-        // Capture initial pre-session DAC volume/mute only once per exclusive claim cycle
-        // so rate switches (e.g., 48k -> 44.1k) don't overwrite the OS baseline with our own volume.
         if let Ok(mut initial_lock) = INITIAL_DAC_STATE.lock() {
             if initial_lock.is_none() && (!saved_volumes_list.is_empty() || !saved_mutes_list.is_empty()) {
                 *initial_lock = Some(SavedDacState {
@@ -510,7 +496,6 @@ impl UsbDeviceSession {
             }
         }
 
-        // Select Alt 0 on streaming interface first
         match handle.set_alternate_setting(streaming_iface, 0) {
             Ok(_) => {
                 GLOBAL_NATIVE_LOG.record(TAG_SET_ALT_SETTING, streaming_iface as i32, 0);
@@ -529,61 +514,37 @@ impl UsbDeviceSession {
             }
         }
 
-        // Program sample rate while in Alt 0
-        if let Err(err_code) = program_sample_rate(
-            &handle,
-            is_uac2,
-            clock_source_id,
-            control_iface,
-            streaming_iface,
-            endpoint,
-            sample_rate,
-        ) {
-            release_and_reattach_interfaces(&handle, &claimed_interfaces);
-            return Err(err_code);
-        }
-
-        // Select target alternate setting on streaming interface
-        match handle.set_alternate_setting(streaming_iface, target_alt) {
-            Ok(_) => {
-                GLOBAL_NATIVE_LOG.record(
-                    TAG_SET_ALT_SETTING,
-                    streaming_iface as i32,
-                    (target_alt as i64) & 0xFF,
-                );
-            }
-            Err(e) => {
-                let err_code = match e {
-                    rusb::Error::Busy => -16,
-                    rusb::Error::NoDevice => -19,
-                    _ => -1,
-                };
-                GLOBAL_NATIVE_LOG.record(
-                    TAG_SET_ALT_SETTING,
-                    streaming_iface as i32,
-                    ((err_code as i64) << 8) | ((target_alt as i64) & 0xFF),
-                );
-                release_and_reattach_interfaces(&handle, &claimed_interfaces);
-                return Err(err_code);
-            }
-        }
-
         Ok(Self {
             context,
             handle,
             dup_fd,
             claimed_interfaces,
             streaming_iface: AtomicU8::new(streaming_iface),
-            target_alt: AtomicU8::new(target_alt),
+            target_alt: AtomicU8::new(0),
             is_uac2,
             clock_source_id,
             control_iface,
-            endpoint: AtomicU8::new(endpoint),
+            endpoint: AtomicU8::new(0),
             feature_units: feature_units_list,
             saved_volumes: saved_volumes_list,
             saved_mutes: saved_mutes_list,
             volume_restored: AtomicBool::new(false),
         })
+    }
+
+    pub fn open_and_configure(
+        fd: i32,
+        streaming_iface: u8,
+        target_alt: u8,
+        is_uac2: bool,
+        clock_source_id: u8,
+        control_iface: u8,
+        sample_rate: u32,
+        endpoint: u8,
+    ) -> Result<Self, i32> {
+        let session = Self::open_claimed(fd, streaming_iface, is_uac2, clock_source_id, control_iface, 0)?;
+        session.reconfigure_format(streaming_iface, target_alt, sample_rate, endpoint)?;
+        Ok(session)
     }
 
     /// Reconfigure sample rate, streaming interface, and alternate setting in place
@@ -692,6 +653,7 @@ impl UsbDeviceSession {
     }
 
     /// Sets hardware volume via UAC Feature Unit on claimed control interface.
+    /// Captures pre-session FU mute/volume baseline once if not already recorded.
     /// Returns the verified readback volume raw value (i16) on success, or negative errno on error.
     pub fn set_hardware_volume(
         &self,
@@ -700,12 +662,13 @@ impl UsbDeviceSession {
         channel: u8,
         volume_raw: i16,
     ) -> Result<i16, i32> {
+        self.capture_fu_baseline_once(fu_id, control_iface);
         let w_val = fu_volume_w_value(channel);
         let w_idx = fu_w_index(fu_id, control_iface);
         let data = volume_raw.to_le_bytes();
 
         GLOBAL_NATIVE_LOG.record(
-            crate::usb::log::TAG_SET_CUR_VOL,
+            crate::log::TAG_SET_CUR_VOL,
             (0x21 << 8) | 0x01,
             ((w_idx as i64) << 32) | ((w_val as i64) << 16) | (volume_raw as u16 as i64),
         );
@@ -738,7 +701,7 @@ impl UsbDeviceSession {
             Ok(2) => {
                 let read_val = i16::from_le_bytes(readback);
                 GLOBAL_NATIVE_LOG.record(
-                    crate::usb::log::TAG_GET_CUR_VOL,
+                    crate::log::TAG_GET_CUR_VOL,
                     (0xA1 << 8) | (get_cur_req as i32),
                     ((w_idx as i64) << 32) | ((w_val as i64) << 16) | (read_val as u16 as i64),
                 );
@@ -754,6 +717,7 @@ impl UsbDeviceSession {
     }
 
     /// Sets hardware mute via UAC Feature Unit on claimed control interface.
+    /// Captures pre-session FU mute/volume baseline once if not already recorded.
     /// Returns the verified readback mute state (bool) on success, or negative errno on error.
     pub fn set_hardware_mute(
         &self,
@@ -762,12 +726,13 @@ impl UsbDeviceSession {
         channel: u8,
         mute: bool,
     ) -> Result<bool, i32> {
+        self.capture_fu_baseline_once(fu_id, control_iface);
         let w_val = fu_mute_w_value(channel);
         let w_idx = fu_w_index(fu_id, control_iface);
         let data = [if mute { 1u8 } else { 0u8 }];
 
         GLOBAL_NATIVE_LOG.record(
-            crate::usb::log::TAG_SET_CUR_MUTE,
+            crate::log::TAG_SET_CUR_MUTE,
             (0x21 << 8) | 0x01,
             ((w_idx as i64) << 32) | ((w_val as i64) << 16) | (if mute { 1 } else { 0 }),
         );
@@ -800,13 +765,81 @@ impl UsbDeviceSession {
             Ok(1) => {
                 let is_muted = readback[0] != 0;
                 GLOBAL_NATIVE_LOG.record(
-                    crate::usb::log::TAG_GET_CUR_MUTE,
+                    crate::log::TAG_GET_CUR_MUTE,
                     (0xA1 << 8) | (get_cur_req as i32),
                     ((w_idx as i64) << 32) | ((w_val as i64) << 16) | (if is_muted { 1 } else { 0 }),
                 );
                 Ok(is_muted)
             }
             _ => Err(-1),
+        }
+    }
+
+    /// Captures pre-session mute/volume for a Feature Unit once per claim cycle before any mutation.
+    fn capture_fu_baseline_once(&self, fu_id: u8, ac_iface: u8) {
+        if fu_id == 0 {
+            return;
+        }
+        let Ok(mut guard) = INITIAL_DAC_STATE.lock() else {
+            return;
+        };
+        let get_cur_req = fu_get_cur_request(self.is_uac2);
+        let state = guard.get_or_insert_with(|| SavedDacState {
+            volumes: Vec::new(),
+            mutes: Vec::new(),
+        });
+        for ch in 0..=2 {
+            if !state.mutes.iter().any(|&(f, a, c, _)| f == fu_id && a == ac_iface && c == ch) {
+                if let Ok(m) = self.read_hardware_mute(fu_id, ac_iface, ch) {
+                    state.mutes.push((fu_id, ac_iface, ch, m));
+                }
+            }
+            if !state.volumes.iter().any(|&(f, a, c, _)| f == fu_id && a == ac_iface && c == ch) {
+                if let Ok(v) = self.read_hardware_volume(fu_id, ac_iface, ch) {
+                    state.volumes.push((fu_id, ac_iface, ch, v));
+                }
+            }
+        }
+        let _ = get_cur_req;
+    }
+
+    pub fn set_alt_setting(&self, iface: u8, alt: u8) -> Result<(), i32> {
+        self.handle.set_alternate_setting(iface, alt).map_err(|e| match e {
+            rusb::Error::Busy => -16,
+            rusb::Error::NoDevice => -19,
+            _ => -1,
+        })
+    }
+
+    pub fn read_hardware_volume(&self, fu_id: u8, control_iface: u8, channel: u8) -> Result<i16, i32> {
+        let w_val = fu_volume_w_value(channel);
+        let w_idx = fu_w_index(fu_id, control_iface);
+        let get_cur_req = fu_get_cur_request(self.is_uac2);
+        let mut readback = [0u8; 2];
+        match self.handle.read_control(0xA1, get_cur_req, w_val, w_idx, &mut readback, Duration::from_millis(200)) {
+            Ok(2) => Ok(i16::from_le_bytes(readback)),
+            Ok(_) => Err(-1),
+            Err(e) => Err(match e {
+                rusb::Error::Pipe => -32,
+                rusb::Error::Timeout => -110,
+                _ => -1,
+            }),
+        }
+    }
+
+    pub fn read_hardware_mute(&self, fu_id: u8, control_iface: u8, channel: u8) -> Result<bool, i32> {
+        let w_val = fu_mute_w_value(channel);
+        let w_idx = fu_w_index(fu_id, control_iface);
+        let get_cur_req = fu_get_cur_request(self.is_uac2);
+        let mut readback = [0u8; 1];
+        match self.handle.read_control(0xA1, get_cur_req, w_val, w_idx, &mut readback, Duration::from_millis(200)) {
+            Ok(1) => Ok(readback[0] != 0),
+            Ok(_) => Err(-1),
+            Err(e) => Err(match e {
+                rusb::Error::Pipe => -32,
+                rusb::Error::Timeout => -110,
+                _ => -1,
+            }),
         }
     }
 
@@ -903,7 +936,7 @@ impl UsbDeviceSession {
                     Duration::from_millis(100),
                 );
                 GLOBAL_NATIVE_LOG.record(
-                    crate::usb::log::TAG_SET_CUR_MUTE,
+                    crate::log::TAG_SET_CUR_MUTE,
                     (0x21 << 8) | 0x01,
                     ((w_idx as i64) << 32) | ((w_val_mute as i64) << 16) | (if saved_mute { 1 } else { 0 }),
                 );
@@ -919,7 +952,7 @@ impl UsbDeviceSession {
                 ) {
                     let read_mute = mute_readback[0] != 0;
                     GLOBAL_NATIVE_LOG.record(
-                        crate::usb::log::TAG_GET_CUR_MUTE,
+                        crate::log::TAG_GET_CUR_MUTE,
                         (0xA1 << 8) | (get_cur_req as i32),
                         ((w_idx as i64) << 32) | ((w_val_mute as i64) << 16) | (if read_mute { 1 } else { 0 }),
                     );
@@ -942,7 +975,7 @@ impl UsbDeviceSession {
                     Duration::from_millis(100),
                 );
                 GLOBAL_NATIVE_LOG.record(
-                    crate::usb::log::TAG_SET_CUR_VOL,
+                    crate::log::TAG_SET_CUR_VOL,
                     (0x21 << 8) | 0x01,
                     ((w_idx as i64) << 32) | ((w_val_vol as i64) << 16) | (saved_vol as u16 as i64),
                 );
@@ -959,7 +992,7 @@ impl UsbDeviceSession {
                 ) {
                     let raw_vol = i16::from_le_bytes(readback);
                     GLOBAL_NATIVE_LOG.record(
-                        crate::usb::log::TAG_GET_CUR_VOL,
+                        crate::log::TAG_GET_CUR_VOL,
                         (0xA1 << 8) | (get_cur_req as i32),
                         ((w_idx as i64) << 32) | ((w_val_vol as i64) << 16) | (raw_vol as u16 as i64),
                     );

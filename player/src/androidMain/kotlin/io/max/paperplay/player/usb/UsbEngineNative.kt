@@ -49,31 +49,58 @@ internal object UsbEngineNative : UsbEngineBridge {
     val isAlreadyLoaded: Boolean
         get() = isLoaded
 
-    fun parseCapabilities(fd: Int): DacCapabilities? {
+    fun parseCapabilities(fd: Int, desc: UsbAudioDeviceDescription? = null): DacCapabilities? {
         if (!available) return null
-        val jsonStr = runCatching { probeDac(fd) }.getOrNull() ?: return null
+        val pbAlt = desc?.playbackAltSettings?.firstOrNull()
+        val acIface = desc?.acInterfaceNumber ?: 0
+        val streamIface = pbAlt?.interfaceNumber ?: 1
+        val isUac2 = desc?.uacVersion != UacVersion.UAC_1_0
+        val clockId = (if (pbAlt != null) desc.resolvePlaybackClockSourceId(pbAlt) else null) ?: 9
+        val fu = desc?.resolvePlaybackFeatureUnit(pbAlt)
+        val fuId = fu?.id ?: 0
+        val fuHasVol = fu?.let { it.hasMasterVolume || it.hasChannelVolume } ?: false
+        val fuHasMasterVol = fu?.hasMasterVolume ?: false
+        val fuHasMute = fu?.hasMasterMute ?: false
+
+        val jsonStr = runCatching {
+            probeDac(fd, acIface, streamIface, isUac2, clockId, fuId, fuHasVol, fuHasMasterVol, fuHasMute)
+        }.getOrNull() ?: return null
         return runCatching {
             val obj = JSONObject(jsonStr)
             val ratesArr = obj.getJSONArray("rates")
-            val rates = (0 until ratesArr.length()).map { ratesArr.getInt(it) }
+            val nativeRates = (0 until ratesArr.length()).map { ratesArr.getInt(it) }
+            val uac1Rates = desc?.playbackAltSettings
+                ?.flatMap { alt ->
+                    alt.sampleRates + (alt.continuousRateRange?.let { (lo, hi) ->
+                        listOf(44100, 48000, 88200, 96000, 176400, 192000).filter { it in lo..hi }
+                    } ?: emptyList())
+                }
+                ?.distinct()
+                ?.sorted()
+                ?: emptyList()
+            val rates = if (isUac2 || nativeRates.isNotEmpty()) nativeRates else uac1Rates
 
             val depthsArr = obj.getJSONArray("depths")
-            val depths = (0 until depthsArr.length()).map { depthsArr.getInt(it) }
+            val depths = desc?.playbackAltSettings?.map { it.bitResolution }?.distinct()?.sorted()
+                ?.takeIf { it.isNotEmpty() }
+                ?: (0 until depthsArr.length()).map { depthsArr.getInt(it) }
 
             val chArr = obj.getJSONArray("channels")
-            val channels = (0 until chArr.length()).map { chArr.getInt(it) }
+            val channels = desc?.playbackAltSettings?.map { it.channelCount }?.distinct()?.sorted()
+                ?.takeIf { it.isNotEmpty() }
+                ?: (0 until chArr.length()).map { chArr.getInt(it) }
 
             DacCapabilities(
                 sampleRates = rates,
                 bitDepths = depths,
                 channelCounts = channels,
-                clockSourceId = obj.optInt("clockId", 9),
-                uacVersion = obj.optInt("uac", 2),
+                clockSourceId = clockId,
+                uacVersion = obj.optInt("uac", if (isUac2) 2 else 1),
                 volumeMinDb = obj.optDouble("volMin", -64.0).toFloat(),
                 volumeMaxDb = obj.optDouble("volMax", 0.0).toFloat(),
                 volumeResDb = obj.optDouble("volRes", 0.5).toFloat(),
-                hasVolume = obj.optBoolean("hasVol", false),
-                hasMute = obj.optBoolean("hasMute", false)
+                hasVolume = fuHasVol || obj.optBoolean("hasVol", false),
+                hasMute = fuHasMute || obj.optBoolean("hasMute", false)
             )
         }.onFailure {
             PlayLog.log("usb", "Failed to parse DacCapabilities JSON: $it")
@@ -139,6 +166,48 @@ internal object UsbEngineNative : UsbEngineBridge {
     override external fun getCurrentAlt(handle: Long): Int
     override external fun restoreDefaultVolume(handle: Long): Int
 
+    external fun sessionOpen(
+        fd: Int,
+        controlIface: Int,
+        streamingIface: Int,
+        isUac2: Boolean,
+        clockSourceId: Int,
+        hasHardwareVolume: Boolean,
+        featureUnitId: Int,
+    ): Long
+
+    external fun sessionReconfigure(
+        handle: Long,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
+        feedbackEp: Int,
+    ): Int
+
+    external fun sessionApplyVolume(
+        handle: Long,
+        featureUnitId: Int,
+        controlIface: Int,
+        channel: Int,
+        volumeRaw: Int,
+        mute: Boolean,
+    ): Int
+
+    external fun sessionStart(handle: Long): Int
+    external fun sessionPauseGrace(handle: Long): Int
+    external fun sessionStop(handle: Long): Int
+    external fun sessionWritePcm(handle: Long, buffer: ByteBuffer, offset: Int, length: Int): Int
+    external fun sessionSetMuteRamp(handle: Long, muted: Boolean): Int
+    external fun sessionFlush(handle: Long): Int
+    external fun sessionGetStats(handle: Long, outStats: LongArray): Int
+    external fun sessionClose(handle: Long)
+
     external fun reattachKernelDriver(fd: Int, interfaceNumber: Int): Int
     external fun controlTransfer(
         fd: Int,
@@ -151,7 +220,17 @@ internal object UsbEngineNative : UsbEngineBridge {
         timeoutMs: Int
     ): Int
 
-    override external fun probeDac(fd: Int): String?
+    override external fun probeDac(
+        fd: Int,
+        acIface: Int,
+        streamingIface: Int,
+        isUac2: Boolean,
+        clockSourceId: Int,
+        featureUnitId: Int,
+        fuHasVolume: Boolean,
+        fuHasMasterVolume: Boolean,
+        fuHasMute: Boolean,
+    ): String?
 
     override fun getNativeLog(): String? {
         if (!available) return null

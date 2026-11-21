@@ -43,11 +43,280 @@ fun initPlayer(context: Context, upstream: DataSource.Factory? = null) {
         PlayLog.log("usb", "WARNING: usbExclusiveMode initial mismatch in initPlayer: flag=$initialFlag pref=$savedPref")
     }
     io.max.paperplay.player.usb.UsbRingLog.record("InitPlayer", "usbExclusiveMode initial = $savedPref (pref=$savedPref), sinkChain = ${savedChain.id}", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
-    val usb = io.max.paperplay.player.usb.UsbAudioManager.instance
-        ?: io.max.paperplay.player.usb.UsbAudioManager(context.applicationContext).also {
-            io.max.paperplay.player.usb.UsbAudioManager.instance = it
+    if (PlaybackCore.useUnifiedBitPerfect) {
+        val um = io.max.paperplay.player.usb.UnifiedUsbDacManager.instance
+            ?: io.max.paperplay.player.usb.UnifiedUsbDacManager(context.applicationContext).also {
+                io.max.paperplay.player.usb.UnifiedUsbDacManager.instance = it
+            }
+        um.start()
+    } else {
+        val usb = io.max.paperplay.player.usb.UsbAudioManager.instance
+            ?: io.max.paperplay.player.usb.UsbAudioManager(context.applicationContext).also {
+                io.max.paperplay.player.usb.UsbAudioManager.instance = it
+            }
+        usb.start()
+    }
+    AndroidUsbDacBackend.refreshStatus()
+}
+
+internal interface AndroidEngineHooks {
+    fun onExclusiveToggled(changed: Boolean)
+    fun onSinkChainChanged(mode: SinkChainMode)
+}
+
+internal object AndroidUsbDacBackend : io.max.paperplay.player.usb.UsbDacController {
+    private val _usbExclusiveStatus = MutableStateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?>(null)
+    override val usbExclusiveStatus: StateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?> = _usbExclusiveStatus
+
+    private val _bitPerfectStatus = MutableStateFlow<BitPerfectStatus>(BitPerfectStatus.Off)
+    val bitPerfectStatus: StateFlow<BitPerfectStatus>
+        get() = if (PlaybackCore.useUnifiedBitPerfect) {
+            io.max.paperplay.player.usb.UnifiedUsbDacManager.instance?.status ?: _bitPerfectStatus
+        } else {
+            _bitPerfectStatus
         }
-    usb.start()
+
+    private val noDiscoveryHint = MutableStateFlow<io.max.paperplay.player.usb.DiscoveredUsbDacHint?>(null)
+    override val pendingDiscoveryHint: StateFlow<io.max.paperplay.player.usb.DiscoveredUsbDacHint?>
+        get() = io.max.paperplay.player.usb.UnifiedUsbDacManager.instance?.pendingHint ?: noDiscoveryHint
+
+    override fun dismissDiscoveryHint(vidPid: String) {
+        io.max.paperplay.player.usb.UnifiedUsbDacManager.instance?.dismissHint(vidPid)
+    }
+
+    override fun setDevApi34Mixer(enabled: Boolean) {
+        PlaybackCore.devApi34MixerEnabled = enabled
+        val ctx = PlaybackCore.appContext ?: return
+        ctx.getSharedPreferences("paperplay_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("dev_api34_bitperfect_mixer", enabled).apply()
+        if (!enabled) {
+            io.max.paperplay.player.usb.Api34BitPerfectMixer.clear(ctx)
+        }
+        if (PlaybackCore.useUnifiedBitPerfect) {
+            PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+        }
+    }
+
+    @kotlin.concurrent.Volatile
+    private var hooks: AndroidEngineHooks? = null
+
+    fun attachHooks(engineHooks: AndroidEngineHooks) {
+        hooks = engineHooks
+    }
+
+    fun detachHooks(engineHooks: AndroidEngineHooks) {
+        if (hooks === engineHooks) hooks = null
+    }
+
+    override fun setUsbExclusive(on: Boolean) {
+        val ctx = PlaybackCore.appContext ?: return
+        val changed = PlaybackCore.usbExclusiveMode != on
+        PlaybackCore.savePersistedUsbExclusiveMode(ctx, on)
+        PlatformBitPerfectPrefs.save(if (on) BitPerfectMode.ON else BitPerfectMode.OFF)
+        if (PlaybackCore.useUnifiedBitPerfect) {
+            io.max.paperplay.player.usb.UnifiedUsbDacManager.instance?.onModeChanged(
+                if (on) BitPerfectMode.ON else BitPerfectMode.OFF
+            )
+            if (on && !PlaybackCore.playerIsPlaying) {
+                io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission?.invoke()
+            }
+        }
+        if (!on) {
+            PlaybackCore.usbActive = false
+            // 1. Tell sink first so native session restores DAC volume/mute while interface 0 is still claimed and releases cleanly
+            io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.onExclusiveModeChanged(false)
+            // 2. If playback is not actively running on USB, close connection immediately; otherwise the sink thread closes on release
+            if (!PlaybackCore.playerIsPlaying) {
+                io.max.paperplay.player.usb.UsbAudioManager.instance?.onUsbExclusiveModeChanged(false)
+            }
+        } else {
+            io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission?.invoke()
+            // 1. Load native USB library and open device (Kotlin raw descriptors; native clock probe runs lazily on configure)
+            io.max.paperplay.player.usb.UsbAudioManager.instance?.onUsbExclusiveModeChanged(true)
+            // 2. Notify sink to reconfigure into USB mode
+            io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.onExclusiveModeChanged(true)
+        }
+        refreshStatus()
+        hooks?.onExclusiveToggled(changed)
+    }
+
+    override fun setSinkChain(mode: String) {
+        val ctx = PlaybackCore.appContext ?: return
+        val parsed = SinkChainMode.fromId(mode)
+        PlaybackCore.savePersistedSinkChain(ctx, parsed)
+        PlayLog.log("usb", "Sink chain changed to ${parsed.id}")
+        io.max.paperplay.player.usb.UsbRingLog.record("AndroidPlayerEngine", "sinkChain set to ${parsed.id}", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
+        hooks?.onSinkChainChanged(parsed)
+    }
+
+    override fun getSinkChain(): String =
+        PlaybackCore.appContext?.let { PlaybackCore.loadPersistedSinkChain(it).id } ?: SinkChainMode.FULL.id
+
+    override suspend fun runUsbProbe(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val ctx = PlaybackCore.appContext ?: return@withContext "App context unavailable."
+        val usb = io.max.paperplay.player.usb.UsbAudioManager.instance
+            ?: io.max.paperplay.player.usb.UsbAudioManager(ctx).also { io.max.paperplay.player.usb.UsbAudioManager.instance = it }
+        io.max.paperplay.player.usb.UsbAudioProbe.run(ctx, usb)
+    }
+
+    override suspend fun runUsbPlaybackTest(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+        val ctx = PlaybackCore.appContext ?: return@withContext "App context unavailable."
+        io.max.paperplay.player.usb.UsbDevicePlaybackTest.run(ctx)
+    }
+
+    override fun requestUsbPermission() {
+        val usb = io.max.paperplay.player.usb.UsbAudioManager.instance ?: return
+        val dev = usb.enumerateAudioDevices().firstOrNull() ?: return
+        usb.requestPermission(dev)
+    }
+
+    override suspend fun exportUsbDebugLog(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val ctx = PlaybackCore.appContext ?: return@withContext ""
+        val file = io.max.paperplay.player.usb.UsbAudioProbe.exportDebugLogFile(ctx)
+        file.absolutePath
+    }
+
+    override fun triggerUsbPcmDump(enable: Boolean): String {
+        val ctx = PlaybackCore.appContext ?: return "App context unavailable."
+        return if (enable) {
+            io.max.paperplay.player.usb.UsbPcmDumper.enable(ctx.cacheDir)
+            "Armed: dump will record next 30 s of USB audio to cache"
+        } else {
+            io.max.paperplay.player.usb.UsbPcmDumper.disable()
+            "Dump cancelled"
+        }
+    }
+
+    override fun getUsbPcmDumpStatus(): String = io.max.paperplay.player.usb.UsbPcmDumper.status
+
+    override fun getUsbPcmDumpPath(): String? = io.max.paperplay.player.usb.UsbPcmDumper.dumpFilePath
+
+    override fun getLastUsbFallbackLogPath(): String? {
+        val ctx = PlaybackCore.appContext ?: return null
+        val file = io.max.paperplay.player.usb.UsbAudioProbe.getLastFallbackLog(ctx)
+        return file?.takeIf { it.exists() }?.absolutePath
+    }
+
+    fun refreshStatus() {
+        val usbManager = io.max.paperplay.player.usb.UsbAudioManager.instance
+        val state = usbManager?.state?.value
+        val isExclusive = PlaybackCore.usbExclusiveMode
+        val sink = io.max.paperplay.player.usb.UsbAudioSink.currentInstance
+        val isActiveModeUsb = sink?.activeMode == io.max.paperplay.player.usb.UsbAudioSink.ActiveSinkMode.USB
+        val stats = usbManager?.getStreamerStats()
+        val isStreamConfirmed = isActiveModeUsb && stats?.isRunning == true && (stats.sampleRate > 0 || stats.framesConsumed > 0L)
+        val isBitPerfect = isExclusive && isStreamConfirmed
+
+        val status = if (!isExclusive) {
+            val dev = (state as? io.max.paperplay.player.usb.UsbAudioState.Connected)?.device
+            val desc = (state as? io.max.paperplay.player.usb.UsbAudioState.Connected)?.description
+            val currentAlt = desc?.altSettings?.firstOrNull()
+            io.max.paperplay.player.usb.UsbExclusiveStatus(
+                enabled = false,
+                isConnected = state is io.max.paperplay.player.usb.UsbAudioState.Connected,
+                deviceName = dev?.productName ?: "USB DAC",
+                vidPid = dev?.let { "0x${it.vendorId.toString(16).padStart(4, '0')}:0x${it.productId.toString(16).padStart(4, '0')}" },
+                uacVersion = when (desc?.uacVersion) {
+                    io.max.paperplay.player.usb.UacVersion.UAC_1_0 -> "UAC 1.0"
+                    io.max.paperplay.player.usb.UacVersion.UAC_2_0 -> "UAC 2.0"
+                    else -> null
+                },
+                activeRate = currentAlt?.sampleRates?.firstOrNull(),
+                activeBitDepth = currentAlt?.bitResolution,
+                activeChannels = currentAlt?.channelCount,
+                isBitPerfect = false,
+                statusReason = "USB exclusive: off"
+            )
+        } else {
+            when (state) {
+                is io.max.paperplay.player.usb.UsbAudioState.Connected -> {
+                    val dev = state.device
+                    val desc = state.description
+                    val streamer = usbManager?.streamer
+                    val activeAlt = streamer?.confirmedAlt?.takeIf { it >= 0 }?.let { altNum ->
+                        desc.altSettings.firstOrNull { it.altSetting == altNum }
+                    } ?: desc.altSettings.firstOrNull()
+                    io.max.paperplay.player.usb.UsbExclusiveStatus(
+                        enabled = true,
+                        isConnected = true,
+                        deviceName = dev.productName ?: "USB DAC",
+                        vidPid = "0x${dev.vendorId.toString(16).padStart(4, '0')}:0x${dev.productId.toString(16).padStart(4, '0')}",
+                        uacVersion = when (desc.uacVersion) {
+                            io.max.paperplay.player.usb.UacVersion.UAC_1_0 -> "UAC 1.0"
+                            io.max.paperplay.player.usb.UacVersion.UAC_2_0 -> "UAC 2.0"
+                            else -> "Unknown"
+                        },
+                        activeRate = streamer?.confirmedRate?.takeIf { it > 0 }
+                            ?: stats?.sampleRate?.takeIf { it > 0 }
+                            ?: activeAlt?.sampleRates?.firstOrNull(),
+                        activeBitDepth = streamer?.bitDepth?.takeIf { it > 0 && isActiveModeUsb } ?: activeAlt?.bitResolution,
+                        activeChannels = streamer?.channels?.takeIf { it > 0 && isActiveModeUsb } ?: activeAlt?.channelCount,
+                        endpointMode = activeAlt?.dataEndpoint?.syncType?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Asynchronous",
+                        isHighSpeed = desc.uacVersion == io.max.paperplay.player.usb.UacVersion.UAC_2_0,
+                        hardwareVolume = if (desc.hasHardwareVolume) "UAC Feature Unit (verified)" else "Fixed 0 dB (bit-perfect)",
+                        underruns = stats?.underruns ?: 0L,
+                        urbErrors = stats?.urbErrors ?: 0L,
+                        framesConsumed = stats?.framesConsumed ?: 0L,
+                        isBitPerfect = isBitPerfect,
+                        statusReason = if (isBitPerfect) {
+                            "bit-perfect active"
+                        } else {
+                            PlaybackCore.usbStatus?.takeIf { !it.contains("streaming", ignoreCase = true) } ?: "Standby: ready to stream"
+                        }
+                    )
+                }
+                is io.max.paperplay.player.usb.UsbAudioState.Attached -> {
+                    io.max.paperplay.player.usb.UsbExclusiveStatus(
+                        enabled = true,
+                        isConnected = false,
+                        deviceName = state.device.productName ?: "USB Device",
+                        vidPid = "0x${state.device.vendorId.toString(16).padStart(4, '0')}:0x${state.device.productId.toString(16).padStart(4, '0')}",
+                        isBitPerfect = false,
+                        statusReason = if (state.hasPermission) "Initializing DAC..." else "USB DAC found - tap to allow"
+                    )
+                }
+                is io.max.paperplay.player.usb.UsbAudioState.Error -> {
+                    io.max.paperplay.player.usb.UsbExclusiveStatus(
+                        enabled = true,
+                        isConnected = false,
+                        deviceName = state.device?.productName ?: "USB Device",
+                        vidPid = state.device?.let { "0x${it.vendorId.toString(16).padStart(4, '0')}:0x${it.productId.toString(16).padStart(4, '0')}" } ?: "",
+                        isBitPerfect = false,
+                        statusReason = state.message
+                    )
+                }
+                else -> {
+                    io.max.paperplay.player.usb.UsbExclusiveStatus(
+                        enabled = true,
+                        isConnected = false,
+                        isBitPerfect = false,
+                        statusReason = "waiting for DAC"
+                    )
+                }
+            }
+        }
+        _usbExclusiveStatus.value = status
+        _bitPerfectStatus.value = when {
+            !isExclusive -> BitPerfectStatus.Off
+            isBitPerfect -> BitPerfectStatus.Active(
+                transportLabel = TransportKind.USB_UAC_DIRECT.displayName,
+                sampleRateHz = status.activeRate ?: 0,
+                bitDepth = status.activeBitDepth ?: 0,
+                deviceName = status.deviceName?.takeIf { it.isNotBlank() },
+            )
+            state is io.max.paperplay.player.usb.UsbAudioState.Attached && !state.hasPermission ->
+                BitPerfectStatus.PermissionRequired(
+                    deviceName = state.device.productName ?: "USB Device",
+                    deviceId = status.vidPid?.takeIf { it.isNotBlank() },
+                )
+            state is io.max.paperplay.player.usb.UsbAudioState.Error ->
+                BitPerfectStatus.Fallback(state.message)
+            else -> BitPerfectStatus.Standby(
+                deviceName = status.deviceName?.takeIf { it.isNotBlank() && state is io.max.paperplay.player.usb.UsbAudioState.Connected },
+                reason = status.statusReason,
+            )
+        }
+    }
 }
 
 /** Main-thread Media3 [MediaController] client driving [PlaybackService]'s shared session. */
@@ -84,8 +353,36 @@ class AndroidPlayerEngine : PlayerEngine {
     override val currentIndex: StateFlow<Int> = _currentIndex
     private val _info = MutableStateFlow<OutputInfo?>(null)
     override val outputInfo: StateFlow<OutputInfo?> = _info
-    private val _usbExclusiveStatus = MutableStateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?>(null)
-    override val usbExclusiveStatus: StateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?> = _usbExclusiveStatus
+    override val supportsBitPerfect: Boolean = true
+    override val bitPerfectStatus: StateFlow<BitPerfectStatus> get() = AndroidUsbDacBackend.bitPerfectStatus
+    override val dacController: io.max.paperplay.player.usb.UsbDacController get() = AndroidUsbDacBackend
+
+    private val engineHooks = object : AndroidEngineHooks {
+        override fun onExclusiveToggled(changed: Boolean) {
+            onMain {
+                val mc = controller?.takeIf { it.isConnected }
+                if (PlaybackCore.useUnifiedBitPerfect && changed) {
+                    if (mc != null) {
+                        mc.sendCustomCommand(PlaybackCore.CMD_REBUILD_FOR_BIT_PERFECT, Bundle.EMPTY)
+                    } else {
+                        PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+                    }
+                } else if (changed && mc != null && (mc.isPlaying || mc.playWhenReady)) {
+                    val pos = mc.currentPosition
+                    mc.seekTo(pos)
+                }
+                mc?.let { publishInfo(it) }
+            }
+        }
+
+        override fun onSinkChainChanged(mode: SinkChainMode) {
+            onMain {
+                val mc = controller?.takeIf { it.isConnected } ?: return@onMain
+                mc.sendCustomCommand(PlaybackCore.CMD_SET_SINK_CHAIN, Bundle().apply { putString(PlaybackCore.EXTRA_SINK_CHAIN, mode.id) })
+                publishInfo(mc)
+            }
+        }
+    }
 
     override val bypassSoftwareFade: Boolean
         get() = PlaybackCore.usbActive || PlaybackCore.usbExclusiveMode
@@ -156,7 +453,7 @@ class AndroidPlayerEngine : PlayerEngine {
                 return
             }
             if (PlaybackCore.engineActive && ++infoTicks % 3 == 0) publishInfo(mc)
-            if (PlaybackCore.usbActive || infoTicks % 5 == 0) updateUsbExclusiveStatus()
+            if (PlaybackCore.usbActive || infoTicks % 5 == 0) AndroidUsbDacBackend.refreshStatus()
             _positionMs.value = mc.currentPosition.coerceAtLeast(0L)
             _bufferedMs.value = mc.bufferedPosition.coerceAtLeast(0L)
             handler.postDelayed(this, pollMs())
@@ -181,7 +478,8 @@ class AndroidPlayerEngine : PlayerEngine {
         }
         PlayLog.log("usb", "AndroidPlayerEngine init: usbExclusiveMode = ${PlaybackCore.usbExclusiveMode} (pref=$savedPref)")
         io.max.paperplay.player.usb.UsbRingLog.record("AndroidPlayerEngine", "usbExclusiveMode initial = ${PlaybackCore.usbExclusiveMode} (pref=$savedPref)", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
-        updateUsbExclusiveStatus()
+        AndroidUsbDacBackend.attachHooks(engineHooks)
+        AndroidUsbDacBackend.refreshStatus()
         onMain { connect() }
         PlaybackCore.onUsbReconfigurationRequested = {
             onMain {
@@ -198,13 +496,13 @@ class AndroidPlayerEngine : PlayerEngine {
                         }
                     }
                 }
-                updateUsbExclusiveStatus()
+                AndroidUsbDacBackend.refreshStatus()
                 mc?.let { publishInfo(it) }
             }
         }
         scope.launch {
             io.max.paperplay.player.usb.UsbAudioManager.instance?.state?.collect { state ->
-                updateUsbExclusiveStatus()
+                AndroidUsbDacBackend.refreshStatus()
                 val mc = controller?.takeIf { it.isConnected }
                 if (mc != null) {
                     if (state is io.max.paperplay.player.usb.UsbAudioState.Connected && PlaybackCore.usbExclusiveMode && !PlaybackCore.usbActive) {
@@ -545,193 +843,8 @@ class AndroidPlayerEngine : PlayerEngine {
         // Desktop mpv output switch; no-op on Android
     }
 
-    override fun setUsbExclusive(on: Boolean) {
-        val changed = PlaybackCore.usbExclusiveMode != on
-        PlaybackCore.savePersistedUsbExclusiveMode(context, on)
-        if (!on) {
-            PlaybackCore.usbActive = false
-            // 1. Tell sink first so native session restores DAC volume/mute while interface 0 is still claimed and releases cleanly
-            io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.onExclusiveModeChanged(false)
-            // 2. If playback is not actively running on USB, close connection immediately; otherwise the sink thread closes on release
-            if (!PlaybackCore.playerIsPlaying) {
-                io.max.paperplay.player.usb.UsbAudioManager.instance?.onUsbExclusiveModeChanged(false)
-            }
-        } else {
-            io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission?.invoke()
-            // 1. Load native USB library and open device (Kotlin raw descriptors; native clock probe runs lazily on configure)
-            io.max.paperplay.player.usb.UsbAudioManager.instance?.onUsbExclusiveModeChanged(true)
-            // 2. Notify sink to reconfigure into USB mode
-            io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.onExclusiveModeChanged(true)
-        }
-        updateUsbExclusiveStatus()
-        onMain {
-            val mc = controller?.takeIf { it.isConnected }
-            if (changed && mc != null && (mc.isPlaying || mc.playWhenReady)) {
-                val pos = mc.currentPosition
-                mc.seekTo(pos)
-            }
-            mc?.let { publishInfo(it) }
-        }
-    }
-
-    override fun setSinkChain(mode: String) {
-        val parsed = SinkChainMode.fromId(mode)
-        PlaybackCore.savePersistedSinkChain(context, parsed)
-        PlayLog.log("usb", "Sink chain changed to ${parsed.id}")
-        io.max.paperplay.player.usb.UsbRingLog.record("AndroidPlayerEngine", "sinkChain set to ${parsed.id}", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
-        onMain {
-            val mc = controller?.takeIf { it.isConnected } ?: return@onMain
-            mc.sendCustomCommand(PlaybackCore.CMD_SET_SINK_CHAIN, Bundle().apply { putString(PlaybackCore.EXTRA_SINK_CHAIN, parsed.id) })
-            publishInfo(mc)
-        }
-    }
-
-    override fun getSinkChain(): String = PlaybackCore.loadPersistedSinkChain(context).id
-
-    override suspend fun runUsbProbe(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val usb = io.max.paperplay.player.usb.UsbAudioManager.instance
-            ?: io.max.paperplay.player.usb.UsbAudioManager(context).also { io.max.paperplay.player.usb.UsbAudioManager.instance = it }
-        io.max.paperplay.player.usb.UsbAudioProbe.run(context, usb)
-    }
-
-    override suspend fun runUsbPlaybackTest(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-        io.max.paperplay.player.usb.UsbDevicePlaybackTest.run(context)
-    }
-
-    override fun requestUsbPermission() {
-        val usb = io.max.paperplay.player.usb.UsbAudioManager.instance ?: return
-        val dev = usb.enumerateAudioDevices().firstOrNull() ?: return
-        usb.requestPermission(dev)
-    }
-
-    override suspend fun exportUsbDebugLog(): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val file = io.max.paperplay.player.usb.UsbAudioProbe.exportDebugLogFile(context)
-        file.absolutePath
-    }
-
-    override fun triggerUsbPcmDump(enable: Boolean): String {
-        return if (enable) {
-            io.max.paperplay.player.usb.UsbPcmDumper.enable(context.cacheDir)
-            "Armed: dump will record next 30 s of USB audio to cache"
-        } else {
-            io.max.paperplay.player.usb.UsbPcmDumper.disable()
-            "Dump cancelled"
-        }
-    }
-
-    override fun getUsbPcmDumpStatus(): String {
-        return io.max.paperplay.player.usb.UsbPcmDumper.status
-    }
-
-    override fun getUsbPcmDumpPath(): String? {
-        return io.max.paperplay.player.usb.UsbPcmDumper.dumpFilePath
-    }
-
-    override fun getLastUsbFallbackLogPath(): String? {
-        val file = io.max.paperplay.player.usb.UsbAudioProbe.getLastFallbackLog(context)
-        return file?.takeIf { it.exists() }?.absolutePath
-    }
-
-
-    private fun updateUsbExclusiveStatus() {
-        val usbManager = io.max.paperplay.player.usb.UsbAudioManager.instance
-        val state = usbManager?.state?.value
-        val isExclusive = PlaybackCore.usbExclusiveMode
-        val sink = io.max.paperplay.player.usb.UsbAudioSink.currentInstance
-        val isActiveModeUsb = sink?.activeMode == io.max.paperplay.player.usb.UsbAudioSink.ActiveSinkMode.USB
-        val stats = usbManager?.getStreamerStats()
-        val isStreamConfirmed = isActiveModeUsb && stats?.isRunning == true && (stats.sampleRate > 0 || stats.framesConsumed > 0L)
-        val isBitPerfect = isExclusive && isStreamConfirmed
-
-        val status = if (!isExclusive) {
-            val dev = (state as? io.max.paperplay.player.usb.UsbAudioState.Connected)?.device
-            val desc = (state as? io.max.paperplay.player.usb.UsbAudioState.Connected)?.description
-            val currentAlt = desc?.altSettings?.firstOrNull()
-            io.max.paperplay.player.usb.UsbExclusiveStatus(
-                enabled = false,
-                isConnected = state is io.max.paperplay.player.usb.UsbAudioState.Connected,
-                deviceName = dev?.productName ?: "USB DAC",
-                vidPid = dev?.let { "0x${it.vendorId.toString(16).padStart(4, '0')}:0x${it.productId.toString(16).padStart(4, '0')}" },
-                uacVersion = when (desc?.uacVersion) {
-                    io.max.paperplay.player.usb.UacVersion.UAC_1_0 -> "UAC 1.0"
-                    io.max.paperplay.player.usb.UacVersion.UAC_2_0 -> "UAC 2.0"
-                    else -> null
-                },
-                activeRate = currentAlt?.sampleRates?.firstOrNull(),
-                activeBitDepth = currentAlt?.bitResolution,
-                activeChannels = currentAlt?.channelCount,
-                isBitPerfect = false,
-                statusReason = "USB exclusive: off"
-            )
-        } else {
-            when (state) {
-                is io.max.paperplay.player.usb.UsbAudioState.Connected -> {
-                    val dev = state.device
-                    val desc = state.description
-                    val streamer = usbManager?.streamer
-                    val activeAlt = streamer?.confirmedAlt?.takeIf { it >= 0 }?.let { altNum ->
-                        desc.altSettings.firstOrNull { it.altSetting == altNum }
-                    } ?: desc.altSettings.firstOrNull()
-                    io.max.paperplay.player.usb.UsbExclusiveStatus(
-                        enabled = true,
-                        isConnected = true,
-                        deviceName = dev.productName ?: "USB DAC",
-                        vidPid = "0x${dev.vendorId.toString(16).padStart(4, '0')}:0x${dev.productId.toString(16).padStart(4, '0')}",
-                        uacVersion = when (desc.uacVersion) {
-                            io.max.paperplay.player.usb.UacVersion.UAC_1_0 -> "UAC 1.0"
-                            io.max.paperplay.player.usb.UacVersion.UAC_2_0 -> "UAC 2.0"
-                            else -> "Unknown"
-                        },
-                        activeRate = streamer?.confirmedRate?.takeIf { it > 0 }
-                            ?: stats?.sampleRate?.takeIf { it > 0 }
-                            ?: activeAlt?.sampleRates?.firstOrNull(),
-                        activeBitDepth = streamer?.bitDepth?.takeIf { it > 0 && isActiveModeUsb } ?: activeAlt?.bitResolution,
-                        activeChannels = streamer?.channels?.takeIf { it > 0 && isActiveModeUsb } ?: activeAlt?.channelCount,
-                        endpointMode = activeAlt?.dataEndpoint?.syncType?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Asynchronous",
-                        isHighSpeed = desc.uacVersion == io.max.paperplay.player.usb.UacVersion.UAC_2_0,
-                        hardwareVolume = if (desc.hasHardwareVolume) "UAC Feature Unit (verified)" else "Fixed 0 dB (bit-perfect)",
-                        underruns = stats?.underruns ?: 0L,
-                        urbErrors = stats?.urbErrors ?: 0L,
-                        framesConsumed = stats?.framesConsumed ?: 0L,
-                        isBitPerfect = isBitPerfect,
-                        statusReason = if (isBitPerfect) {
-                            "bit-perfect active"
-                        } else {
-                            PlaybackCore.usbStatus?.takeIf { !it.contains("streaming", ignoreCase = true) } ?: "Standby: ready to stream"
-                        }
-                    )
-                }
-                is io.max.paperplay.player.usb.UsbAudioState.Attached -> {
-                    io.max.paperplay.player.usb.UsbExclusiveStatus(
-                        enabled = true,
-                        isConnected = false,
-                        deviceName = state.device.productName ?: "USB Device",
-                        vidPid = "0x${state.device.vendorId.toString(16).padStart(4, '0')}:0x${state.device.productId.toString(16).padStart(4, '0')}",
-                        isBitPerfect = false,
-                        statusReason = if (state.hasPermission) "Initializing DAC..." else "USB DAC found - tap to allow"
-                    )
-                }
-                is io.max.paperplay.player.usb.UsbAudioState.Error -> {
-                    io.max.paperplay.player.usb.UsbExclusiveStatus(
-                        enabled = true,
-                        isConnected = false,
-                        deviceName = state.device?.productName ?: "USB Device",
-                        vidPid = state.device?.let { "0x${it.vendorId.toString(16).padStart(4, '0')}:0x${it.productId.toString(16).padStart(4, '0')}" } ?: "",
-                        isBitPerfect = false,
-                        statusReason = state.message
-                    )
-                }
-                else -> {
-                    io.max.paperplay.player.usb.UsbExclusiveStatus(
-                        enabled = true,
-                        isConnected = false,
-                        isBitPerfect = false,
-                        statusReason = "waiting for DAC"
-                    )
-                }
-            }
-        }
-        _usbExclusiveStatus.value = status
+    override fun setBitPerfect(on: Boolean) {
+        AndroidUsbDacBackend.setUsbExclusive(on)
     }
 
     /** The decoded track's format from Media3, plus what Android says about the output device and the effects in the path. */
@@ -752,9 +865,15 @@ class AndroidPlayerEngine : PlayerEngine {
         val outRate = (if (usb && external != null) usbMixerRate(external).takeIf { it > 0 } else null)
             ?: am.getProperty(android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
         val isUsbBitPerfect = PlaybackCore.usbActive
-        val usbDev = (io.max.paperplay.player.usb.UsbAudioManager.instance?.state?.value as? io.max.paperplay.player.usb.UsbAudioState.Connected)?.device
+        val usbMgr = io.max.paperplay.player.usb.UsbAudioManager.instance
+        val usbConn = usbMgr?.state?.value as? io.max.paperplay.player.usb.UsbAudioState.Connected
+        val usbDev = usbConn?.device
         val usbDevName = usbDev?.productName?.takeIf { it.isNotBlank() } ?: "USB DAC"
-        val hwVolSupported = io.max.paperplay.player.usb.UsbAudioManager.instance?.hasHardwareVolume == true
+        val hwVolSupported = usbMgr?.hasHardwareVolume == true
+        val usbStats = if (isUsbBitPerfect) usbMgr?.getStreamerStats() else null
+        val streamer = if (isUsbBitPerfect) usbMgr?.streamer else null
+        val activeAltNum = streamer?.confirmedAlt?.takeIf { it >= 0 }
+        val activeAltDesc = activeAltNum?.let { n -> usbConn?.description?.altSettings?.firstOrNull { it.altSetting == n } }
 
         val eqOn = !isUsbBitPerfect && PlaybackCore.eqGains?.any { kotlin.math.abs(it) >= 0.05f } == true
         val effects = if (isUsbBitPerfect) emptyList() else buildList {
@@ -777,6 +896,97 @@ class AndroidPlayerEngine : PlayerEngine {
             else -> null
         }
         val matches = rate != null && outRate != null && rate == outRate
+        val api34Verified = if (!isUsbBitPerfect && PlaybackCore.useUnifiedBitPerfect && PlaybackCore.devApi34MixerEnabled) {
+            io.max.paperplay.player.usb.Api34BitPerfectMixer.lastVerification as? io.max.paperplay.player.usb.Api34MixerVerification.Verified
+        } else {
+            null
+        }
+        val transport = when {
+            isUsbBitPerfect -> TransportInfo(
+                kind = TransportKind.USB_UAC_DIRECT,
+                verified = true,
+                deviceName = usbDevName,
+                deviceId = usbDev?.let { "${it.vendorId.toString(16).padStart(4, '0')}:${it.productId.toString(16).padStart(4, '0')}" },
+                protocolVersion = when (usbConn?.description?.uacVersion) {
+                    io.max.paperplay.player.usb.UacVersion.UAC_1_0 -> "UAC 1.0"
+                    io.max.paperplay.player.usb.UacVersion.UAC_2_0 -> "UAC 2.0"
+                    else -> null
+                },
+                confirmedRateHz = streamer?.confirmedRate?.takeIf { it > 0 } ?: usbStats?.sampleRate?.takeIf { it > 0 } ?: rate,
+                confirmedBitDepth = streamer?.bitDepth?.takeIf { it > 0 } ?: activeAltDesc?.bitResolution ?: depth,
+                confirmedContainerBits = activeAltDesc?.subslotSize?.times(8),
+                confirmedAlt = activeAltNum,
+                syncMode = activeAltDesc?.dataEndpoint?.syncType?.name?.lowercase()?.replaceFirstChar { it.uppercase() },
+                hardwareVolume = if (hwVolSupported) "UAC Feature Unit (verified)" else "Fixed 0 dB (bit-perfect)",
+                underruns = usbStats?.underruns ?: 0L,
+                errors = usbStats?.urbErrors ?: 0L,
+                framesConsumed = usbStats?.framesConsumed ?: 0L,
+            )
+            api34Verified != null && usb && effects.isEmpty() -> TransportInfo(
+                kind = TransportKind.ANDROID_BIT_PERFECT_MIXER,
+                verified = true,
+                deviceName = io.max.paperplay.player.usb.Api34BitPerfectMixer.lastDeviceName
+                    ?: external?.productName?.toString()?.takeIf { it.isNotBlank() }
+                    ?: "USB DAC",
+                confirmedRateHz = api34Verified.sampleRateHz,
+                confirmedBitDepth = api34Verified.bitDepth,
+                confirmedContainerBits = api34Verified.bitDepth,
+                hardwareVolume = "System USB volume (API 34+ mixer)",
+            )
+            else -> TransportInfo(
+                kind = TransportKind.ANDROID_MIXER,
+                verified = false,
+                deviceName = external?.productName?.toString()?.takeIf { it.isNotBlank() } ?: (if (external != null) "Headphones" else android.os.Build.MODEL),
+            )
+        }
+        val verdict = if (transport.verified && rate != null) {
+            val ch = format?.channelCount?.takeIf { it > 0 } ?: 2
+            val isFloat = format?.pcmEncoding == androidx.media3.common.C.ENCODING_PCM_FLOAT
+            val srcDepth = if (isFloat && (transport.confirmedBitDepth ?: 32) <= 24) {
+                transport.confirmedBitDepth ?: 24
+            } else {
+                depth ?: 16
+            }
+            val srcPcm = PcmFormat(
+                sampleRateHz = rate,
+                sourceBitDepth = srcDepth,
+                wireBitDepth = depth ?: srcDepth,
+                containerBits = depth ?: srcDepth,
+                encoding = when {
+                    format?.sampleMimeType == MIME_AUDIO_DOP -> SampleEncoding.DOP_24
+                    isFloat -> SampleEncoding.PCM_FLOAT
+                    else -> SampleEncoding.PCM_INT
+                },
+                channels = ch,
+                exactPowerOfTwoFloat = isFloat && srcDepth <= 24,
+            )
+            val outPcm = PcmFormat(
+                sampleRateHz = transport.confirmedRateHz ?: rate,
+                sourceBitDepth = transport.confirmedBitDepth ?: srcDepth,
+                wireBitDepth = transport.confirmedBitDepth ?: srcDepth,
+                containerBits = transport.confirmedContainerBits ?: transport.confirmedBitDepth ?: srcDepth,
+                encoding = if (format?.sampleMimeType == MIME_AUDIO_DOP) SampleEncoding.DOP_24 else SampleEncoding.PCM_INT,
+                channels = ch,
+            )
+            BitPerfectEvaluator.evaluate(
+                transport = transport,
+                source = srcPcm,
+                output = outPcm,
+                effects = effects,
+                requestedOn = PlaybackCore.usbExclusiveMode,
+            )
+        } else {
+            BitPerfectVerdict(
+                bitPerfect = false,
+                note = when {
+                    eqOn && PlaybackCore.engineActive -> "The equalizer runs in 32-bit float and a limiter keeps peaks from clipping. This is not bit-perfect."
+                    effects.isNotEmpty() -> "Effects change the sound before it reaches the output."
+                    !matches && usb -> "Android mixes this DAC at ${outRate ?: 0} Hz and converts the track to it."
+                    !matches -> "The device mixes at ${outRate ?: "an unknown"} Hz, so this track is resampled."
+                    else -> "Android's mixer can still convert the format; only a verified bit-perfect USB DAC route skips it."
+                },
+            )
+        }
         _info.value = OutputInfo(
             codec = format?.sampleMimeType?.substringAfter('/')?.uppercase(),
             sampleRateHz = rate,
@@ -794,15 +1004,9 @@ class AndroidPlayerEngine : PlayerEngine {
             } else {
                 engineDetails(eqOn)
             },
-            bitPerfect = isUsbBitPerfect || (effects.isEmpty() && matches && external == null),
-            note = when {
-                isUsbBitPerfect -> "Bit-perfect USB exclusive mode. Android mixer, DSP, sample-rate conversion, and software volume are bypassed."
-                eqOn && PlaybackCore.engineActive -> "The equalizer runs in 32-bit float and a limiter keeps peaks from clipping. This is not bit-perfect."
-                effects.isNotEmpty() -> "Effects change the sound before it reaches the output."
-                !matches && usb -> "Android mixes this DAC at ${outRate ?: 0} Hz and converts the track to it."
-                !matches -> "The device mixes at ${outRate ?: "an unknown"} Hz, so this track is resampled."
-                else -> "Android's mixer can still convert the format; only a bit-perfect USB DAC route skips it."
-            },
+            bitPerfect = verdict.bitPerfect,
+            note = verdict.note,
+            transport = transport,
         )
     }
 
@@ -848,6 +1052,7 @@ class AndroidPlayerEngine : PlayerEngine {
 
     override fun release() = onMain {
         released = true
+        AndroidUsbDacBackend.detachHooks(engineHooks)
         scope.cancel()
         PlaybackCore.onUsbReconfigurationRequested = null
         stopTicker()
@@ -886,19 +1091,9 @@ class AndroidPlayerEngine : PlayerEngine {
     }
 }
 
-actual fun createPlayerEngine(): PlayerEngine = AndroidPlayerEngine()
-
-actual fun persistUsbExclusivePreference(on: Boolean) {
-    val ctx = PlaybackCore.appContext ?: return
-    PlaybackCore.savePersistedUsbExclusiveMode(ctx, on)
-    if (!on) {
-        PlaybackCore.usbActive = false
-        io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.onExclusiveModeChanged(false)
-        if (!PlaybackCore.playerIsPlaying) {
-            io.max.paperplay.player.usb.UsbAudioManager.instance?.onUsbExclusiveModeChanged(false)
-        }
-    } else {
-        io.max.paperplay.player.usb.UsbAudioManager.instance?.onUsbExclusiveModeChanged(true)
-        io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.onExclusiveModeChanged(true)
-    }
-}
+actual fun createPlayerEngine(): PlayerEngine = LazyPlayerEngine(
+    factory = { AndroidPlayerEngine() },
+    supportsBitPerfect = true,
+    dacController = AndroidUsbDacBackend,
+    onPendingBitPerfect = { on -> AndroidUsbDacBackend.setUsbExclusive(on) },
+)

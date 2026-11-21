@@ -188,12 +188,16 @@ object UsbDescriptorParser {
         val featureUnits = mutableListOf<UsbFeatureUnit>()
 
         // 2. Parse AudioControl Interface structures
+        var acInterfaceNumber = 0
         var inAudioControl = false
         for (desc in descriptors) {
             if (desc.type == USB_DT_INTERFACE) {
                 val ifClass = desc.byte(5)
                 val ifSubclass = desc.byte(6)
                 inAudioControl = (ifClass == 0x01 && ifSubclass == USB_SUBCLASS_AUDIOCONTROL)
+                if (inAudioControl) {
+                    acInterfaceNumber = desc.byte(2)
+                }
                 continue
             }
 
@@ -437,7 +441,10 @@ object UsbDescriptorParser {
                             refresh = refresh,
                             synchAddress = synchAddress,
                         )
-                        if (usageType == EndpointUsageType.FEEDBACK || (!isOut && syncType == EndpointSyncType.NONE)) {
+                        if (usageType == EndpointUsageType.FEEDBACK ||
+                            (!isOut && syncType == EndpointSyncType.NONE) ||
+                            (!isOut && currentDataEndpoint?.isOut == true)
+                        ) {
                             currentFeedbackEndpoint = ep
                         } else {
                             currentDataEndpoint = ep
@@ -456,6 +463,7 @@ object UsbDescriptorParser {
             uacVersion = detectedVersion,
             isSupported = altSettings.isNotEmpty(),
             unsupportedReason = if (altSettings.isEmpty()) "No supported isochronous audio streaming alternate settings found" else null,
+            acInterfaceNumber = acInterfaceNumber,
             clockSources = clockSources,
             clockSelectors = clockSelectors,
             clockMultipliers = clockMultipliers,

@@ -197,4 +197,34 @@ mod tests {
         assert_eq!(out, data);
         assert_eq!(rb.available_read(), 0);
     }
+
+    #[test]
+    fn ring_buffer_bounded_wraparound_and_clear() {
+        let rb = SpscRingBuffer::new(1024 * 1024);
+        assert!(rb.capacity() <= 1_048_576);
+
+        let small = SpscRingBuffer::new(64);
+        let first = vec![0xAAu8; 48];
+        assert_eq!(small.write(&first), 48);
+        let mut out1 = vec![0u8; 32];
+        assert_eq!(small.read(&mut out1), 32);
+        assert!(out1.iter().all(|&b| b == 0xAA));
+
+        // Write past the internal wrap-around boundary
+        let wrap_in: Vec<u8> = (0u8..40).collect();
+        assert_eq!(small.write(&wrap_in), 40);
+        let mut out2 = vec![0u8; 16];
+        assert_eq!(small.read(&mut out2), 16);
+        assert!(out2.iter().all(|&b| b == 0xAA));
+        let mut out3 = vec![0u8; 40];
+        assert_eq!(small.read(&mut out3), 40);
+        assert_eq!(out3, wrap_in);
+
+        // clear() zeroes readable byte count while preserving ring capacity
+        assert_eq!(small.write(&wrap_in), 40);
+        assert_eq!(small.available_read(), 40);
+        small.clear();
+        assert_eq!(small.available_read(), 0);
+        assert_eq!(small.capacity(), 64);
+    }
 }

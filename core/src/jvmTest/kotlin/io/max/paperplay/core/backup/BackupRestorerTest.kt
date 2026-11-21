@@ -246,4 +246,29 @@ class BackupRestorerTest {
         assertFalse(File(dir, "botToken.sec").readBytes().decodeToString().contains(token))
         assertEquals(token, store.get("botToken")!!.decodeToString())
     }
+
+    @Test
+    fun bitPerfectModePerPlatformBackupKeysStayIsolatedAcrossPlatforms() {
+        val env = Env()
+        // Target Android already has its own canonical + android keys OFF.
+        run(env, zip(mapOf("library.json" to manifest())))
+        DriverManager.getConnection("jdbc:sqlite:${env.db}").use { c ->
+            c.createStatement().execute(
+                "insert or replace into prefs values ('bit_perfect_mode','false'),('bit_perfect_mode.android','false'),('usb_exclusive_mode','false')",
+            )
+        }
+        // Restoring a Desktop backup with bit_perfect_mode=true and bit_perfect_mode.desktop=true must NOT enable Android bit-perfect.
+        val desktopBackup = manifest(
+            prefs = """{"key":"bit_perfect_mode","value":"true"},{"key":"bit_perfect_mode.desktop","value":"true"},{"key":"pc_bitperfect","value":"true"}""",
+            layout = """"bit_perfect_mode.desktop":"true","theme_mode":"dark"""",
+        )
+        run(env, zip(mapOf("library.json" to desktopBackup)), RestoreOptions(applyLayout = true))
+        val after = env.query("select key, value from prefs where key like 'bit_perfect_mode%' or key = 'usb_exclusive_mode' or key = 'pc_bitperfect'")
+            .associate { it[0]!! to it[1] }
+        assertEquals("false", after["bit_perfect_mode"])
+        assertEquals("false", after["bit_perfect_mode.android"])
+        assertEquals("false", after["usb_exclusive_mode"])
+        assertEquals("true", after["bit_perfect_mode.desktop"])
+        assertNull(after["pc_bitperfect"])
+    }
 }
