@@ -17,6 +17,7 @@ import io.max.paperplay.player.BitPerfectMode
 import io.max.paperplay.player.BitPerfectPrefs
 import io.max.paperplay.player.BitPerfectStatus
 import io.max.paperplay.player.PlayLog
+import io.max.paperplay.player.PlaybackCore
 import io.max.paperplay.player.PrefKeyValueStore
 import kotlinx.coroutines.flow.StateFlow
 
@@ -32,6 +33,7 @@ class UnifiedUsbDacManager(private val context: Context) {
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private val permissionAction = "${appContext.packageName}.UNIFIED_USB_PERMISSION"
+    private var volumeReceiverRegistered = false
 
     private val spStore = object : PrefKeyValueStore {
         private val sp = appContext.getSharedPreferences("paperplay_prefs", Context.MODE_PRIVATE)
@@ -51,15 +53,19 @@ class UnifiedUsbDacManager(private val context: Context) {
 
     private val systemOps = object : UsbSystemOps {
         override fun loadNativeLibrary() {
+            if (coordinator.mode.value != BitPerfectMode.ON) return
             UsbEngineNative.ensureLoaded()
         }
 
         override fun openUsbDevice(deviceId: Int): Boolean {
+            if (coordinator.mode.value != BitPerfectMode.ON) return false
             val dev = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId } ?: return false
-            return UsbAudioManager.instance?.openDevice(dev) == true
+            val usb = UsbAudioManager.instance ?: UsbAudioManager(appContext).also { UsbAudioManager.instance = it }
+            return usb.openDevice(dev)
         }
 
         override fun requestUsbPermission(deviceId: Int) {
+            if (coordinator.mode.value != BitPerfectMode.ON) return
             val dev = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId } ?: return
             val pi = PendingIntent.getBroadcast(
                 appContext,
@@ -70,12 +76,26 @@ class UnifiedUsbDacManager(private val context: Context) {
             usbManager.requestPermission(dev, pi)
         }
 
-        override fun pauseGraceNative(handle: Long): Int = UsbEngineNative.sessionPauseGrace(handle)
-        override fun resumeGraceNative(handle: Long): Int = UsbEngineNative.sessionStart(handle)
-        override fun releaseClaimAndReattach(handle: Long) = UsbEngineNative.sessionClose(handle)
+        override fun pauseGraceNative(handle: Long): Int =
+            UnifiedUsbAudioSink.currentInstance?.pauseGraceFromCoordinator()
+                ?: UsbEngineNative.sessionPauseGrace(handle)
+
+        override fun resumeGraceNative(handle: Long): Int =
+            UnifiedUsbAudioSink.currentInstance?.resumeGraceFromCoordinator()
+                ?: UsbEngineNative.sessionStart(handle)
+
+        override fun releaseClaimAndReattach(handle: Long) {
+            val sink = UnifiedUsbAudioSink.currentInstance
+            if (sink != null && sink.matchesSessionHandle(handle)) {
+                sink.releaseFromCoordinator(handle)
+            } else {
+                UsbEngineNative.sessionClose(handle)
+            }
+            UsbAudioManager.instance?.onUsbReleased(closeConnection = true, rescan = false)
+        }
     }
 
-    val coordinator = UnifiedUsbCoordinator(
+    val coordinator: UnifiedUsbCoordinator = UnifiedUsbCoordinator(
         prefs = spStore,
         ops = systemOps,
         scheduler = scheduler,
@@ -85,7 +105,58 @@ class UnifiedUsbDacManager(private val context: Context) {
     val status: StateFlow<BitPerfectStatus> get() = coordinator.status
     val pendingHint: StateFlow<DiscoveredUsbDacHint?> get() = coordinator.pendingHint
 
+    var onStatusChanged: (() -> Unit)?
+        get() = coordinator.onStatusChanged
+        set(value) { coordinator.onStatusChanged = value }
+
+    fun reopenActiveDeviceIfPermitted(): Boolean {
+        if (coordinator.mode.value != BitPerfectMode.ON) return false
+        val audioDev = usbManager.deviceList.values.firstOrNull { d ->
+            val pairs = (0 until d.interfaceCount).map { idx ->
+                val intf = d.getInterface(idx)
+                intf.interfaceClass to intf.interfaceSubclass
+            }
+            UsbDiscoveryHintTracker.hasAudioStreamingInterface(pairs) && usbManager.hasPermission(d)
+        } ?: return false
+        UsbEngineNative.ensureLoaded()
+        val usb = UsbAudioManager.instance ?: UsbAudioManager(appContext).also { UsbAudioManager.instance = it }
+        val opened = usb.openDevice(audioDev, triggerReconfigure = false)
+        if (opened) {
+            usb.ensureNativeCapabilitiesProbed()
+        }
+        return opened
+    }
+
     private var receiversRegistered = false
+
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            if (intent.action == "android.media.VOLUME_CHANGED_ACTION" &&
+                coordinator.mode.value == BitPerfectMode.ON
+            ) {
+                val streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)
+                if (streamType == AudioManager.STREAM_MUSIC || streamType == -1) {
+                    UnifiedUsbAudioSink.currentInstance?.syncSystemVolume(isUser = true)
+                }
+            }
+        }
+    }
+
+    private fun updateVolumeReceiverRegistration() {
+        val shouldRegister = receiversRegistered && coordinator.mode.value == BitPerfectMode.ON
+        if (shouldRegister && !volumeReceiverRegistered) {
+            volumeReceiverRegistered = true
+            val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                appContext.registerReceiver(volumeReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                appContext.registerReceiver(volumeReceiver, filter)
+            }
+        } else if (!shouldRegister && volumeReceiverRegistered) {
+            volumeReceiverRegistered = false
+            runCatching { appContext.unregisterReceiver(volumeReceiver) }
+        }
+    }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -98,7 +169,15 @@ class UnifiedUsbDacManager(private val context: Context) {
                     dev?.let { coordinator.onHotUnplug(it.deviceId) }
                     scanClassOnly()
                 }
-                permissionAction -> scanClassOnly()
+                permissionAction -> {
+                    scanClassOnly()
+                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    if (granted && coordinator.mode.value == BitPerfectMode.ON &&
+                        UnifiedUsbAudioSink.currentInstance?.isUsbModeActive != true
+                    ) {
+                        PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+                    }
+                }
             }
         }
     }
@@ -135,6 +214,7 @@ class UnifiedUsbDacManager(private val context: Context) {
             }
             audioManager.registerAudioDeviceCallback(audioCallback, mainHandler)
         }
+        updateVolumeReceiverRegistration()
         scanClassOnly()
     }
 
@@ -144,6 +224,7 @@ class UnifiedUsbDacManager(private val context: Context) {
             runCatching { appContext.unregisterReceiver(receiver) }
             runCatching { audioManager.unregisterAudioDeviceCallback(audioCallback) }
         }
+        updateVolumeReceiverRegistration()
         coordinator.releaseClaim("Manager stopped")
     }
 
@@ -168,12 +249,17 @@ class UnifiedUsbDacManager(private val context: Context) {
 
     fun onModeChanged(mode: BitPerfectMode) {
         coordinator.onModeChanged(mode)
+        updateVolumeReceiverRegistration()
         scanClassOnly()
     }
 
     fun dismissHint(vidPid: String) = coordinator.dismissHint(vidPid)
     fun onSessionOpened(handle: Long, deviceId: Int, deviceName: String?) =
         coordinator.onNativeSessionOpened(handle, deviceId, deviceName)
+    fun onSessionClosed(handle: Long) = coordinator.onNativeSessionClosed(handle)
+    fun onSpeedBypass(speed: Float) = coordinator.onSpeedBypass(speed)
+    fun onStreamingActive(sampleRateHz: Int, bitDepth: Int, deviceName: String?) =
+        coordinator.onStreamingActive(sampleRateHz, bitDepth, deviceName)
     fun onPlaybackStarted() = coordinator.onPlaybackStarted()
     fun onPlaybackPaused() = coordinator.onPlaybackPaused()
     fun onPlaybackResumed(): Boolean = coordinator.onPlaybackResumed()

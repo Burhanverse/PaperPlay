@@ -23,10 +23,10 @@ internal object PlaybackCore {
     const val ACTION_SET_SINK_CHAIN = "io.max.paperplay.player.SET_SINK_CHAIN"
     const val EXTRA_SINK_CHAIN = "mode"
     const val ACTION_REBUILD_FOR_BIT_PERFECT = "io.max.paperplay.player.REBUILD_BIT_PERFECT"
-    val CMD_SET_NORMALIZE = SessionCommand(ACTION_SET_NORMALIZE, Bundle.EMPTY)
-    val CMD_SET_EQUALIZER = SessionCommand(ACTION_SET_EQUALIZER, Bundle.EMPTY)
-    val CMD_SET_SINK_CHAIN = SessionCommand(ACTION_SET_SINK_CHAIN, Bundle.EMPTY)
-    val CMD_REBUILD_FOR_BIT_PERFECT = SessionCommand(ACTION_REBUILD_FOR_BIT_PERFECT, Bundle.EMPTY)
+    val CMD_SET_NORMALIZE by lazy { SessionCommand(ACTION_SET_NORMALIZE, Bundle.EMPTY) }
+    val CMD_SET_EQUALIZER by lazy { SessionCommand(ACTION_SET_EQUALIZER, Bundle.EMPTY) }
+    val CMD_SET_SINK_CHAIN by lazy { SessionCommand(ACTION_SET_SINK_CHAIN, Bundle.EMPTY) }
+    val CMD_REBUILD_FOR_BIT_PERFECT by lazy { SessionCommand(ACTION_REBUILD_FOR_BIT_PERFECT, Bundle.EMPTY) }
 
     @Volatile var appContext: Context? = null
     @Volatile var upstream: DataSource.Factory? = null
@@ -57,6 +57,7 @@ internal object PlaybackCore {
     @Volatile var sinkChainMode: SinkChainMode = SinkChainMode.FULL
     @Volatile var usbActive = false
     @Volatile var usbStatus: String? = null
+    @Volatile var devDirectTestActive = false
     @Volatile var onUsbReconfigurationRequested: (() -> Unit)? = null
     @Volatile var onRebuildPlayerForBitPerfect: (() -> Unit)? = null
     @Volatile var activePlayer: ExoPlayer? = null
@@ -69,6 +70,43 @@ internal object PlaybackCore {
     private const val PREFS_NAME = "paperplay_prefs"
     private const val KEY_USB_EXCLUSIVE = "usb_exclusive_mode"
     private const val KEY_SINK_CHAIN = "sink_chain"
+    private const val KEY_USE_UNIFIED_BIT_PERFECT = "dev_use_unified_bit_perfect"
+
+    fun loadPersistedUseUnifiedBitPerfect(context: Context): Boolean {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (sp.contains(KEY_USE_UNIFIED_BIT_PERFECT)) {
+            val v = sp.getBoolean(KEY_USE_UNIFIED_BIT_PERFECT, USE_UNIFIED_BIT_PERFECT_DEFAULT)
+            useUnifiedBitPerfect = v
+            return v
+        }
+        try {
+            val dbFile = java.io.File(context.filesDir, "library.sqlite")
+            if (dbFile.exists()) {
+                android.database.sqlite.SQLiteDatabase.openDatabase(
+                    dbFile.path,
+                    null,
+                    android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+                ).use { db ->
+                    db.rawQuery("SELECT value FROM prefs WHERE \"key\" = ?", arrayOf(KEY_USE_UNIFIED_BIT_PERFECT)).use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val v = cursor.getString(0) == "true"
+                            sp.edit().putBoolean(KEY_USE_UNIFIED_BIT_PERFECT, v).apply()
+                            useUnifiedBitPerfect = v
+                            return v
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        useUnifiedBitPerfect = USE_UNIFIED_BIT_PERFECT_DEFAULT
+        return USE_UNIFIED_BIT_PERFECT_DEFAULT
+    }
+
+    fun savePersistedUseUnifiedBitPerfect(context: Context, enabled: Boolean) {
+        useUnifiedBitPerfect = enabled
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(KEY_USE_UNIFIED_BIT_PERFECT, enabled).apply()
+    }
 
     fun loadPersistedSinkChain(context: Context): SinkChainMode {
         val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -109,6 +147,7 @@ internal object PlaybackCore {
     fun loadPersistedUsbExclusiveMode(context: Context): Boolean {
         val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         devApi34MixerEnabled = sp.getBoolean("dev_api34_bitperfect_mixer", false)
+        loadPersistedUseUnifiedBitPerfect(context)
         if (useUnifiedBitPerfect) {
             val mode = PlatformBitPerfectPrefs.load()
             val v = mode == BitPerfectMode.ON

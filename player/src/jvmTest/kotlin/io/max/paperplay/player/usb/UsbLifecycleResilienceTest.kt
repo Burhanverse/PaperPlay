@@ -152,4 +152,33 @@ class UsbLifecycleResilienceTest {
         assertTrue(ctrl.isFallback)
         assertTrue(fallbackReason?.contains("Persistent USB underruns") == true)
     }
+
+    @Test
+    fun `speed bypass releases claim at 1-5x and reopens cleanly on return to 1-0x`() {
+        val released = mutableListOf<Long>()
+        val timer = FakeTimer()
+        val ops = object : UsbSystemOps {
+            override fun loadNativeLibrary() {}
+            override fun openUsbDevice(deviceId: Int) = true
+            override fun requestUsbPermission(deviceId: Int) {}
+            override fun pauseGraceNative(handle: Long) = 0
+            override fun resumeGraceNative(handle: Long) = 0
+            override fun releaseClaimAndReattach(handle: Long) { released.add(handle) }
+        }
+        val coord = UnifiedUsbCoordinator(newPrefs(), ops, timer, BitPerfectMode.ON)
+        coord.onNativeSessionOpened(handle = 88L, deviceId = 3, deviceName = "Audiocular D07")
+        coord.onStreamingActive(96000, 24, "Audiocular D07")
+        assertTrue(coord.hasActiveClaim)
+
+        coord.onSpeedBypass(1.5f)
+        assertFalse(coord.hasActiveClaim)
+        assertEquals(0L, coord.activeHandle)
+        assertEquals(listOf(88L), released)
+        assertEquals(io.max.paperplay.player.BitPerfectStatus.Bypassed("Speed 1.5x"), coord.status.value)
+
+        coord.onNativeSessionOpened(handle = 99L, deviceId = 3, deviceName = "Audiocular D07")
+        coord.onStreamingActive(96000, 24, "Audiocular D07")
+        assertTrue(coord.hasActiveClaim)
+        assertTrue(coord.status.value is io.max.paperplay.player.BitPerfectStatus.Active)
+    }
 }

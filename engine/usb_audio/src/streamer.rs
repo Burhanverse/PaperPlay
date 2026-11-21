@@ -115,7 +115,7 @@ impl UsbStreamer {
 
         self.running.store(true, Ordering::Release);
         self.paused.store(false, Ordering::Release);
-        self.flushing.store(false, Ordering::Release);
+        self.flushing.store(initial_flushing_state(&self.ring_buffer), Ordering::Release);
         let config = self.config.clone();
         let session = Arc::clone(&self.session);
         let ring_buffer = Arc::clone(&self.ring_buffer);
@@ -648,6 +648,11 @@ pub(crate) fn clamp_packet_frames(
     scheduled_frames.min(remaining_frames)
 }
 
+#[inline]
+pub(crate) fn initial_flushing_state(ring_buffer: &SpscRingBuffer) -> bool {
+    ring_buffer.available_read() == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,5 +690,17 @@ mod tests {
             assert_eq!(total_frames, rate, "drift at rate={rate}, interval={interval_us}us");
             assert_eq!(accum, 0);
         }
+    }
+
+    #[test]
+    fn initial_flushing_reflects_ring_buffer_fill() {
+        let rb = SpscRingBuffer::new(1024);
+        assert!(initial_flushing_state(&rb));
+        let pcm = [1u8; 64];
+        let written = unsafe { rb.write_raw(pcm.as_ptr(), pcm.len()) };
+        assert_eq!(written, 64);
+        assert!(!initial_flushing_state(&rb));
+        rb.clear();
+        assert!(initial_flushing_state(&rb));
     }
 }

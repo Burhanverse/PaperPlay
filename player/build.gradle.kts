@@ -8,6 +8,7 @@ kotlin {
         namespace = "io.max.paperplay.player"
         compileSdk = 37
         minSdk = 26
+        withHostTest {}
         compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
     jvm()
@@ -21,6 +22,9 @@ kotlin {
                 api(libs.media3.exoplayer)
                 api(libs.media3.session)
             }
+        }
+        getByName("androidHostTest").dependencies {
+            implementation(kotlin("test"))
         }
         jvmMain {
             kotlin.srcDir(javaSrc)

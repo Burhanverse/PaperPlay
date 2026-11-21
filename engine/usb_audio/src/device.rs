@@ -896,6 +896,80 @@ impl UsbDeviceSession {
         }
     }
 
+    /// Writes one Feature Unit mute setting and verifies it via GET_CUR while claiming is active.
+    fn restore_fu_mute_and_verify(&self, fu_id: u8, ac_iface: u8, ch: u8, mute: bool, get_cur_req: u8) {
+        let w_idx = fu_w_index(fu_id, ac_iface);
+        let w_val_mute = fu_mute_w_value(ch);
+        let mute_data = [if mute { 1u8 } else { 0u8 }];
+        let _ = self.handle.write_control(
+            0x21,
+            0x01, // SET_CUR
+            w_val_mute,
+            w_idx,
+            &mute_data,
+            Duration::from_millis(100),
+        );
+        GLOBAL_NATIVE_LOG.record(
+            crate::log::TAG_SET_CUR_MUTE,
+            (0x21 << 8) | 0x01,
+            ((w_idx as i64) << 32) | ((w_val_mute as i64) << 16) | (if mute { 1 } else { 0 }),
+        );
+
+        let mut mute_readback = [0u8; 1];
+        if let Ok(1) = self.handle.read_control(
+            0xA1,
+            get_cur_req,
+            w_val_mute,
+            w_idx,
+            &mut mute_readback,
+            Duration::from_millis(100),
+        ) {
+            let read_mute = mute_readback[0] != 0;
+            GLOBAL_NATIVE_LOG.record(
+                crate::log::TAG_GET_CUR_MUTE,
+                (0xA1 << 8) | (get_cur_req as i32),
+                ((w_idx as i64) << 32) | ((w_val_mute as i64) << 16) | (if read_mute { 1 } else { 0 }),
+            );
+        }
+    }
+
+    /// Writes one Feature Unit volume setting and verifies it via GET_CUR while claiming is active.
+    fn restore_fu_vol_and_verify(&self, fu_id: u8, ac_iface: u8, ch: u8, vol_raw: i16, get_cur_req: u8) {
+        let w_idx = fu_w_index(fu_id, ac_iface);
+        let w_val_vol = fu_volume_w_value(ch);
+        let vol_data = vol_raw.to_le_bytes();
+        let _ = self.handle.write_control(
+            0x21,
+            0x01, // SET_CUR
+            w_val_vol,
+            w_idx,
+            &vol_data,
+            Duration::from_millis(100),
+        );
+        GLOBAL_NATIVE_LOG.record(
+            crate::log::TAG_SET_CUR_VOL,
+            (0x21 << 8) | 0x01,
+            ((w_idx as i64) << 32) | ((w_val_vol as i64) << 16) | (vol_raw as u16 as i64),
+        );
+
+        let mut readback = [0u8; 2];
+        if let Ok(2) = self.handle.read_control(
+            0xA1,
+            get_cur_req,
+            w_val_vol,
+            w_idx,
+            &mut readback,
+            Duration::from_millis(100),
+        ) {
+            let raw_vol = i16::from_le_bytes(readback);
+            GLOBAL_NATIVE_LOG.record(
+                crate::log::TAG_GET_CUR_VOL,
+                (0xA1 << 8) | (get_cur_req as i32),
+                ((w_idx as i64) << 32) | ((w_val_vol as i64) << 16) | (raw_vol as u16 as i64),
+            );
+        }
+    }
+
     /// Restores DAC Feature Units to their true pre-session saved state (or 0 dB / unmuted if none saved)
     /// while interface 0 is still claimed, verifying both mute and volume with GET_CUR readback.
     pub fn restore_default_volume_and_unmute(&self) {
@@ -916,86 +990,36 @@ impl UsbDeviceSession {
             .unwrap_or(&self.saved_volumes);
 
         let get_cur_req = fu_get_cur_request(self.is_uac2);
+        let resolve_mute = |fu_id: u8, ac_iface: u8, ch: u8| -> bool {
+            saved_mutes.iter()
+                .find(|&&(f, a, c, _)| f == fu_id && a == ac_iface && c == ch)
+                .map(|&(_, _, _, m)| m)
+                .unwrap_or(false)
+        };
+
+        // Pass 1: apply mute=true channels first so volume changes occur silently.
         for &(fu_id, ac_iface) in &self.feature_units {
-            let w_idx = fu_w_index(fu_id, ac_iface);
             for ch in 0..=2 {
-                // 1. Restore mute (saved state or unmuted default) and verify with GET_CUR
-                let saved_mute = saved_mutes.iter()
-                    .find(|&&(f, a, c, _)| f == fu_id && a == ac_iface && c == ch)
-                    .map(|&(_, _, _, m)| m)
-                    .unwrap_or(false);
-
-                let w_val_mute = fu_mute_w_value(ch);
-                let mute_data = [if saved_mute { 1u8 } else { 0u8 }];
-                let _ = self.handle.write_control(
-                    0x21,
-                    0x01, // SET_CUR
-                    w_val_mute,
-                    w_idx,
-                    &mute_data,
-                    Duration::from_millis(100),
-                );
-                GLOBAL_NATIVE_LOG.record(
-                    crate::log::TAG_SET_CUR_MUTE,
-                    (0x21 << 8) | 0x01,
-                    ((w_idx as i64) << 32) | ((w_val_mute as i64) << 16) | (if saved_mute { 1 } else { 0 }),
-                );
-
-                let mut mute_readback = [0u8; 1];
-                if let Ok(1) = self.handle.read_control(
-                    0xA1,
-                    get_cur_req,
-                    w_val_mute,
-                    w_idx,
-                    &mut mute_readback,
-                    Duration::from_millis(100),
-                ) {
-                    let read_mute = mute_readback[0] != 0;
-                    GLOBAL_NATIVE_LOG.record(
-                        crate::log::TAG_GET_CUR_MUTE,
-                        (0xA1 << 8) | (get_cur_req as i32),
-                        ((w_idx as i64) << 32) | ((w_val_mute as i64) << 16) | (if read_mute { 1 } else { 0 }),
-                    );
+                if resolve_mute(fu_id, ac_iface, ch) {
+                    self.restore_fu_mute_and_verify(fu_id, ac_iface, ch, true, get_cur_req);
                 }
-
-                // 2. Restore volume (saved raw value or 0 dB / 0x0000 default)
+            }
+        }
+        // Pass 2: restore saved volumes while muted / before unmuting.
+        for &(fu_id, ac_iface) in &self.feature_units {
+            for ch in 0..=2 {
                 let saved_vol = saved_volumes.iter()
                     .find(|&&(f, a, c, _)| f == fu_id && a == ac_iface && c == ch)
                     .map(|&(_, _, _, v)| v)
                     .unwrap_or(0);
-
-                let w_val_vol = fu_volume_w_value(ch);
-                let vol_data = saved_vol.to_le_bytes();
-                let _ = self.handle.write_control(
-                    0x21,
-                    0x01, // SET_CUR
-                    w_val_vol,
-                    w_idx,
-                    &vol_data,
-                    Duration::from_millis(100),
-                );
-                GLOBAL_NATIVE_LOG.record(
-                    crate::log::TAG_SET_CUR_VOL,
-                    (0x21 << 8) | 0x01,
-                    ((w_idx as i64) << 32) | ((w_val_vol as i64) << 16) | (saved_vol as u16 as i64),
-                );
-
-                // 3. Verify volume with GET_CUR readback
-                let mut readback = [0u8; 2];
-                if let Ok(2) = self.handle.read_control(
-                    0xA1,
-                    get_cur_req,
-                    w_val_vol,
-                    w_idx,
-                    &mut readback,
-                    Duration::from_millis(100),
-                ) {
-                    let raw_vol = i16::from_le_bytes(readback);
-                    GLOBAL_NATIVE_LOG.record(
-                        crate::log::TAG_GET_CUR_VOL,
-                        (0xA1 << 8) | (get_cur_req as i32),
-                        ((w_idx as i64) << 32) | ((w_val_vol as i64) << 16) | (raw_vol as u16 as i64),
-                    );
+                self.restore_fu_vol_and_verify(fu_id, ac_iface, ch, saved_vol, get_cur_req);
+            }
+        }
+        // Pass 3: unmute channels after volumes are in place.
+        for &(fu_id, ac_iface) in &self.feature_units {
+            for ch in 0..=2 {
+                if !resolve_mute(fu_id, ac_iface, ch) {
+                    self.restore_fu_mute_and_verify(fu_id, ac_iface, ch, false, get_cur_req);
                 }
             }
         }

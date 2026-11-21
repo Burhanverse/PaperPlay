@@ -11,8 +11,14 @@ import java.nio.ByteOrder
 class UsbWireBufferConverter {
     private var scratch: ByteBuffer = ByteBuffer.allocateDirect(65536).order(ByteOrder.LITTLE_ENDIAN)
 
-    fun convert(src: ByteBuffer, encodingBits: Int, isFloat: Boolean, targetSubslotBytes: Int): ByteBuffer {
-        if (!isFloat && encodingBits == targetSubslotBytes * 8) {
+    fun convert(
+        src: ByteBuffer,
+        encodingBits: Int,
+        isFloat: Boolean,
+        targetSubslotBytes: Int,
+        targetBitDepth: Int = targetSubslotBytes * 8,
+    ): ByteBuffer {
+        if (!isFloat && encodingBits == targetBitDepth && encodingBits == targetSubslotBytes * 8) {
             return src
         }
         val remaining = src.remaining()
@@ -32,7 +38,12 @@ class UsbWireBufferConverter {
         for (i in 0 until samples) {
             if (isFloat) {
                 val f = ro.getFloat()
-                if (targetSubslotBytes == 4) {
+                if (targetSubslotBytes == 4 && targetBitDepth == 32) {
+                    // MSB-aligned signed 32-bit PCM (S32_LE)
+                    val s24 = BitPerfectEvaluator.float32ToInt24Pow2(f)
+                    scratch.putInt(s24 shl 8)
+                } else if (targetSubslotBytes == 4) {
+                    // LSB-aligned 24-in-32 container
                     val s24 = BitPerfectEvaluator.float32ToInt24Pow2(f)
                     scratch.put((s24 and 0xFF).toByte())
                     scratch.put(((s24 ushr 8) and 0xFF).toByte())
@@ -44,25 +55,41 @@ class UsbWireBufferConverter {
                     scratch.put(((s24 ushr 8) and 0xFF).toByte())
                     scratch.put(((s24 ushr 16) and 0xFF).toByte())
                 } else {
-                    val s16 = (f * 32768.0f).coerceIn(-32768.0f, 32767.0f).toInt()
+                    val s16 = kotlin.math.round(f * 32768.0).coerceIn(-32768.0, 32767.0).toInt()
                     scratch.putShort(s16.toShort())
                 }
+            } else if (encodingBits == 16 && targetSubslotBytes == 4 && targetBitDepth == 32) {
+                scratch.putInt(ro.getShort().toInt() shl 16)
             } else if (encodingBits == 16 && targetSubslotBytes == 4) {
-                // Lossless zero-padded 16 -> 24-in-32 container (matching streamer.rs layout)
-                val s = ro.getShort().toInt()
-                val s24 = s shl 8
-                scratch.put((s24 and 0xFF).toByte())
-                scratch.put(((s24 ushr 8) and 0xFF).toByte())
-                scratch.put(((s24 ushr 16) and 0xFF).toByte())
+                // Lossless zero-padded 16 -> 24-in-32 LSB container
+                scratch.put(0)
+                scratch.putShort(ro.getShort())
                 scratch.put(0)
             } else if (encodingBits == 16 && targetSubslotBytes == 3) {
                 scratch.put(0)
                 scratch.putShort(ro.getShort())
+            } else if (encodingBits == 24 && targetSubslotBytes == 4 && targetBitDepth == 32) {
+                // MSB-aligned S32_LE from 24-bit source
+                scratch.put(0)
+                scratch.put(ro.get())
+                scratch.put(ro.get())
+                scratch.put(ro.get())
             } else if (encodingBits == 24 && targetSubslotBytes == 4) {
                 scratch.put(ro.get())
                 scratch.put(ro.get())
                 scratch.put(ro.get())
                 scratch.put(0)
+            } else if (encodingBits == 32 && targetSubslotBytes == 4 && targetBitDepth == 24) {
+                ro.get()
+                scratch.put(ro.get())
+                scratch.put(ro.get())
+                scratch.put(ro.get())
+                scratch.put(0)
+            } else if (encodingBits == 32 && targetSubslotBytes == 3) {
+                ro.get()
+                scratch.put(ro.get())
+                scratch.put(ro.get())
+                scratch.put(ro.get())
             }
         }
         scratch.flip()
@@ -116,7 +143,16 @@ class UsbCoarseSinkController internal constructor(
         private set
     @Volatile var currentIsDop: Boolean = false
         private set
+    @Volatile var lastVolumeReadbackRaw: Int = 0
+        private set
+    @Volatile var lastConfigureWasInPlace: Boolean = false
+        private set
+    @Volatile var lastSubslotBytes: Int = 4
+        private set
+    @Volatile private var closing: Boolean = false
+    @Volatile private var eosSignaled: Boolean = false
 
+    private val lifecycleLock = Any()
     private val converter = UsbWireBufferConverter()
     private val statsScratch = LongArray(10)
     private var lastFlushAtMs: Long = Long.MIN_VALUE / 2
@@ -130,6 +166,7 @@ class UsbCoarseSinkController internal constructor(
     private var lastFeedbackEp: Int = 0
     private var lastFuId: Int = 0
     private var lastControlIface: Int = 0
+    private var lastVolumeChannels: List<Int> = listOf(0)
     private var lastVolRaw: Int = 0
     private var lastMute: Boolean = false
 
@@ -170,7 +207,10 @@ class UsbCoarseSinkController internal constructor(
         feedbackEp: Int,
         volumeRaw: Int,
         muted: Boolean,
-    ): Boolean {
+        volumeChannels: List<Int> = listOf(0),
+    ): Boolean = synchronized(lifecycleLock) {
+        closing = false
+        eosSignaled = false
         isFallback = false
         isHardStopped = false
         lastFailureReason = null
@@ -181,6 +221,7 @@ class UsbCoarseSinkController internal constructor(
         }
 
         return try {
+            val wasAlreadyOpen = handle != 0L
             if (handle == 0L) {
                 handle = api.open(fd, controlIface, streamingIface, isUac2, clockSourceId, hasHwVol, fuId)
                 if (handle == 0L) {
@@ -191,10 +232,12 @@ class UsbCoarseSinkController internal constructor(
             lastStreamingIface = streamingIface
             lastChannels = channels
             lastSubslotSize = subslotSize
+            lastSubslotBytes = subslotSize
             lastHighSpeed = isHighSpeed
             lastFeedbackEp = feedbackEp
             lastFuId = fuId
             lastControlIface = controlIface
+            lastVolumeChannels = volumeChannels.ifEmpty { listOf(0) }
             lastVolRaw = volumeRaw
             lastMute = muted
 
@@ -203,24 +246,29 @@ class UsbCoarseSinkController internal constructor(
                 channels, subslotSize, isHighSpeed, isDop, feedbackEp,
             )
             if (rcReconf < 0) {
-                close()
+                closeUnlocked()
                 return failOrHardStop("USB reconfigure failed (code=$rcReconf)")
             }
+            api.flush(handle)
 
             if (hasHwVol && fuId > 0) {
-                val rcVol = api.applyVolume(handle, fuId, controlIface, 0, volumeRaw, muted)
-                if (rcVol < 0) {
-                    close()
-                    return failOrHardStop("Hardware volume verification failed (code=$rcVol)")
+                for (ch in lastVolumeChannels) {
+                    val rcVol = api.applyVolume(handle, fuId, controlIface, ch, volumeRaw, muted)
+                    if (rcVol < 0) {
+                        closeUnlocked()
+                        return failOrHardStop("Hardware volume verification failed (code=$rcVol)")
+                    }
+                    lastVolumeReadbackRaw = rcVol.toShort().toInt()
                 }
             }
 
             val rcStart = api.start(handle)
             if (rcStart < 0) {
-                close()
+                closeUnlocked()
                 return failOrHardStop("USB start failed (code=$rcStart)")
             }
 
+            lastConfigureWasInPlace = wasAlreadyOpen
             confirmedRateHz = sampleRate
             confirmedBitDepth = bitDepth
             confirmedAlt = targetAlt
@@ -228,23 +276,46 @@ class UsbCoarseSinkController internal constructor(
             isPausedGrace = false
             underrunWatch.reset()
             reconfigureEscalator.reset()
-            lastObservedUnderruns = 0L
+            lastObservedUnderruns = if (api.getStats(handle, statsScratch) >= 0) statsScratch[1] else 0L
             true
         } catch (t: Throwable) {
-            close()
+            closeUnlocked()
             failOrHardStop(t.message ?: t::class.simpleName ?: "USB configuration error")
         }
     }
 
+    fun applyLiveVolume(volumeRaw: Int, muted: Boolean): Boolean = synchronized(lifecycleLock) {
+        val h = handle
+        if (h == 0L || closing || isFallback || isHardStopped || lastFuId <= 0) return false
+        var allOk = true
+        for (ch in lastVolumeChannels) {
+            val rc = api.applyVolume(h, lastFuId, lastControlIface, ch, volumeRaw, muted)
+            if (rc < 0) {
+                allOk = false
+            } else {
+                lastVolumeReadbackRaw = rc.toShort().toInt()
+            }
+        }
+        lastVolRaw = volumeRaw
+        lastMute = muted
+        return allOk
+    }
+
+    fun readStats(outStats: LongArray): Boolean {
+        val h = handle
+        if (h == 0L || closing) return false
+        return api.getStats(h, outStats) >= 0
+    }
+
     fun writePcm(buffer: ByteBuffer, sourceBitDepth: Int, isFloat: Boolean): Boolean {
         val h = handle
-        if (h == 0L || isFallback || isHardStopped) return false
+        if (h == 0L || closing || isFallback || isHardStopped) return false
         return try {
             if (muteRampedDown && buffer.hasRemaining()) {
                 api.setMuteRamp(h, false)
                 muteRampedDown = false
             }
-            val wireBuf = converter.convert(buffer, sourceBitDepth, isFloat, lastSubslotSize)
+            val wireBuf = converter.convert(buffer, sourceBitDepth, isFloat, lastSubslotSize, confirmedBitDepth.takeIf { it > 0 } ?: (lastSubslotSize * 8))
             val beforePos = wireBuf.position()
             val len = wireBuf.remaining()
             if (len <= 0) return true
@@ -254,6 +325,9 @@ class UsbCoarseSinkController internal constructor(
                 close()
                 failOrHardStop("USB write error (code=$written)")
                 return false
+            }
+            if (written > 0 && UsbPcmDumper.isDumping) {
+                UsbPcmDumper.onBytesWritten(wireBuf, beforePos, written)
             }
             if (written == len) {
                 buffer.position(buffer.limit())
@@ -297,7 +371,15 @@ class UsbCoarseSinkController internal constructor(
             h, lastEndpoint, lastStreamingIface, confirmedAlt, confirmedRateHz, confirmedBitDepth,
             lastChannels, lastSubslotSize, lastHighSpeed, currentIsDop, lastFeedbackEp,
         )
-        if (rc < 0 || (lastFuId > 0 && api.applyVolume(h, lastFuId, lastControlIface, 0, lastVolRaw, lastMute) < 0) || api.start(h) < 0) {
+        var volOk = true
+        if (rc == 0 && lastFuId > 0) {
+            for (ch in lastVolumeChannels) {
+                if (api.applyVolume(h, lastFuId, lastControlIface, ch, lastVolRaw, lastMute) < 0) {
+                    volOk = false
+                }
+            }
+        }
+        if (rc < 0 || !volOk || api.start(h) < 0) {
             close()
             failOrHardStop("USB reconfigure recovery failed (code=$rc)")
         } else {
@@ -307,8 +389,9 @@ class UsbCoarseSinkController internal constructor(
 
     fun onSeekOrFlush() {
         val h = handle
-        if (h == 0L) return
+        if (h == 0L || closing) return
         lastFlushAtMs = clockMs()
+        eosSignaled = false
         runCatching {
             api.setMuteRamp(h, true)
             muteRampedDown = true
@@ -319,13 +402,26 @@ class UsbCoarseSinkController internal constructor(
         }
     }
 
-    fun pauseGrace(): Boolean {
+    fun playToEndOfStream() {
+        eosSignaled = true
+    }
+
+    fun hasPendingData(): Boolean {
         val h = handle
-        if (h == 0L) return false
+        if (h == 0L || closing) return false
+        if (api.getStats(h, statsScratch) < 0) return false
+        return statsScratch[3] > 0L
+    }
+
+    fun isEnded(): Boolean = eosSignaled && !hasPendingData()
+
+    fun pauseGrace(): Boolean = synchronized(lifecycleLock) {
+        val h = handle
+        if (h == 0L || closing) return false
         return runCatching {
             val rc = api.pauseGrace(h)
             if (rc < 0) {
-                close()
+                closeUnlocked()
                 failOrHardStop("USB pauseGrace failed (code=$rc)")
             } else {
                 isStreaming = false
@@ -333,18 +429,18 @@ class UsbCoarseSinkController internal constructor(
                 true
             }
         }.getOrElse {
-            close()
+            closeUnlocked()
             failOrHardStop("USB pause failed: ${it.message}")
         }
     }
 
-    fun resumeGrace(): Boolean {
+    fun resumeGrace(): Boolean = synchronized(lifecycleLock) {
         val h = handle
-        if (h == 0L) return false
+        if (h == 0L || closing) return false
         return runCatching {
             val rc = api.start(h)
             if (rc < 0) {
-                close()
+                closeUnlocked()
                 failOrHardStop("USB resume failed (code=$rc)")
             } else {
                 isStreaming = true
@@ -352,12 +448,24 @@ class UsbCoarseSinkController internal constructor(
                 true
             }
         }.getOrElse {
-            close()
+            closeUnlocked()
             failOrHardStop("USB resume exception: ${it.message}")
         }
     }
 
-    fun close() {
+    fun close() = synchronized(lifecycleLock) {
+        closeUnlocked()
+    }
+
+    fun closeIfHandleMatches(expectedHandle: Long) = synchronized(lifecycleLock) {
+        if (expectedHandle != 0L && handle == expectedHandle) {
+            closeUnlocked()
+        }
+    }
+
+    private fun closeUnlocked() {
+        closing = true
+        eosSignaled = false
         val h = handle
         handle = 0L
         isStreaming = false

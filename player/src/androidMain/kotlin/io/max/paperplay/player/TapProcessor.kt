@@ -269,7 +269,9 @@ internal fun buildUpstreamNormalAudioSink(
 ): AudioSink {
     val defaultSink = DefaultAudioSink.Builder(context)
         .setEnableFloatOutput(true)
-        .setEnableAudioTrackPlaybackParams(enableAudioOutputPlaybackParams)
+        // Media3 1.11 skips SonicAudioProcessor when enableFloatOutput=true on 24-bit/float PCM,
+        // so AudioTrack PlaybackParams is required for non-1.0x playback speed and speed-bypass return.
+        .setEnableAudioTrackPlaybackParams(true)
         .setAudioProcessors(arrayOf(TapProcessor()))
         .build()
     return EngineAudioSink(defaultSink)

@@ -650,6 +650,104 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_probeDac
     result.unwrap_or(std::ptr::null_mut())
 }
 
+// ---- Handle registry (Stage 5+ lifecycle hardening) ---------------------------------------
+// Fixed-capacity handle registry prevents double-free (SIGABRT) and use-after-free when
+// teardown runs concurrently across ExoPlayer's sink thread and Android main/USB threads.
+
+mod handle_registry {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, RwLock};
+
+    pub const MAX_ACTIVE_SESSIONS: usize = 8;
+
+    pub struct SessionRegistry<T> {
+        next_id: AtomicU64,
+        slots: RwLock<[(u64, Option<Arc<T>>); MAX_ACTIVE_SESSIONS]>,
+    }
+
+    impl<T> SessionRegistry<T> {
+        pub const fn new() -> Self {
+            Self {
+                next_id: AtomicU64::new(1),
+                slots: RwLock::new([
+                    (0, None),
+                    (0, None),
+                    (0, None),
+                    (0, None),
+                    (0, None),
+                    (0, None),
+                    (0, None),
+                    (0, None),
+                ]),
+            }
+        }
+
+        pub fn register(&self, item: T) -> Result<u64, T> {
+            let Ok(mut guard) = self.slots.write() else {
+                return Err(item);
+            };
+            let Some(slot) = guard.iter_mut().find(|slot| slot.1.is_none()) else {
+                return Err(item);
+            };
+            let arc = Arc::new(item);
+            // Keep non-zero positive handle fitting signed jlong (bit 63 clear).
+            let id = loop {
+                let raw = self.next_id.fetch_add(1, Ordering::Relaxed);
+                let masked = raw & 0x7FFF_FFFF_FFFF_FFFF;
+                if masked != 0 {
+                    break masked;
+                }
+            };
+            *slot = (id, Some(arc));
+            Ok(id)
+        }
+
+        pub fn lookup(&self, id: u64) -> Option<Arc<T>> {
+            if id == 0 {
+                return None;
+            }
+            let guard = self.slots.read().ok()?;
+            for (slot_id, item) in guard.iter() {
+                if *slot_id == id {
+                    return item.as_ref().map(Arc::clone);
+                }
+            }
+            None
+        }
+
+        pub fn take(&self, id: u64) -> Option<Arc<T>> {
+            if id == 0 {
+                return None;
+            }
+            let mut guard = self.slots.write().ok()?;
+            for slot in guard.iter_mut() {
+                if slot.0 == id {
+                    slot.0 = 0;
+                    return slot.1.take();
+                }
+            }
+            None
+        }
+    }
+}
+
+static SESSION_REGISTRY: handle_registry::SessionRegistry<UsbSessionInstance> =
+    handle_registry::SessionRegistry::new();
+
+fn lookup_session(handle: jlong) -> Option<std::sync::Arc<UsbSessionInstance>> {
+    if handle <= 0 {
+        return None;
+    }
+    SESSION_REGISTRY.lookup(handle as u64)
+}
+
+fn take_session(handle: jlong) -> Option<std::sync::Arc<UsbSessionInstance>> {
+    if handle <= 0 {
+        return None;
+    }
+    SESSION_REGISTRY.take(handle as u64)
+}
+
 // ---- Coarse UsbSession JNI entry points (Stage 2) ------------------------------------------
 
 #[no_mangle]
@@ -678,7 +776,15 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionO
             has_hardware_volume != 0,
             feature_unit_id.max(0) as u8,
         ) {
-            Ok(inst) => Box::into_raw(Box::new(inst)) as jlong,
+            Ok(inst) => match SESSION_REGISTRY.register(inst) {
+                Ok(id) => id as jlong,
+                Err(leftover) => {
+                    if let Ok(mut core) = leftover.core.lock() {
+                        core.close();
+                    }
+                    0
+                }
+            },
             Err(_) => 0,
         }
     });
@@ -702,10 +808,12 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionR
     feedback_ep: jint,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 || sample_rate <= 0 || channels <= 0 || subslot_size <= 0 {
+        if sample_rate <= 0 || channels <= 0 || subslot_size <= 0 {
             return -22;
         }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        let Some(instance) = lookup_session(handle) else {
+            return -22;
+        };
         let Ok(mut core) = instance.core.lock() else {
             return -1;
         };
@@ -741,10 +849,9 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionA
     mute: jboolean,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 {
+        let Some(instance) = lookup_session(handle) else {
             return -22;
-        }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        };
         let Ok(mut core) = instance.core.lock() else {
             return -1;
         };
@@ -763,16 +870,71 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionA
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionReadVolume(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+    fu_id: jint,
+    control_iface: jint,
+    channel: jint,
+) -> jint {
+    let result = catch_unwind(|| {
+        let Some(instance) = lookup_session(handle) else {
+            return -22;
+        };
+        let Ok(mut core) = instance.core.lock() else {
+            return -1;
+        };
+        match core.read_volume(
+            fu_id.max(0) as u8,
+            control_iface.max(0) as u8,
+            channel.max(0) as u8,
+        ) {
+            Ok(read_vol) => (read_vol as u16) as jint,
+            Err(code) => code,
+        }
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionReadMute(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+    fu_id: jint,
+    control_iface: jint,
+    channel: jint,
+) -> jint {
+    let result = catch_unwind(|| {
+        let Some(instance) = lookup_session(handle) else {
+            return -22;
+        };
+        let Ok(mut core) = instance.core.lock() else {
+            return -1;
+        };
+        match core.read_mute(
+            fu_id.max(0) as u8,
+            control_iface.max(0) as u8,
+            channel.max(0) as u8,
+        ) {
+            Ok(muted) => if muted { 1 } else { 0 },
+            Err(code) => code,
+        }
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionStart(
     _env: JNIEnv,
     _c: JClass,
     handle: jlong,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 {
+        let Some(instance) = lookup_session(handle) else {
             return -22;
-        }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        };
         let Ok(mut core) = instance.core.lock() else {
             return -1;
         };
@@ -791,10 +953,9 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionP
     handle: jlong,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 {
+        let Some(instance) = lookup_session(handle) else {
             return -22;
-        }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        };
         let Ok(mut core) = instance.core.lock() else {
             return -1;
         };
@@ -813,10 +974,9 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionS
     handle: jlong,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 {
+        let Some(instance) = lookup_session(handle) else {
             return -22;
-        }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        };
         let Ok(mut core) = instance.core.lock() else {
             return -1;
         };
@@ -838,8 +998,11 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionW
     length: jint,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 || length <= 0 || offset < 0 {
-            return if handle == 0 { -22 } else { 0 };
+        let Some(instance) = lookup_session(handle) else {
+            return -22;
+        };
+        if length <= 0 || offset < 0 {
+            return 0;
         }
         let (Ok(ptr), Ok(cap)) = (
             env.get_direct_buffer_address(&buffer),
@@ -853,8 +1016,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionW
         if ptr.is_null() || end > cap {
             return -22;
         }
-        // Lock-free write on SpscRingBuffer + AtomicBool resume (zero mutex on audio path).
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        // Lock-free write on SpscRingBuffer + AtomicBool resume (zero core mutex on audio path).
         let src = unsafe { ptr.add(offset as usize) };
         let written = unsafe { instance.ring_buffer.write_raw(src, length as usize) };
         if written > 0 {
@@ -873,10 +1035,9 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionS
     muted: jboolean,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 {
+        let Some(instance) = lookup_session(handle) else {
             return -22;
-        }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        };
         instance.mute_ramp.store(muted != 0, Ordering::Release);
         0
     });
@@ -890,10 +1051,9 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionF
     handle: jlong,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 {
+        let Some(instance) = lookup_session(handle) else {
             return -22;
-        }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        };
         instance.flushing.store(true, Ordering::Release);
         instance.ring_buffer.clear();
         0
@@ -909,10 +1069,9 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionG
     out_stats: JLongArray,
 ) -> jint {
     let result = catch_unwind(|| {
-        if handle == 0 {
+        let Some(instance) = lookup_session(handle) else {
             return -22;
-        }
-        let instance = unsafe { &*(handle as *const UsbSessionInstance) };
+        };
         let consumed = instance.ring_buffer.frames_consumed.load(Ordering::Relaxed) as i64;
         let underruns = instance.ring_buffer.underruns.load(Ordering::Relaxed) as i64;
         let urb_errors = instance.ring_buffer.urb_errors.load(Ordering::Relaxed) as i64;
@@ -946,12 +1105,87 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionC
     handle: jlong,
 ) {
     let _ = catch_unwind(|| {
-        if handle != 0 {
-            let instance = unsafe { Box::from_raw(handle as *mut UsbSessionInstance) };
+        if let Some(instance) = take_session(handle) {
+            // Take removes the handle first so concurrent/duplicate closes become no-ops.
             if let Ok(mut core) = instance.core.lock() {
                 core.close();
             }
             drop(instance);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_registry::{SessionRegistry, MAX_ACTIVE_SESSIONS};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
+
+    #[derive(Debug)]
+    struct DropCounter(Arc<AtomicUsize>);
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn handle_registry_prevents_double_close_and_concurrent_use_after_free() {
+        let registry: Arc<SessionRegistry<DropCounter>> = Arc::new(SessionRegistry::new());
+        let drops = Arc::new(AtomicUsize::new(0));
+
+        for round in 0..20 {
+            let before = drops.load(Ordering::SeqCst);
+            let id = registry.register(DropCounter(Arc::clone(&drops))).expect("register");
+            assert!(id > 0);
+
+            let barrier = Arc::new(Barrier::new(6));
+            let take_wins = Arc::new(AtomicUsize::new(0));
+            let mut handles = Vec::with_capacity(6);
+            for i in 0..6 {
+                let reg = Arc::clone(&registry);
+                let bar = Arc::clone(&barrier);
+                let wins = Arc::clone(&take_wins);
+                handles.push(std::thread::spawn(move || {
+                    bar.wait();
+                    if i < 2 {
+                        if round % 2 == 0 {
+                            std::thread::yield_now();
+                        }
+                        if let Some(arc) = reg.take(id) {
+                            wins.fetch_add(1, Ordering::SeqCst);
+                            drop(arc);
+                        }
+                    } else {
+                        for _ in 0..200 {
+                            if let Some(arc) = reg.lookup(id) {
+                                let _ = arc.0.load(Ordering::Relaxed);
+                                drop(arc);
+                            }
+                        }
+                    }
+                }));
+            }
+            for h in handles {
+                h.join().unwrap();
+            }
+            assert_eq!(take_wins.load(Ordering::SeqCst), 1);
+            assert!(registry.take(id).is_none());
+            assert!(registry.lookup(id).is_none());
+            assert_eq!(drops.load(Ordering::SeqCst), before + 1);
+        }
+
+        // Capacity bound: MAX_ACTIVE_SESSIONS registrations succeed, next returns Err.
+        let before_cap = drops.load(Ordering::SeqCst);
+        let mut ids = Vec::new();
+        for _ in 0..MAX_ACTIVE_SESSIONS {
+            ids.push(registry.register(DropCounter(Arc::clone(&drops))).expect("slot"));
+        }
+        assert!(registry.register(DropCounter(Arc::clone(&drops))).is_err());
+        assert_eq!(drops.load(Ordering::SeqCst), before_cap + 1);
+        for rem in ids {
+            assert!(registry.take(rem).is_some());
+        }
+        assert_eq!(drops.load(Ordering::SeqCst), before_cap + 1 + MAX_ACTIVE_SESSIONS);
+    }
 }

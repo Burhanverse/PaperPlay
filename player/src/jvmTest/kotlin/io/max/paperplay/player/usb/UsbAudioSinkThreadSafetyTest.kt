@@ -226,10 +226,22 @@ class UsbAudioSinkThreadSafetyTest {
         val getStatsHeader = streamerSrc.substringBefore("override fun getStats()").takeLast(40)
         assertFalse(getStatsHeader.contains("@Synchronized"), "UsbAudioStreamer.getStats must be lock-free")
 
-        // UnifiedUsbAudioSink must likewise never touch ExoPlayer/Player or block/sleep
+        // UnifiedUsbAudioSink & UnifiedUsbDacManager must enforce thread safety, static format contracts, and zero-touch OFF
         val unifiedSinkSrc = readSrc("player/src/androidMain/kotlin/io/max/paperplay/player/usb/UnifiedUsbAudioSink.kt")
         for (forbidden in listOf("activePlayer", ".playbackState", ".playWhenReady", ".currentPosition", ".seekTo(", ".prepare()", "CountDownLatch", "Thread.sleep")) {
             assertFalse(unifiedSinkSrc.contains(forbidden), "UnifiedUsbAudioSink.kt must not contain $forbidden")
         }
+        val uSupports = unifiedSinkSrc.substringAfter("override fun supportsFormat(").substringBefore("override fun getFormatSupport(")
+        val uGetSupport = unifiedSinkSrc.substringAfter("override fun getFormatSupport(").substringBefore("override fun configure(")
+        for (transientField in listOf("isUsbModeActive", "releasedWhileIdle", "sinkReleased", "bypassedForSpeed")) {
+            assertFalse(uSupports.contains(transientField), "UnifiedUsbAudioSink.supportsFormat must not depend on $transientField")
+            assertFalse(uGetSupport.contains(transientField), "UnifiedUsbAudioSink.getFormatSupport must not depend on $transientField")
+        }
+        val unifiedMgrSrc = readSrc("player/src/androidMain/kotlin/io/max/paperplay/player/usb/UnifiedUsbDacManager.kt")
+        assertFalse(unifiedMgrSrc.contains("PlaybackCore.activePlayer"), "UnifiedUsbDacManager must never access activePlayer")
+        assertFalse(stripLineComments(unifiedMgrSrc.substringAfter("fun scanClassOnly(").substringBefore("fun onModeChanged(")).contains("openDevice("), "UnifiedUsbDacManager.scanClassOnly must never openDevice")
+
+        val coreSrc = readSrc("player/src/androidMain/kotlin/io/max/paperplay/player/PlaybackCore.kt")
+        assertTrue(coreSrc.contains("dev_use_unified_bit_perfect"), "PlaybackCore must persist dev_use_unified_bit_perfect for runtime path switching")
     }
 }

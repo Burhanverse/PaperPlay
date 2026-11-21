@@ -47,6 +47,7 @@ class UsbAudioManager(private val context: Context) {
     private val _state = MutableStateFlow<UsbAudioState>(UsbAudioState.NoDevice)
     val state: StateFlow<UsbAudioState> = _state.asStateFlow()
 
+    private val connectionLock = Any()
     private var activeConnection: UsbDeviceConnection? = null
     private var activeStreamer: UsbAudioStreamer? = null
     var hardwareVolume: UsbHardwareVolume? = null
@@ -301,84 +302,88 @@ class UsbAudioManager(private val context: Context) {
      * Never opens the device when [PlaybackCore.usbExclusiveMode] is false unless [forceForProbe] is true.
      * Never runs the native usbfs clock-range probe here; that runs lazily via [ensureNativeCapabilitiesProbed].
      */
-    fun openDevice(device: UsbDevice, forceForProbe: Boolean = false): Boolean {
-        if (!PlaybackCore.usbExclusiveMode && !forceForProbe) {
-            val hasPerm = usbManager.hasPermission(device)
-            _state.value = UsbAudioState.Attached(device, hasPermission = hasPerm)
-            PlayLog.log("usb", "openDevice skipped: usbExclusiveMode=false (never open/detach/claim DAC)")
-            return false
-        }
-        if (!usbManager.hasPermission(device)) {
-            _state.value = UsbAudioState.Attached(device, hasPermission = false)
-            requestPermission(device)
-            return false
-        }
+    fun openDevice(device: UsbDevice, forceForProbe: Boolean = false, triggerReconfigure: Boolean = true): Boolean =
+        synchronized(connectionLock) {
+            if (!PlaybackCore.usbExclusiveMode && !forceForProbe) {
+                val hasPerm = usbManager.hasPermission(device)
+                _state.value = UsbAudioState.Attached(device, hasPermission = hasPerm)
+                PlayLog.log("usb", "openDevice skipped: usbExclusiveMode=false (never open/detach/claim DAC)")
+                return@synchronized false
+            }
+            if (!usbManager.hasPermission(device)) {
+                _state.value = UsbAudioState.Attached(device, hasPermission = false)
+                requestPermission(device)
+                return@synchronized false
+            }
 
-        closeCurrentConnection()
+            closeCurrentConnection()
 
-        val connection = usbManager.openDevice(device)
-        if (connection == null) {
-            _state.value = UsbAudioState.Error("Failed to open USB device connection", device)
-            return false
-        }
+            val connection = usbManager.openDevice(device)
+            if (connection == null) {
+                _state.value = UsbAudioState.Error("Failed to open USB device connection", device)
+                return@synchronized false
+            }
 
-        val rawDescriptors = connection.rawDescriptors
-        if (rawDescriptors == null || rawDescriptors.isEmpty()) {
-            connection.close()
-            _state.value = UsbAudioState.Error("Failed to read raw USB descriptors", device)
-            return false
-        }
+            val rawDescriptors = connection.rawDescriptors
+            if (rawDescriptors == null || rawDescriptors.isEmpty()) {
+                connection.close()
+                _state.value = UsbAudioState.Error("Failed to read raw USB descriptors", device)
+                return@synchronized false
+            }
 
-        val description = UsbDescriptorParser.parse(rawDescriptors)
-        if (!description.isSupported) {
-            connection.close()
-            _state.value = UsbAudioState.Error(
-                description.unsupportedReason ?: "USB Audio device not supported",
-                device,
+            val description = UsbDescriptorParser.parse(rawDescriptors)
+            if (!description.isSupported) {
+                connection.close()
+                _state.value = UsbAudioState.Error(
+                    description.unsupportedReason ?: "USB Audio device not supported",
+                    device,
+                )
+                return@synchronized false
+            }
+
+            activeConnection = connection
+
+            val cachedDesc = cachedDescriptions[device.deviceId]
+            val cachedCap = cachedCaps[device.deviceId]
+
+            val finalDescription = cachedDesc ?: description
+            val probedCaps: DacCapabilities? = cachedCap
+
+            PlayLog.log("usb", "Opened USB DAC using Kotlin raw descriptors (uac=${finalDescription.uacVersion}, alts=${finalDescription.altSettings.size}, cachedNativeCaps=${cachedCap != null})")
+            UsbRingLog.record(
+                "UsbAudioManager",
+                "Kotlin descriptor probe: uac=${finalDescription.uacVersion} alts=${finalDescription.altSettings.size} cachedNative=${cachedCap != null}",
+                UsbRingLog.CODE_GENERIC
             )
-            return false
+
+            val fu = finalDescription.resolvePlaybackFeatureUnit(finalDescription.playbackAltSettings.firstOrNull())
+                ?.takeIf { it.hasMasterVolume || it.hasChannelVolume }
+            if (fu != null) {
+                hardwareVolume = UsbHardwareVolume(
+                    connection = connection,
+                    uacVersion = finalDescription.uacVersion,
+                    controlInterfaceId = finalDescription.acInterfaceNumber,
+                    featureUnit = fu,
+                    caps = probedCaps,
+                    nativeHandleProvider = { activeStreamer?.handle ?: 0L }
+                )
+            } else {
+                hardwareVolume = null
+            }
+            if (PlaybackCore.usbExclusiveMode) {
+                PlaybackCore.usbStatus = "USB: Ready (${device.productName ?: "USB DAC"})"
+            }
+            _state.value = UsbAudioState.Connected(device, connection, finalDescription)
+            forwardingPlayer?.notifyDeviceInfoChanged()
+            if (PlaybackCore.usbExclusiveMode && !forceForProbe && triggerReconfigure) {
+                logSystemAudioDevicesAndVolumeTable()
+                UsbAudioSink.currentInstance?.triggerReconfiguration()
+                if (PlaybackCore.useUnifiedBitPerfect && UnifiedUsbAudioSink.currentInstance?.isUsbModeActive != true) {
+                    PlaybackCore.requestReconfiguration()
+                }
+            }
+            true
         }
-
-        activeConnection = connection
-
-        val cachedDesc = cachedDescriptions[device.deviceId]
-        val cachedCap = cachedCaps[device.deviceId]
-
-        val finalDescription = cachedDesc ?: description
-        val probedCaps: DacCapabilities? = cachedCap
-
-        PlayLog.log("usb", "Opened USB DAC using Kotlin raw descriptors (uac=${finalDescription.uacVersion}, alts=${finalDescription.altSettings.size}, cachedNativeCaps=${cachedCap != null})")
-        UsbRingLog.record(
-            "UsbAudioManager",
-            "Kotlin descriptor probe: uac=${finalDescription.uacVersion} alts=${finalDescription.altSettings.size} cachedNative=${cachedCap != null}",
-            UsbRingLog.CODE_GENERIC
-        )
-
-        val fu = finalDescription.resolvePlaybackFeatureUnit(finalDescription.playbackAltSettings.firstOrNull())
-            ?.takeIf { it.hasMasterVolume || it.hasChannelVolume }
-        if (fu != null) {
-            hardwareVolume = UsbHardwareVolume(
-                connection = connection,
-                uacVersion = finalDescription.uacVersion,
-                controlInterfaceId = finalDescription.acInterfaceNumber,
-                featureUnit = fu,
-                caps = probedCaps,
-                nativeHandleProvider = { activeStreamer?.handle ?: 0L }
-            )
-        } else {
-            hardwareVolume = null
-        }
-        if (PlaybackCore.usbExclusiveMode) {
-            PlaybackCore.usbStatus = "USB: Ready (${device.productName ?: "USB DAC"})"
-        }
-        _state.value = UsbAudioState.Connected(device, connection, finalDescription)
-        forwardingPlayer?.notifyDeviceInfoChanged()
-        if (PlaybackCore.usbExclusiveMode && !forceForProbe) {
-            logSystemAudioDevicesAndVolumeTable()
-            UsbAudioSink.currentInstance?.triggerReconfiguration()
-        }
-        return true
-    }
 
     /**
      * Lazily runs the native UAC clock-range + Feature Unit dB range probe only when USB exclusive mode
@@ -710,7 +715,7 @@ class UsbAudioManager(private val context: Context) {
      * and released/reattached the kernel driver. Never issues unclaimed USB control transfers and never
      * mutates Android's STREAM_MUSIC via setStreamVolume (only explicit user actions change STREAM_MUSIC).
      */
-    fun onUsbReleased(closeConnection: Boolean = false) {
+    fun onUsbReleased(closeConnection: Boolean = false, rescan: Boolean = true) {
         hardwareVolume?.invalidateVolumeCache()
         if (!PlaybackCore.usbExclusiveMode) {
             mainHandler.removeCallbacks(volumePollRunnable)
@@ -718,7 +723,11 @@ class UsbAudioManager(private val context: Context) {
         }
         if (closeConnection) {
             closeCurrentConnection()
-            scanDevices()
+            if (rescan) {
+                scanDevices()
+            } else {
+                _state.value = UsbAudioState.NoDevice
+            }
         }
         forwardingPlayer?.notifyDeviceInfoChanged()
     }
@@ -765,20 +774,22 @@ class UsbAudioManager(private val context: Context) {
     }
 
     fun closeCurrentConnection() {
-        pendingPermissionJob?.let { mainHandler.removeCallbacks(it) }
-        pendingPermissionJob = null
-        try {
-            // stopAndRelease restores DAC mute/volume while interface 0 is still claimed, then releases & reattaches.
-            activeStreamer?.stopAndRelease()
-        } catch (_: Exception) {}
-        activeStreamer = null
+        synchronized(connectionLock) {
+            pendingPermissionJob?.let { mainHandler.removeCallbacks(it) }
+            pendingPermissionJob = null
+            try {
+                // stopAndRelease restores DAC mute/volume while interface 0 is still claimed, then releases & reattaches.
+                activeStreamer?.stopAndRelease()
+            } catch (_: Exception) {}
+            activeStreamer = null
 
-        // Do NOT call restoreDefaultVolumeAndUnmute() here after stopAndRelease() (avoids unclaimed interface 0 transfers).
-        hardwareVolume?.resetAppliedVolume()
-        hardwareVolume = null
-        activeConnection?.close()
-        activeConnection = null
-        forwardingPlayer?.notifyDeviceInfoChanged()
+            // Do NOT call restoreDefaultVolumeAndUnmute() here after stopAndRelease() (avoids unclaimed interface 0 transfers).
+            hardwareVolume?.resetAppliedVolume()
+            hardwareVolume = null
+            activeConnection?.close()
+            activeConnection = null
+            forwardingPlayer?.notifyDeviceInfoChanged()
+        }
     }
 
     private fun isAudioDevice(device: UsbDevice): Boolean {

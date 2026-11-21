@@ -23,7 +23,7 @@ enum class TransportKind(val displayName: String) {
 }
 
 /** Feature flag gating cutover from legacy USB audio path to unified Bit-perfect path. */
-const val USE_UNIFIED_BIT_PERFECT_DEFAULT = false
+const val USE_UNIFIED_BIT_PERFECT_DEFAULT = true
 
 /** Reserved MIME type for future clean-room DoP (DSD over PCM) streams. */
 const val MIME_AUDIO_DOP = "audio/x-paperplay-dop"

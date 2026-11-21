@@ -240,13 +240,15 @@ internal fun UsbAudioContent(
             subtitle = diagText
         )
 
-        // Dump USB PCM
-        SettingsRow(
-            title = "Dump USB PCM",
-            icon = Icons.Rounded.SaveAlt,
-            subtitle = pcmDumpStatus ?: "Tap to capture exact integer PCM handed to the USB ring (first 30 s)",
-            onClick = onTriggerPcmDump
-        )
+        // Dump USB PCM (dev option)
+        if (devOptionsUnlocked) {
+            SettingsRow(
+                title = "Dump USB PCM",
+                icon = Icons.Rounded.SaveAlt,
+                subtitle = pcmDumpStatus ?: "Tap to capture exact integer PCM handed to the USB ring (first 30 s)",
+                onClick = onTriggerPcmDump
+            )
+        }
     }
 }
 

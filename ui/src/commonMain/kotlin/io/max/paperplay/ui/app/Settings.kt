@@ -501,7 +501,15 @@ internal fun SettingsPage(
             if (isPhone && devUnlocked) {
                 val chain by backend.sinkChain.collectAsState()
                 val devApi34 by backend.devApi34Mixer.collectAsState()
+                val devUnified by backend.devUseUnifiedBitPerfect.collectAsState()
                 SectionLabel("Developer")
+                SwitchRow(
+                    "Unified Bit-perfect engine",
+                    devUnified,
+                    backend::setDevUseUnifiedBitPerfect,
+                    Icons.Rounded.Tune,
+                    "Switch between the unified Bit-perfect path (default) and legacy USB sink at runtime without rebuilding.",
+                )
                 NavRow("USB probe", "Hardware descriptor probe and bit-perfect mixer spike", Icons.Rounded.BugReport) { stack.add("usb_probe") }
                 SwitchRow(
                     "API 34+ bit-perfect mixer",

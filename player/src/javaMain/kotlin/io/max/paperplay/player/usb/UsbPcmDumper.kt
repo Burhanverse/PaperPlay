@@ -26,16 +26,22 @@ object UsbPcmDumper {
     var dumpFilePath: String? = null
         private set
 
+    @Volatile
+    private var targetDurationSec: Int = 30
+
+    private val copyChunk = ByteArray(16384)
     private var outputStream: FileOutputStream? = null
     private var bytesWritten: Long = 0L
     private var maxBytes: Long = 0L
 
-    fun enable(cacheDir: File? = null) {
+    fun enable(cacheDir: File? = null, durationSec: Int = 30) {
+        closeStream()
+        targetDurationSec = durationSec.coerceIn(1, 120)
         isEnabled = true
-        status = "Armed: waiting for USB playback"
+        status = "Armed: waiting for USB playback (${targetDurationSec}s)"
         dumpFilePath = null
-        PlayLog.log("usb", "UsbPcmDumper armed for 30s PCM capture")
-        UsbRingLog.record("UsbPcmDumper", "armed for 30s dump", UsbRingLog.CODE_GENERIC)
+        PlayLog.log("usb", "UsbPcmDumper armed for ${targetDurationSec}s PCM capture")
+        UsbRingLog.record("UsbPcmDumper", "armed for ${targetDurationSec}s dump", UsbRingLog.CODE_GENERIC)
     }
 
     fun disable() {
@@ -47,13 +53,14 @@ object UsbPcmDumper {
         if (!isEnabled) return
         closeStream()
         try {
-            val file = File(cacheDir, "dump_usb_30s_${sampleRate}hz_${bitDepth}bit.raw")
+            val dur = targetDurationSec
+            val file = File(cacheDir, "dump_usb_${dur}s_${sampleRate}hz_${bitDepth}bit_${subslotSize}b.raw")
             dumpFilePath = file.absolutePath
             outputStream = FileOutputStream(file)
             bytesWritten = 0L
-            maxBytes = 30L * sampleRate * channels * subslotSize
+            maxBytes = dur.toLong() * sampleRate * channels * subslotSize
             isDumping = true
-            status = "Dumping: 0 / 30s (${file.name})"
+            status = "Dumping: 0 / ${dur}s (${file.name})"
             PlayLog.log("usb", "UsbPcmDumper started: target=$maxBytes bytes -> ${file.absolutePath}")
             UsbRingLog.record("UsbPcmDumper", "start dump: ${file.name} target=$maxBytes", UsbRingLog.CODE_GENERIC)
         } catch (t: Throwable) {
@@ -70,29 +77,34 @@ object UsbPcmDumper {
         try {
             val toWrite = minOf(length.toLong(), maxBytes - bytesWritten).toInt()
             if (toWrite <= 0) {
-                finish("30s captured successfully")
+                finish("${targetDurationSec}s captured successfully")
                 return
             }
             val dup = buffer.duplicate()
             dup.position(offset)
             dup.limit(offset + toWrite)
-            val chunk = ByteArray(minOf(toWrite, 16384))
             var rem = toWrite
             while (rem > 0) {
-                val n = minOf(rem, chunk.size)
-                dup.get(chunk, 0, n)
-                os.write(chunk, 0, n)
+                val n = minOf(rem, copyChunk.size)
+                dup.get(copyChunk, 0, n)
+                os.write(copyChunk, 0, n)
                 rem -= n
             }
             bytesWritten += toWrite
-            val sec = bytesWritten.toDouble() / (maxBytes.toDouble() / 30.0)
-            status = "Dumping: ${sec.toInt()} / 30s (${bytesWritten / 1024} KB)"
+            val sec = if (maxBytes > 0L) bytesWritten.toDouble() / (maxBytes.toDouble() / targetDurationSec) else 0.0
+            status = "Dumping: ${sec.toInt()} / ${targetDurationSec}s (${bytesWritten / 1024} KB)"
             if (bytesWritten >= maxBytes) {
-                finish("30s captured successfully ($bytesWritten bytes)")
+                finish("${targetDurationSec}s captured successfully ($bytesWritten bytes)")
             }
         } catch (t: Throwable) {
             PlayLog.log("usb", "UsbPcmDumper write error: ${t.message}")
             finish("Write error: ${t.message}")
+        }
+    }
+
+    fun finishIfDumping(reason: String = "Stream closed") {
+        if (isDumping || outputStream != null) {
+            finish(reason)
         }
     }
 

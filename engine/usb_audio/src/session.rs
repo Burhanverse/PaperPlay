@@ -54,8 +54,8 @@ pub struct SavedFuSetting {
     pub fu_id: u8,
     pub control_iface: u8,
     pub channel: u8,
-    pub mute: bool,
-    pub volume_raw: i16,
+    pub mute: Option<bool>,
+    pub volume_raw: Option<i16>,
 }
 
 /// Hardware/OS USB control plane seam enabling deterministic testing without real hardware.
@@ -106,13 +106,13 @@ impl<T: UsbControlTransport> UsbSessionCore<T> {
             for &ch in &fu.channels {
                 let mute = transport.read_fu_mute(fu.fu_id, fu.control_iface, ch);
                 let vol = transport.read_fu_volume(fu.fu_id, fu.control_iface, ch);
-                if let (Ok(m), Ok(v)) = (mute, vol) {
+                if mute.is_ok() || vol.is_ok() {
                     saved_baseline.push(SavedFuSetting {
                         fu_id: fu.fu_id,
                         control_iface: fu.control_iface,
                         channel: ch,
-                        mute: m,
-                        volume_raw: v,
+                        mute: mute.ok(),
+                        volume_raw: vol.ok(),
                     });
                 }
             }
@@ -204,6 +204,25 @@ impl<T: UsbControlTransport> UsbSessionCore<T> {
         Ok(())
     }
 
+    fn write_mute_with_master_fallback(
+        &mut self,
+        fu_id: u8,
+        control_iface: u8,
+        channel: u8,
+        mute: bool,
+    ) -> Result<bool, i32> {
+        match self.transport.write_fu_mute(fu_id, control_iface, channel, mute) {
+            Ok(m) => Ok(m),
+            Err(_) if channel != 0 => match self.transport.write_fu_mute(fu_id, control_iface, 0, mute) {
+                Ok(m) => Ok(m),
+                Err(e) if mute => Err(e),
+                Err(_) => Ok(false),
+            },
+            Err(e) if mute => Err(e),
+            Err(_) => Ok(false),
+        }
+    }
+
     pub fn apply_volume(
         &mut self,
         fu_id: u8,
@@ -215,10 +234,33 @@ impl<T: UsbControlTransport> UsbSessionCore<T> {
         if self.state == SessionState::Closed || self.state == SessionState::Faulted {
             return Err(-22);
         }
-        let read_mute = self.transport.write_fu_mute(fu_id, control_iface, channel, mute)?;
-        let read_vol = self.transport.write_fu_volume(fu_id, control_iface, channel, volume_raw)?;
+        // Safe blast-free write order: mute before dropping volume when muting;
+        // write volume before unmuting when unmuting.
+        let (read_vol, read_mute) = if mute {
+            let rm = self.write_mute_with_master_fallback(fu_id, control_iface, channel, true)?;
+            let rv = self.transport.write_fu_volume(fu_id, control_iface, channel, volume_raw)?;
+            (rv, rm)
+        } else {
+            let rv = self.transport.write_fu_volume(fu_id, control_iface, channel, volume_raw)?;
+            let rm = self.write_mute_with_master_fallback(fu_id, control_iface, channel, false)?;
+            (rv, rm)
+        };
         self.volume_verified = true;
         Ok((read_vol, read_mute))
+    }
+
+    pub fn read_volume(&mut self, fu_id: u8, control_iface: u8, channel: u8) -> Result<i16, i32> {
+        if self.state == SessionState::Closed || self.state == SessionState::Faulted {
+            return Err(-22);
+        }
+        self.transport.read_fu_volume(fu_id, control_iface, channel)
+    }
+
+    pub fn read_mute(&mut self, fu_id: u8, control_iface: u8, channel: u8) -> Result<bool, i32> {
+        if self.state == SessionState::Closed || self.state == SessionState::Faulted {
+            return Err(-22);
+        }
+        self.transport.read_fu_mute(fu_id, control_iface, channel)
     }
 
     pub fn start(&mut self) -> Result<(), i32> {
@@ -286,8 +328,19 @@ impl<T: UsbControlTransport> UsbSessionCore<T> {
 
         if !self.baseline_restored {
             for b in &self.saved_baseline {
-                let _ = self.transport.write_fu_mute(b.fu_id, b.control_iface, b.channel, b.mute);
-                let _ = self.transport.write_fu_volume(b.fu_id, b.control_iface, b.channel, b.volume_raw);
+                if b.mute == Some(true) {
+                    let _ = self.transport.write_fu_mute(b.fu_id, b.control_iface, b.channel, true);
+                }
+            }
+            for b in &self.saved_baseline {
+                if let Some(v) = b.volume_raw {
+                    let _ = self.transport.write_fu_volume(b.fu_id, b.control_iface, b.channel, v);
+                }
+            }
+            for b in &self.saved_baseline {
+                if b.mute == Some(false) {
+                    let _ = self.transport.write_fu_mute(b.fu_id, b.control_iface, b.channel, false);
+                }
             }
             self.baseline_restored = true;
         }
@@ -584,7 +637,8 @@ impl UsbControlTransport for RealUsbControlTransport {
             ));
         }
         self.paused.store(false, Ordering::Release);
-        self.flushing.store(false, Ordering::Release);
+        let ring_empty = self.ring_buffer.available_read() == 0;
+        self.flushing.store(ring_empty, Ordering::Release);
         self.mute_ramp.store(false, Ordering::Release);
         self.streamer.as_mut().ok_or(-1)?.start_with_fade_in(fade_in)
     }
@@ -602,6 +656,8 @@ impl UsbControlTransport for RealUsbControlTransport {
     }
 
     fn attach_kernel_driver(&mut self, _iface: u8) -> Result<(), i32> {
+        self.streamer = None;
+        super::device::set_active_session(None);
         if let Some(s) = self.session.take() {
             // Ensure Drop runs immediately upon releasing final Arc ref (restores baseline + releases + reattaches in order)
             drop(s);
@@ -639,6 +695,8 @@ mod tests {
         fu_mute: BTreeMap<(u8, u8), bool>,
         fu_vol: BTreeMap<(u8, u8), i16>,
         streaming_active: bool,
+        fail_per_channel_mute: bool,
+        fail_master_vol: bool,
     }
 
     impl MockUsbTransport {
@@ -656,6 +714,8 @@ mod tests {
                 fu_mute,
                 fu_vol,
                 streaming_active: false,
+                fail_per_channel_mute: false,
+                fail_master_vol: false,
             }
         }
     }
@@ -683,19 +743,31 @@ mod tests {
         }
         fn read_fu_mute(&mut self, fu_id: u8, _ci: u8, ch: u8) -> Result<bool, i32> {
             self.calls.push(MockCall::ReadFuMute(fu_id, ch));
+            if self.fail_per_channel_mute && ch != 0 {
+                return Err(-32);
+            }
             Ok(*self.fu_mute.get(&(fu_id, ch)).unwrap_or(&false))
         }
         fn write_fu_mute(&mut self, fu_id: u8, _ci: u8, ch: u8, mute: bool) -> Result<bool, i32> {
             self.calls.push(MockCall::WriteFuMute(fu_id, ch, mute));
+            if self.fail_per_channel_mute && ch != 0 {
+                return Err(-32);
+            }
             self.fu_mute.insert((fu_id, ch), mute);
             Ok(mute)
         }
         fn read_fu_volume(&mut self, fu_id: u8, _ci: u8, ch: u8) -> Result<i16, i32> {
             self.calls.push(MockCall::ReadFuVol(fu_id, ch));
+            if self.fail_master_vol && ch == 0 {
+                return Err(-32);
+            }
             Ok(*self.fu_vol.get(&(fu_id, ch)).unwrap_or(&0))
         }
         fn write_fu_volume(&mut self, fu_id: u8, _ci: u8, ch: u8, vol_raw: i16) -> Result<i16, i32> {
             self.calls.push(MockCall::WriteFuVol(fu_id, ch, vol_raw));
+            if self.fail_master_vol && ch == 0 {
+                return Err(-32);
+            }
             self.fu_vol.insert((fu_id, ch), vol_raw);
             Ok(vol_raw)
         }
@@ -839,8 +911,8 @@ mod tests {
         s.reconfigure(c96).unwrap();
         s.apply_volume(2, 0, 0, -3200, false).unwrap();
 
-        assert_eq!(s.saved_baseline()[0].volume_raw, -640);
-        assert_eq!(s.saved_baseline()[0].mute, true);
+        assert_eq!(s.saved_baseline()[0].volume_raw, Some(-640));
+        assert_eq!(s.saved_baseline()[0].mute, Some(true));
 
         s.close();
         s.close(); // idempotent
@@ -903,5 +975,88 @@ mod tests {
                 panic!("i24 pow2 pack mismatch at {sample}: f={f} back={back}");
             }
         }
+    }
+
+    #[test]
+    fn apply_volume_falls_back_to_master_mute_for_per_channel_dac() {
+        let mut mock = MockUsbTransport::new(-2560, false);
+        mock.fail_per_channel_mute = true;
+        let fus = vec![FeatureUnitTarget { fu_id: 2, control_iface: 0, channels: vec![1, 2] }];
+        let mut s = UsbSessionCore::open(mock, vec![0, 1], fus, true).unwrap();
+        s.reconfigure(cfg_48k()).unwrap();
+        assert_eq!(s.apply_volume(2, 0, 1, -4096, false), Ok((-4096, false)));
+        assert_eq!(s.apply_volume(2, 0, 2, -4096, false), Ok((-4096, false)));
+        assert!(s.is_volume_verified());
+        assert_eq!(s.start(), Ok(()));
+    }
+
+    #[test]
+    fn read_volume_and_mute_reflect_latest_hardware_state() {
+        let mut mock = MockUsbTransport::new(-1280, true);
+        mock.fu_vol.insert((2, 1), -2048);
+        mock.fu_mute.insert((2, 0), true);
+        let fus = vec![FeatureUnitTarget { fu_id: 2, control_iface: 0, channels: vec![0, 1] }];
+        let mut s = UsbSessionCore::open(mock, vec![0, 1], fus, true).unwrap();
+        assert_eq!(s.read_volume(2, 0, 1), Ok(-2048));
+        assert_eq!(s.read_mute(2, 0, 0), Ok(true));
+
+        s.reconfigure(cfg_48k()).unwrap();
+        assert_eq!(s.apply_volume(2, 0, 1, -512, false), Ok((-512, false)));
+        assert_eq!(s.read_volume(2, 0, 1), Ok(-512));
+        assert_eq!(s.read_mute(2, 0, 1), Ok(false));
+        assert_eq!(s.apply_volume(2, 0, 0, -256, false), Ok((-256, false)));
+        assert_eq!(s.read_mute(2, 0, 0), Ok(false));
+
+        s.close();
+        assert_eq!(s.read_volume(2, 0, 1), Err(-22));
+        assert_eq!(s.read_mute(2, 0, 0), Err(-22));
+    }
+
+    #[test]
+    fn write_order_and_per_channel_baseline_restore() {
+        let mut mock = MockUsbTransport::new(0, false);
+        mock.fail_master_vol = true;
+        mock.fail_per_channel_mute = true;
+        mock.fu_vol.remove(&(2, 0));
+        mock.fu_mute.insert((2, 0), false);
+        mock.fu_vol.insert((2, 1), -1536);
+        mock.fu_vol.insert((2, 2), -1536);
+
+        let fus = vec![FeatureUnitTarget { fu_id: 2, control_iface: 0, channels: vec![0, 1, 2] }];
+        let mut s = UsbSessionCore::open(mock, vec![0, 1], fus, true).unwrap();
+        assert_eq!(s.saved_baseline().len(), 3);
+        assert_eq!(s.saved_baseline()[0].channel, 0);
+        assert_eq!(s.saved_baseline()[0].mute, Some(false));
+        assert_eq!(s.saved_baseline()[0].volume_raw, None);
+        assert_eq!(s.saved_baseline()[1].volume_raw, Some(-1536));
+        assert_eq!(s.saved_baseline()[2].volume_raw, Some(-1536));
+
+        s.reconfigure(cfg_48k()).unwrap();
+        s.transport.calls.clear();
+
+        // When muting, mute MUST be written before volume drop.
+        s.apply_volume(2, 0, 1, -18944, true).unwrap();
+        let mute_idx = s.transport.calls.iter().position(|c| *c == MockCall::WriteFuMute(2, 0, true)).unwrap();
+        let vol_idx = s.transport.calls.iter().position(|c| *c == MockCall::WriteFuVol(2, 1, -18944)).unwrap();
+        assert!(mute_idx < vol_idx, "expected mute before volume drop: {:?}", s.transport.calls);
+
+        // When unmuting, volume MUST be written before unmute.
+        s.transport.calls.clear();
+        s.apply_volume(2, 0, 1, -2048, false).unwrap();
+        let vol_idx2 = s.transport.calls.iter().position(|c| *c == MockCall::WriteFuVol(2, 1, -2048)).unwrap();
+        let unmute_idx = s.transport.calls.iter().position(|c| *c == MockCall::WriteFuMute(2, 0, false)).unwrap();
+        assert!(vol_idx2 < unmute_idx, "expected volume before unmute: {:?}", s.transport.calls);
+
+        // Close must restore both ch=1,2 volumes BEFORE ch=0 unmute, and all before set_alt(0) / release / attach.
+        s.transport.calls.clear();
+        s.close();
+        let v1 = s.transport.calls.iter().position(|c| *c == MockCall::WriteFuVol(2, 1, -1536)).unwrap();
+        let v2 = s.transport.calls.iter().position(|c| *c == MockCall::WriteFuVol(2, 2, -1536)).unwrap();
+        let m0 = s.transport.calls.iter().position(|c| *c == MockCall::WriteFuMute(2, 0, false)).unwrap();
+        let alt0 = s.transport.calls.iter().position(|c| *c == MockCall::SetAlt(1, 0)).unwrap();
+        let rel = s.transport.calls.iter().position(|c| matches!(c, MockCall::ReleaseInterface(_))).unwrap();
+        let att = s.transport.calls.iter().position(|c| matches!(c, MockCall::AttachKernelDriver(_))).unwrap();
+        assert!(v1 < m0 && v2 < m0);
+        assert!(m0 < alt0 && alt0 < rel && rel < att);
     }
 }

@@ -199,6 +199,20 @@ internal object UsbEngineNative : UsbEngineBridge {
         mute: Boolean,
     ): Int
 
+    external fun sessionReadVolume(
+        handle: Long,
+        featureUnitId: Int,
+        controlIface: Int,
+        channel: Int,
+    ): Int
+
+    external fun sessionReadMute(
+        handle: Long,
+        featureUnitId: Int,
+        controlIface: Int,
+        channel: Int,
+    ): Int
+
     external fun sessionStart(handle: Long): Int
     external fun sessionPauseGrace(handle: Long): Int
     external fun sessionStop(handle: Long): Int

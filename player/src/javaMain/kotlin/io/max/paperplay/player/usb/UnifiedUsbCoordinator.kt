@@ -66,20 +66,32 @@ class UnifiedUsbCoordinator(
     private val _pendingHint = MutableStateFlow<DiscoveredUsbDacHint?>(null)
     val pendingHint: StateFlow<DiscoveredUsbDacHint?> = _pendingHint
 
+    @Volatile
     var activeHandle: Long = 0L
         private set
+    @Volatile
     var hasActiveClaim: Boolean = false
         private set
+    @Volatile
     var isPlaying: Boolean = false
         private set
+    @Volatile
     var isStreamingActive: Boolean = false
         private set
+    @Volatile
     var currentDeviceId: Int? = null
         private set
     var lastSyncedVolumeIndex: Int? = null
         private set
+    var onStatusChanged: (() -> Unit)? = null
 
+    private val claimLock = Any()
     private var pendingPauseTimer: PauseTimerScheduler.Handle? = null
+
+    private fun setStatus(next: BitPerfectStatus) {
+        _status.value = next
+        onStatusChanged?.invoke()
+    }
 
     fun dismissHint(vidPid: String) {
         hintTracker.markHintShown(vidPid)
@@ -93,7 +105,7 @@ class UnifiedUsbCoordinator(
             _pendingHint.value = null
             if (_mode.value == BitPerfectMode.ON) {
                 releaseClaim("USB DAC disconnected")
-                _status.value = BitPerfectStatus.Standby(reason = "Waiting for USB DAC")
+                setStatus(BitPerfectStatus.Standby(reason = "Waiting for USB DAC"))
             }
             return
         }
@@ -118,14 +130,16 @@ class UnifiedUsbCoordinator(
         }
 
         if (audioDev == null) {
-            _status.value = BitPerfectStatus.Standby(reason = "Waiting for USB DAC")
+            setStatus(BitPerfectStatus.Standby(reason = "Waiting for USB DAC"))
             return
         }
         currentDeviceId = audioDev.deviceId
         if (!audioDev.hasPermission) {
-            _status.value = BitPerfectStatus.PermissionRequired(
-                audioDev.productName ?: "USB DAC",
-                UsbDiscoveryHintTracker.formatVidPid(audioDev.vendorId, audioDev.productId),
+            setStatus(
+                BitPerfectStatus.PermissionRequired(
+                    audioDev.productName ?: "USB DAC",
+                    UsbDiscoveryHintTracker.formatVidPid(audioDev.vendorId, audioDev.productId),
+                )
             )
             ops.requestUsbPermission(audioDev.deviceId)
             return
@@ -133,16 +147,42 @@ class UnifiedUsbCoordinator(
         ops.loadNativeLibrary()
         if (ops.openUsbDevice(audioDev.deviceId)) {
             hasActiveClaim = true
-            _status.value = BitPerfectStatus.Standby(audioDev.productName, "Ready to stream")
+            setStatus(BitPerfectStatus.Standby(audioDev.productName, "Ready to stream"))
         }
     }
 
     fun onNativeSessionOpened(handle: Long, deviceId: Int, deviceName: String?) {
-        activeHandle = handle
-        currentDeviceId = deviceId
-        hasActiveClaim = handle != 0L
-        if (hasActiveClaim && _mode.value == BitPerfectMode.ON) {
-            _status.value = BitPerfectStatus.Standby(deviceName, "Ready to stream")
+        val claimed = synchronized(claimLock) {
+            activeHandle = handle
+            currentDeviceId = deviceId
+            hasActiveClaim = handle != 0L
+            hasActiveClaim && _mode.value == BitPerfectMode.ON
+        }
+        if (claimed) {
+            setStatus(BitPerfectStatus.Standby(deviceName, "Ready to stream"))
+        }
+    }
+
+    fun onNativeSessionClosed(handle: Long) {
+        if (handle == 0L) return
+        val wasActive = synchronized(claimLock) {
+            if (activeHandle == handle) {
+                cancelPauseTimer()
+                activeHandle = 0L
+                hasActiveClaim = false
+                isStreamingActive = false
+                lastSyncedVolumeIndex = null
+                true
+            } else {
+                false
+            }
+        }
+        if (wasActive) {
+            if (_mode.value == BitPerfectMode.ON) {
+                setStatus(BitPerfectStatus.Standby(reason = "Session closed"))
+            } else {
+                onStatusChanged?.invoke()
+            }
         }
     }
 
@@ -151,11 +191,26 @@ class UnifiedUsbCoordinator(
         if (newMode == BitPerfectMode.OFF) {
             _pendingHint.value = null
             releaseClaim("Bit-perfect turned off")
-            _status.value = BitPerfectStatus.Off
+            setStatus(BitPerfectStatus.Off)
         } else {
             _pendingHint.value?.let { hintTracker.markHintShown(it.vidPid) }
             _pendingHint.value = null
-            _status.value = BitPerfectStatus.Standby(reason = "Waiting for USB DAC")
+            setStatus(BitPerfectStatus.Standby(reason = "Waiting for USB DAC"))
+        }
+    }
+
+    fun onStreamingActive(sampleRateHz: Int, bitDepth: Int, deviceName: String?) {
+        isPlaying = true
+        if (hasActiveClaim && _mode.value == BitPerfectMode.ON) {
+            isStreamingActive = true
+            setStatus(
+                BitPerfectStatus.Active(
+                    transportLabel = io.max.paperplay.player.TransportKind.USB_UAC_DIRECT.displayName,
+                    sampleRateHz = sampleRateHz,
+                    bitDepth = bitDepth,
+                    deviceName = deviceName?.takeIf { it.isNotBlank() },
+                )
+            )
         }
     }
 
@@ -209,8 +264,28 @@ class UnifiedUsbCoordinator(
                 releaseClaim("Output switched away from USB DAC")
             }
             if (_mode.value == BitPerfectMode.ON) {
-                _status.value = BitPerfectStatus.Bypassed("Non-USB output active")
+                setStatus(BitPerfectStatus.Bypassed("Non-USB output active"))
             }
+        }
+    }
+
+    fun onSpeedBypass(speed: Float) {
+        val hadClaim = synchronized(claimLock) {
+            cancelPauseTimer()
+            val h = activeHandle
+            activeHandle = 0L
+            hasActiveClaim = false
+            isStreamingActive = false
+            lastSyncedVolumeIndex = null
+            h
+        }
+        if (hadClaim != 0L) {
+            ops.releaseClaimAndReattach(hadClaim)
+        }
+        if (_mode.value == BitPerfectMode.ON) {
+            setStatus(BitPerfectStatus.Bypassed("Speed ${speed}x"))
+        } else {
+            onStatusChanged?.invoke()
         }
     }
 
@@ -231,7 +306,7 @@ class UnifiedUsbCoordinator(
             releaseClaim("USB DAC unplugged")
             currentDeviceId = null
             if (_mode.value == BitPerfectMode.ON) {
-                _status.value = BitPerfectStatus.Standby(reason = "Waiting for USB DAC")
+                setStatus(BitPerfectStatus.Standby(reason = "Waiting for USB DAC"))
             }
         }
     }
@@ -248,17 +323,22 @@ class UnifiedUsbCoordinator(
     }
 
     fun releaseClaim(reason: String) {
-        cancelPauseTimer()
-        val h = activeHandle
-        activeHandle = 0L
-        hasActiveClaim = false
-        isStreamingActive = false
-        lastSyncedVolumeIndex = null
+        val h = synchronized(claimLock) {
+            cancelPauseTimer()
+            val prev = activeHandle
+            activeHandle = 0L
+            hasActiveClaim = false
+            isStreamingActive = false
+            lastSyncedVolumeIndex = null
+            prev
+        }
         if (h != 0L) {
             ops.releaseClaimAndReattach(h)
         }
-        if (_mode.value == BitPerfectMode.ON && _status.value is BitPerfectStatus.Active) {
-            _status.value = BitPerfectStatus.Standby(reason = reason)
+        if (_mode.value == BitPerfectMode.ON) {
+            setStatus(BitPerfectStatus.Standby(reason = reason))
+        } else {
+            onStatusChanged?.invoke()
         }
     }
 

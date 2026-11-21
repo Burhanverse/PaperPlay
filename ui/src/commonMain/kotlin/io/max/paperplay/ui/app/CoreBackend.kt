@@ -713,6 +713,18 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         repo.setPref("dev_options", "true")
     }
 
+    /** Developer option: switch between unified Bit-perfect path and legacy USB sink without rebuilding. */
+    val devUseUnifiedBitPerfect = MutableStateFlow(
+        repo.pref("dev_use_unified_bit_perfect")?.let { it == "true" }
+            ?: io.max.paperplay.player.USE_UNIFIED_BIT_PERFECT_DEFAULT
+    )
+    fun setDevUseUnifiedBitPerfect(on: Boolean) {
+        devUseUnifiedBitPerfect.value = on
+        repo.setPref("dev_use_unified_bit_perfect", "$on")
+        if (playerStarted.value) player.dacController?.setUseUnifiedBitPerfect(on)
+        else services.playback.dacController?.setUseUnifiedBitPerfect(on)
+    }
+
     /** Developer option: Android 14+ MIXER_BEHAVIOR_BIT_PERFECT (off by default). */
     val devApi34Mixer = MutableStateFlow(repo.pref("dev_api34_bitperfect_mixer") == "true")
     fun setDevApi34Mixer(on: Boolean) {

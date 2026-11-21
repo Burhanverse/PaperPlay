@@ -14,6 +14,8 @@ interface UsbDacController {
     val pendingDiscoveryHint: StateFlow<DiscoveredUsbDacHint?> get() = NoUsbDiscoveryHint
     fun dismissDiscoveryHint(vidPid: String) {}
     fun setUsbExclusive(on: Boolean)
+    fun setUseUnifiedBitPerfect(enabled: Boolean) {}
+    fun getUseUnifiedBitPerfect(): Boolean = io.max.paperplay.player.USE_UNIFIED_BIT_PERFECT_DEFAULT
     fun setDevApi34Mixer(enabled: Boolean) {}
     fun setSinkChain(mode: String)
     fun getSinkChain(): String

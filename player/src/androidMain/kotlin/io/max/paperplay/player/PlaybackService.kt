@@ -73,7 +73,7 @@ class PlaybackService : MediaSessionService() {
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
             if (customCommand.customAction == PlaybackCore.ACTION_REBUILD_FOR_BIT_PERFECT && controller.packageName == packageName) {
-                rebuildPlayerForBitPerfect()
+                scheduleRebuildForBitPerfect()
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
             return super.onCustomCommand(session, controller, customCommand, args)
@@ -123,7 +123,7 @@ class PlaybackService : MediaSessionService() {
         val forwardingPlayer = io.max.paperplay.player.usb.UsbVolumeForwardingPlayer(exo, this)
         io.max.paperplay.player.usb.UsbAudioManager.instance?.forwardingPlayer = forwardingPlayer
         PlaybackCore.onRebuildPlayerForBitPerfect = {
-            android.os.Handler(mainLooper).post { rebuildPlayerForBitPerfect() }
+            scheduleRebuildForBitPerfect()
         }
 
         // A tap on the notification opens the app on the player.
@@ -145,6 +145,14 @@ class PlaybackService : MediaSessionService() {
         session = builder.build()
     }
 
+    private val rebuildHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val rebuildRunnable = Runnable { rebuildPlayerForBitPerfect() }
+
+    private fun scheduleRebuildForBitPerfect() {
+        rebuildHandler.removeCallbacks(rebuildRunnable)
+        rebuildHandler.postDelayed(rebuildRunnable, 150L)
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     @OptIn(UnstableApi::class)
@@ -156,6 +164,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        rebuildHandler.removeCallbacks(rebuildRunnable)
         PlaybackCore.onRebuildPlayerForBitPerfect = null
         io.max.paperplay.player.usb.UsbAudioManager.instance?.forwardingPlayer = null
         runCatching { eq?.release() }
