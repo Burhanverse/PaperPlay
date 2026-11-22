@@ -3,13 +3,29 @@
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use libusb1_sys::{
     libusb_alloc_transfer, libusb_cancel_transfer, libusb_fill_iso_transfer,
     libusb_free_transfer, libusb_submit_transfer, libusb_transfer,
 };
+
+const STATE_IDLE: u8 = 0;
+const STATE_IN_FLIGHT: u8 = 1;
+const STATE_COMPLETED: u8 = 2;
+const STATE_ABANDONED: u8 = 3;
+
+#[inline]
+unsafe fn free_transfer_and_user_data(
+    transfer: *mut libusb_transfer,
+    user_data_ptr: *mut IsoTransferUserData,
+) {
+    #[cfg(test)]
+    (*user_data_ptr).freed_transfer.store(true, Ordering::Release);
+    libusb_free_transfer(transfer);
+    drop(Box::from_raw(user_data_ptr));
+}
 
 /// Lock-free transfer completion state.
 pub struct IsoTransferCompletion {
@@ -38,6 +54,9 @@ impl IsoTransferCompletion {
 pub struct IsoTransferUserData {
     pub completion: Arc<IsoTransferCompletion>,
     pub buffer: Vec<u8>,
+    lifecycle: AtomicU8,
+    #[cfg(test)]
+    freed_transfer: Arc<AtomicBool>,
 }
 
 /// Managed wrapper around a raw `libusb_transfer` for isochronous endpoints.
@@ -60,6 +79,9 @@ impl IsoTransferSlot {
         let user_data = Box::new(IsoTransferUserData {
             completion: Arc::clone(&completion),
             buffer: vec![0u8; total_capacity.max(4)],
+            lifecycle: AtomicU8::new(STATE_IDLE),
+            #[cfg(test)]
+            freed_transfer: Arc::new(AtomicBool::new(false)),
         });
         let user_data_ptr = Box::into_raw(user_data);
 
@@ -103,7 +125,7 @@ impl IsoTransferSlot {
         packet_sizes: &[usize],
         timeout_ms: u32,
     ) -> Result<(), i32> {
-        if self.in_flight {
+        if self.in_flight || (*self.user_data).lifecycle.load(Ordering::Acquire) == STATE_IN_FLIGHT {
             return Err(-16); // -EBUSY
         }
         if (endpoint & 0x80) != 0 {
@@ -111,6 +133,7 @@ impl IsoTransferSlot {
         }
         let user_data = &mut *self.user_data;
         self.completion.reset();
+        user_data.lifecycle.store(STATE_IN_FLIGHT, Ordering::Release);
 
         libusb_fill_iso_transfer(
             self.transfer.as_ptr(),
@@ -137,6 +160,7 @@ impl IsoTransferSlot {
             self.in_flight = true;
             Ok(())
         } else {
+            user_data.lifecycle.store(STATE_IDLE, Ordering::Release);
             Err(ret)
         }
     }
@@ -149,11 +173,12 @@ impl IsoTransferSlot {
         packet_size: usize,
         timeout_ms: u32,
     ) -> Result<(), i32> {
-        if self.in_flight {
+        if self.in_flight || (*self.user_data).lifecycle.load(Ordering::Acquire) == STATE_IN_FLIGHT {
             return Err(-16); // -EBUSY
         }
         let user_data = &mut *self.user_data;
         self.completion.reset();
+        user_data.lifecycle.store(STATE_IN_FLIGHT, Ordering::Release);
 
         libusb_fill_iso_transfer(
             self.transfer.as_ptr(),
@@ -175,6 +200,7 @@ impl IsoTransferSlot {
             self.in_flight = true;
             Ok(())
         } else {
+            user_data.lifecycle.store(STATE_IDLE, Ordering::Release);
             Err(ret)
         }
     }
@@ -184,7 +210,11 @@ impl IsoTransferSlot {
         if !self.in_flight {
             return Ok(());
         }
-        let ret = unsafe { libusb_cancel_transfer(self.transfer.as_ptr()) };
+        let transfer_ptr = self.transfer.as_ptr();
+        if unsafe { (*transfer_ptr).dev_handle.is_null() } {
+            return Ok(());
+        }
+        let ret = unsafe { libusb_cancel_transfer(transfer_ptr) };
         if ret == 0 || ret == libusb1_sys::constants::LIBUSB_ERROR_NOT_FOUND {
             Ok(())
         } else {
@@ -202,9 +232,24 @@ impl Drop for IsoTransferSlot {
         if self.in_flight {
             let _ = self.cancel();
         }
-        unsafe {
-            libusb_free_transfer(self.transfer.as_ptr());
-            drop(Box::from_raw(self.user_data));
+        // Only free transfer + user_data if no callback is still pending.
+        // If still STATE_IN_FLIGHT, hand ownership to iso_transfer_callback via STATE_ABANDONED
+        // so both allocations stay valid until libusb completes cancellation and invokes the callback.
+        let handed_off = unsafe {
+            (*self.user_data)
+                .lifecycle
+                .compare_exchange(
+                    STATE_IN_FLIGHT,
+                    STATE_ABANDONED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+        };
+        if !handed_off {
+            unsafe {
+                free_transfer_and_user_data(self.transfer.as_ptr(), self.user_data);
+            }
         }
     }
 }
@@ -221,10 +266,18 @@ extern "system" fn iso_transfer_callback(transfer: *mut libusb_transfer) {
             if user_data_ptr.is_null() {
                 return;
             }
-            let user_data = &*user_data_ptr;
-            user_data.completion.status.store((*transfer).status, Ordering::Release);
-            user_data.completion.actual_length.store((*transfer).actual_length as usize, Ordering::Release);
-            user_data.completion.completed.store(true, Ordering::Release);
+            let status = (*transfer).status;
+            let actual_length = (*transfer).actual_length as usize;
+            let prev_state = {
+                let user_data = &*user_data_ptr;
+                user_data.completion.status.store(status, Ordering::Release);
+                user_data.completion.actual_length.store(actual_length, Ordering::Release);
+                user_data.completion.completed.store(true, Ordering::Release);
+                user_data.lifecycle.swap(STATE_COMPLETED, Ordering::AcqRel)
+            };
+            if prev_state == STATE_ABANDONED {
+                free_transfer_and_user_data(transfer, user_data_ptr);
+            }
         }
     }));
 }
@@ -251,5 +304,86 @@ mod tests {
         slot.completion.completed.store(true, Ordering::Release);
         assert!(slot.completion.completed.swap(false, Ordering::AcqRel));
         assert!(!slot.completion.completed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_drop_defers_free_until_late_cancellation_callback() {
+        let mut slot = IsoTransferSlot::new(4, 128).expect("Slot allocation succeeded");
+        let completion = Arc::clone(&slot.completion);
+        let freed_transfer = unsafe { Arc::clone(&(*slot.user_data).freed_transfer) };
+        let raw_transfer = slot.transfer.as_ptr();
+
+        // Simulate a submitted transfer whose cancellation timed out before Drop.
+        unsafe {
+            (*raw_transfer).user_data = slot.user_data as *mut c_void;
+            (*raw_transfer).status = libusb1_sys::constants::LIBUSB_TRANSFER_CANCELLED;
+            (*raw_transfer).actual_length = 0;
+            (*slot.user_data).lifecycle.store(STATE_IN_FLIGHT, Ordering::Release);
+        }
+        slot.in_flight = true;
+
+        assert_eq!(Arc::strong_count(&completion), 3);
+        assert!(!freed_transfer.load(Ordering::Acquire));
+
+        // Drop while still in flight: both transfer and user_data must stay allocated.
+        drop(slot);
+
+        assert_eq!(
+            Arc::strong_count(&completion),
+            2,
+            "user_data must remain allocated until libusb delivers the cancellation callback"
+        );
+        assert!(
+            !freed_transfer.load(Ordering::Acquire),
+            "libusb_transfer must remain allocated until libusb delivers the cancellation callback"
+        );
+
+        // Late libusb cancellation callback now runs and frees both allocations.
+        iso_transfer_callback(raw_transfer);
+
+        assert!(completion.completed.load(Ordering::Acquire));
+        assert_eq!(
+            completion.status.load(Ordering::Acquire),
+            libusb1_sys::constants::LIBUSB_TRANSFER_CANCELLED
+        );
+        assert_eq!(
+            Arc::strong_count(&completion),
+            1,
+            "callback must free user_data after abandoned transfer completes"
+        );
+        assert!(
+            freed_transfer.load(Ordering::Acquire),
+            "callback must free libusb_transfer after abandoned transfer completes"
+        );
+    }
+
+    #[test]
+    fn test_completed_callback_before_drop_frees_on_drop_only() {
+        let mut slot = IsoTransferSlot::new(4, 128).expect("Slot allocation succeeded");
+        let completion = Arc::clone(&slot.completion);
+        let freed_transfer = unsafe { Arc::clone(&(*slot.user_data).freed_transfer) };
+        let raw_transfer = slot.transfer.as_ptr();
+
+        unsafe {
+            (*raw_transfer).user_data = slot.user_data as *mut c_void;
+            (*raw_transfer).status = libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED;
+            (*raw_transfer).actual_length = 64;
+            (*slot.user_data).lifecycle.store(STATE_IN_FLIGHT, Ordering::Release);
+        }
+        slot.in_flight = true;
+
+        // Normal path: callback finishes while slot is still alive.
+        iso_transfer_callback(raw_transfer);
+
+        assert!(completion.completed.load(Ordering::Acquire));
+        assert_eq!(completion.actual_length.load(Ordering::Acquire), 64);
+        assert_eq!(Arc::strong_count(&completion), 3);
+        assert!(!freed_transfer.load(Ordering::Acquire));
+
+        // Dropping the slot now frees both allocations immediately.
+        drop(slot);
+
+        assert_eq!(Arc::strong_count(&completion), 1);
+        assert!(freed_transfer.load(Ordering::Acquire));
     }
 }
