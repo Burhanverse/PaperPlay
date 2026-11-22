@@ -23,8 +23,8 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -134,11 +134,11 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                 }
                 if (p.shows(StandbyWidget.Progress) && song != null) StandbyProgress(state, backend, tone)
                 if (p.shows(StandbyWidget.Controls)) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    IconButton(backend::previous) { AppIcon(Icons.Rounded.SkipPrevious, "Previous", Modifier.size(32.dp), tint = tone) }
+                    IconButton(backend::previous) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(32.dp), tint = tone) }
                     IconButton(backend::togglePlay, Modifier.size(64.dp)) {
                         AppIcon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(44.dp), tint = tone)
                     }
-                    IconButton(backend::next) { AppIcon(Icons.Rounded.SkipNext, "Next", Modifier.size(32.dp), tint = tone) }
+                    IconButton(backend::next) { AppIcon(Icons.Rounded.FastForward, "Next", Modifier.size(32.dp), tint = tone) }
                 }
                 if (p.shows(StandbyWidget.Next)) state.queue.getOrNull(state.queueIndex + 1)?.let {
                     Text("Next: ${it.title} - ${it.artist}", color = tone.copy(alpha = 0.5f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
