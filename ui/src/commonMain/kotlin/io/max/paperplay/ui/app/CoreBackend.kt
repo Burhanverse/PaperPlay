@@ -104,8 +104,10 @@ interface PlayerControls {
     /** Extra bass in dB, 0 to 12, on top of the equalizer. */
     val eqBass: StateFlow<Float> get() = MutableStateFlow(0f)
     fun setEqBass(db: Float) {}
-    /** PC with the mpv engine: plays the file untouched through exclusive output; the equalizer, bass, normalise and profile are bypassed (not erased). */
+    /** Plays the file untouched through verified bit-perfect output; equalizer, bass, normalise and profile are bypassed (not erased). */
     val bitPerfect: StateFlow<Boolean> get() = MutableStateFlow(false)
+    val bitPerfectStatus: StateFlow<io.max.paperplay.player.BitPerfectStatus>
+        get() = MutableStateFlow(io.max.paperplay.player.BitPerfectStatus.Off)
     fun setBitPerfect(on: Boolean) {}
     /** Phone engine extras: exact level, A/B with the original, stereo width (see [CoreBackend]). */
     val eqExact: StateFlow<Boolean> get() = MutableStateFlow(false)
@@ -645,21 +647,31 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** PC only: which audio engine plays (vlc or mpv; read when the app starts, so a change applies after a restart). */
     fun pcEngine(): String = services.platform.settings.get("pc_engine") ?: "vlc"
     override val hasBass: Boolean get() = io.max.paperplay.ui.isPhone || pcEngine() == "mpv"
-    // The old separate "exclusive output" switch counts as bit-perfect now that the two are one.
-    override val bitPerfect = MutableStateFlow((repo.pref("pc_bitperfect") == "true" || repo.pref("pc_exclusive") == "true") && !io.max.paperplay.ui.isPhone)
+    override val bitPerfectStatus: StateFlow<io.max.paperplay.player.BitPerfectStatus>
+        get() = services.playback.bitPerfectStatus
+    override val bitPerfect = MutableStateFlow(
+        io.max.paperplay.player.PlatformBitPerfectPrefs.load(sqliteGet = repo::pref, sqliteSet = repo::setPref) == io.max.paperplay.player.BitPerfectMode.ON
+    )
 
     override fun setBitPerfect(on: Boolean) {
         bitPerfect.value = on
-        repo.setPref("pc_bitperfect", "$on")
-        // The old separate exclusive switch is folded into this one; leaving it set would keep the device exclusive after switching off.
+        io.max.paperplay.player.PlatformBitPerfectPrefs.save(
+            if (on) io.max.paperplay.player.BitPerfectMode.ON else io.max.paperplay.player.BitPerfectMode.OFF,
+            sqliteSet = repo::setPref,
+        )
+        if (io.max.paperplay.ui.isPhone) {
+            usbExclusiveMode.value = on
+            repo.setPref("usb_exclusive_mode", "$on")
+            if (playerStarted.value) player.dacController?.setUsbExclusive(on)
+            else services.playback.dacController?.setUsbExclusive(on)
+        }
         exclusiveOutput.value = false
-        repo.setPref("pc_exclusive", "false")
         if (!playerStarted.value) return
         pushBass()
         player.setEqualizer(if (on || !eqOn.value) null else eqGains.value)
         player.setNormalize(!on && normalizeOn.value)
         player.setCorrectionProfile(correctionProfile.value.takeIf { it.isNotBlank() && !on })
-        player.setExclusiveOutput(on || exclusiveOutput.value)
+        if (!io.max.paperplay.ui.isPhone) player.setBitPerfect(on)
     }
     fun setPcEngine(engine: String) { services.platform.settings.put("pc_engine", engine) }
 
@@ -675,6 +687,71 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         repo.setPref("pc_exclusive", "$on")
         if (playerStarted.value) player.setExclusiveOutput(on || bitPerfect.value)
     }
+
+    private val noUsbStatus = MutableStateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?>(null)
+    private val noUsbDiscoveryHint = MutableStateFlow<io.max.paperplay.player.usb.DiscoveredUsbDacHint?>(null)
+
+    /** Mirrored USB DAC preference kept aligned with [bitPerfect] on Android. */
+    val usbExclusiveMode = MutableStateFlow(bitPerfect.value)
+    val usbExclusiveStatus: StateFlow<io.max.paperplay.player.usb.UsbExclusiveStatus?>
+        get() = services.playback.dacController?.usbExclusiveStatus ?: noUsbStatus
+    val pendingUsbDiscoveryHint: StateFlow<io.max.paperplay.player.usb.DiscoveredUsbDacHint?>
+        get() = services.playback.dacController?.pendingDiscoveryHint ?: noUsbDiscoveryHint
+
+    fun dismissUsbDiscoveryHint(vidPid: String) {
+        services.playback.dacController?.dismissDiscoveryHint(vidPid)
+    }
+
+    fun setUsbExclusiveMode(on: Boolean) {
+        setBitPerfect(on)
+    }
+
+    /** Hidden developer options (unlocked by 7 taps on version in About). */
+    val devOptionsUnlocked = MutableStateFlow(repo.pref("dev_options") == "true")
+    fun unlockDevOptions() {
+        devOptionsUnlocked.value = true
+        repo.setPref("dev_options", "true")
+    }
+
+    /** Developer option: switch between unified Bit-perfect path and legacy USB sink without rebuilding. */
+    val devUseUnifiedBitPerfect = MutableStateFlow(
+        repo.pref("dev_use_unified_bit_perfect")?.let { it == "true" }
+            ?: io.max.paperplay.player.USE_UNIFIED_BIT_PERFECT_DEFAULT
+    )
+    fun setDevUseUnifiedBitPerfect(on: Boolean) {
+        devUseUnifiedBitPerfect.value = on
+        repo.setPref("dev_use_unified_bit_perfect", "$on")
+        if (playerStarted.value) player.dacController?.setUseUnifiedBitPerfect(on)
+        else services.playback.dacController?.setUseUnifiedBitPerfect(on)
+    }
+
+    /** Developer option: Android 14+ MIXER_BEHAVIOR_BIT_PERFECT (off by default). */
+    val devApi34Mixer = MutableStateFlow(repo.pref("dev_api34_bitperfect_mixer") == "true")
+    fun setDevApi34Mixer(on: Boolean) {
+        devApi34Mixer.value = on
+        repo.setPref("dev_api34_bitperfect_mixer", "$on")
+        if (playerStarted.value) player.dacController?.setDevApi34Mixer(on)
+        else services.playback.dacController?.setDevApi34Mixer(on)
+    }
+
+    /** Developer option: Android audio sink chain ("full", "no_dsp", "plain"). */
+    val sinkChain = MutableStateFlow(repo.pref("sink_chain") ?: io.max.paperplay.player.SinkChainMode.FULL.id)
+    fun setSinkChain(mode: String) {
+        val valid = io.max.paperplay.player.SinkChainMode.fromId(mode).id
+        sinkChain.value = valid
+        repo.setPref("sink_chain", valid)
+        if (playerStarted.value) player.dacController?.setSinkChain(valid)
+        else services.playback.dacController?.setSinkChain(valid)
+    }
+
+    suspend fun runUsbProbe(): String = services.playback.dacController?.runUsbProbe() ?: "USB probe is only supported on Android."
+    suspend fun runUsbPlaybackTest(): String = services.playback.dacController?.runUsbPlaybackTest() ?: "USB playback test is only supported on Android."
+    fun requestUsbPermission() { services.playback.dacController?.requestUsbPermission() }
+    suspend fun exportUsbDebugLog(): String = services.playback.dacController?.exportUsbDebugLog() ?: "USB debug log is only supported on Android."
+    fun triggerUsbPcmDump(enable: Boolean = true): String = services.playback.dacController?.triggerUsbPcmDump(enable) ?: "USB PCM dump is only supported on Android."
+    fun getUsbPcmDumpStatus(): String = services.playback.dacController?.getUsbPcmDumpStatus() ?: "Off"
+    fun getUsbPcmDumpPath(): String? = services.playback.dacController?.getUsbPcmDumpPath()
+    fun getLastUsbFallbackLogPath(): String? = services.playback.dacController?.getLastUsbFallbackLogPath()
 
     /** PC only (mpv engine): an earphone correction curve in AutoEq GraphicEQ text, empty for none. */
     val correctionProfile = MutableStateFlow(repo.pref("pc_profile").orEmpty())
@@ -835,6 +912,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     init {
         io.max.paperplay.core.app.MemoryProbe.start(scope) { "Jobs: ${tasks.running.value.size}" }
+        // Clean up legacy volume limit and calibration preferences
+        repo.setPref("usb_max_vol_limit_db", "")
     }
 
     fun addLog(source: String, message: String, error: Boolean = false) {
@@ -1058,7 +1137,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 p.setEarphoneCorrection(io.max.paperplay.player.CorrectionProfile.EARPHONES[eqEarphone.value])
                 p.setEngineOptions(eqOptions.value)
             }
-            if (exclusiveOutput.value || bp) p.setExclusiveOutput(true)
+            if (io.max.paperplay.ui.isPhone) p.dacController?.setUsbExclusive(bp) else p.setBitPerfect(bp)
+            p.dacController?.setSinkChain(sinkChain.value)
             if (!bp) correctionProfile.value.takeIf { it.isNotBlank() }?.let { p.setCorrectionProfile(it) }
             if (!systemVolume && volume.value != 1f) p.setVolume(volume.value)
             if (speed.value != 1f) p.setSpeed(speed.value)
@@ -1287,8 +1367,14 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
     override fun setVolume(v: Float) {
         volume.value = v.coerceIn(0f, 1f)
-        if (systemVolume) {
+        val isUsb = usbExclusiveMode.value && (usbExclusiveStatus.value?.isConnected == true)
+        if (systemVolume && !isUsb) {
             scope.launch(Dispatchers.Default) { io.max.paperplay.player.SystemVolume.set(volume.value) }
+            return
+        }
+        if (systemVolume && isUsb) {
+            scope.launch(Dispatchers.Default) { io.max.paperplay.player.SystemVolume.set(volume.value) }
+            repo.setPref("player_volume", volume.value.toString())
             return
         }
         if (playerStarted.value) player.setVolume(volume.value)
@@ -1581,10 +1667,17 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 if (first) {
                     first = false
                     systemVolume = true
-                    // The engine plays at full level; the system volume is the only one.
-                    if (playerStarted.value) player.setVolume(1f)
+                    // The engine plays at full level; the system volume is the only one (except when USB exclusive is active).
+                    val isUsb = usbExclusiveMode.value && (usbExclusiveStatus.value?.isConnected == true)
+                    if (playerStarted.value && !isUsb) player.setVolume(1f)
                 }
-                if (kotlin.math.abs(level - volume.value) > 0.004f) volume.value = level
+                if (kotlin.math.abs(level - volume.value) > 0.004f) {
+                    volume.value = level
+                    val isUsb = usbExclusiveMode.value && (usbExclusiveStatus.value?.isConnected == true)
+                    if (playerStarted.value && isUsb) {
+                        player.setVolume(level)
+                    }
+                }
                 if (!io.max.paperplay.ui.AppForegroundState.isVisible || !playbackMeta.value.playing) {
                     activeFlow.first { it }
                 } else {

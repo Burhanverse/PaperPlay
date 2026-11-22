@@ -36,6 +36,10 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     override val currentIndex: StateFlow<Int> = _currentIndex
     private val _info = MutableStateFlow<OutputInfo?>(null)
     override val outputInfo: StateFlow<OutputInfo?> = _info
+    override val supportsBitPerfect: Boolean = false
+    override val bitPerfectStatus: StateFlow<BitPerfectStatus> = MutableStateFlow(
+        BitPerfectStatus.Unsupported("Switch to the mpv audio engine for bit-perfect output"),
+    )
     @Volatile private var eqGains: List<Float>? = null
 
     // After a seek libvlc can report the end of the stream when the data for the new position was not there in time (a song still
@@ -177,16 +181,26 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
             if (rate != 1f) add("Speed ${rate}x")
             if (volume < 0.995f) add("Volume ${(volume * 100).toInt()}%")
         }
+        val rate = track?.rate()?.takeIf { it > 0 }
+        val ch = track?.channels()?.takeIf { it > 0 }
+        val dev = runCatching { mp.audio().outputDevice() }.getOrNull()?.takeIf { it.isNotBlank() } ?: "System default output"
+        val note = "Windows mixes sound at the format set in Sound settings, so desktop playback is not bit-perfect even with no effects."
         _info.value = OutputInfo(
             codec = track?.codecName()?.takeIf { it.isNotBlank() },
-            sampleRateHz = track?.rate()?.takeIf { it > 0 },
-            channels = track?.channels()?.takeIf { it > 0 },
+            sampleRateHz = rate,
+            channels = ch,
             bitrateKbps = track?.bitRate()?.takeIf { it > 0 }?.let { it / 1000 },
-            device = runCatching { mp.audio().outputDevice() }.getOrNull()?.takeIf { it.isNotBlank() } ?: "System default output",
+            device = dev,
             effects = effects,
             bitPerfect = false,
             details = listOf("Engine" to "VLC"),
-            note = "Windows mixes sound at the format set in Sound settings, so desktop playback is not bit-perfect even with no effects.",
+            note = note,
+            transport = TransportInfo(
+                kind = TransportKind.NONE,
+                verified = false,
+                deviceName = dev,
+                unverifiedReason = note,
+            ),
         )
     }
 
@@ -210,8 +224,11 @@ object PcEngine {
     val mpvFound: Boolean get() = MpvLoader.available
 }
 
-actual fun createPlayerEngine(): PlayerEngine = LazyPlayerEngine {
-    val lib = if (PcEngine.useMpv) MpvLoader.lib else null
-    if (PcEngine.useMpv && lib == null) PlayLog.log("mpv", "the mpv library was not found, so VLC plays")
-    if (lib != null) MpvPlayerEngine(lib) else JvmPlayerEngine()
-}
+actual fun createPlayerEngine(): PlayerEngine = LazyPlayerEngine(
+    factory = {
+        val lib = if (PcEngine.useMpv) MpvLoader.lib else null
+        if (PcEngine.useMpv && lib == null) PlayLog.log("mpv", "the mpv library was not found, so VLC plays")
+        if (lib != null) MpvPlayerEngine(lib) else JvmPlayerEngine()
+    },
+    supportsBitPerfect = PcEngine.useMpv && MpvLoader.available,
+)

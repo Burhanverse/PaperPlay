@@ -37,6 +37,7 @@ Built with Kotlin and Compose Multiplatform.
 
 **Playing**
 - Android uses Media3; desktop bundles libvlc, so nothing else needs installing.
+- Android: **Bit-perfect** playback (off by default) for direct USB Audio Class 1.0/2.0 exclusive isochronous streaming with UAC hardware volume control, exact integer/float repacking, 25 s pause timeout release, and verified transport reporting; normal path uses Media3 with pure zero-touch pass-through when Bit-perfect is off.
 - Queue editing, play next, shuffle and repeat, sleep timer, speed, a 10-band equalizer with presets, loudness
   levelling, and restore of your last session.
 - Synced lyrics (tap a line to jump) and plain lyrics that scroll along; format badge and an output-info dialog.

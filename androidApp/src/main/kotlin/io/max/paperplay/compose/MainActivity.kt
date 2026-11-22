@@ -29,6 +29,7 @@ import java.io.File
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -39,6 +40,14 @@ class MainActivity : ComponentActivity() {
     /** Where a notification tap asked the app to open ("player" or "tasks"). */
     private val open = MutableStateFlow<String?>(null)
     private val auth = BrowserAuth { startActivity(it) }
+
+    private val recordAudioLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    fun requestRecordAudioPermission() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     /** Copies audio shared to the app into the cache and hands the paths to the uploads page. */
     private fun takeShared(intent: Intent) {
@@ -76,8 +85,22 @@ class MainActivity : ComponentActivity() {
         }.getOrElse { io.max.paperplay.core.app.appLog("copy", "failed $uri: ${it.message}"); sub.deleteRecursively(); null }
     }
 
+    private fun handleUsbDeviceIntent(intent: Intent?) {
+        if (intent?.action != android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        val device: android.hardware.usb.UsbDevice? = if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE, android.hardware.usb.UsbDevice::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+        }
+        if (device != null) {
+            io.max.paperplay.player.usb.UsbAudioManager.instance?.onDeviceAttachedFromIntent(device)
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        handleUsbDeviceIntent(intent)
         intent.getStringExtra(OPEN_EXTRA)?.let { open.value = it }
         takeShared(intent)
         auth.deliver(intent.data)
@@ -233,15 +256,27 @@ class MainActivity : ComponentActivity() {
             "install", "Install updates", "Lets the app install a downloaded update after you confirm it",
             packageManager.canRequestPackageInstalls(), action = "Open settings",
         )
+        val micGranted = granted(Manifest.permission.RECORD_AUDIO)
+        list += io.max.paperplay.ui.PermissionState(
+            "record_audio", "Microphone (USB DAC headset)",
+            "Required by Android to remember USB DAC permissions for dongles that have a headset microphone input",
+            granted = micGranted,
+            action = "Allow",
+        )
         return list
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        currentInstance = this
+        io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission = {
+            requestRecordAudioPermission()
+        }
         enableEdgeToEdge()
         // No grey scrim behind 3-button navigation; the app draws under both bars.
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         initPlayer(applicationContext)
+        handleUsbDeviceIntent(intent)
         takeShared(intent)
         // Started by the Spotify return link after Android ended the app: keep it until services can finish the login.
         auth.deliver(intent?.data)
@@ -367,7 +402,14 @@ class MainActivity : ComponentActivity() {
                 AppEnv(
                     restore = RestoreHooks(
                         pickBackup = { onPicked -> pending[0] = onPicked; picker.launch(arrayOf("*/*")) },
-                        restore = { source, pw -> shared = null; BackupRestorer().restore(source, target, RestoreOptions(password = pw)) },
+                        restore = { source, pw ->
+                            shared = null
+                            BackupRestorer().restore(source, target, RestoreOptions(password = pw)).onEach { ev ->
+                                if (ev is io.max.paperplay.core.backup.RestoreEvent.Finished) {
+                                    syncRestoredBitPerfectPrefs(target.libraryPath)
+                                }
+                            }
+                        },
                     ),
                     libraryExists = { library.exists() },
                     // One AppServices per process. A recreated activity (theme, dark mode, rotation) used to build a second
@@ -426,6 +468,11 @@ class MainActivity : ComponentActivity() {
                                     if (z.running) rikka.shizuku.Shizuku.requestPermission(4218) else z.openShizuku()
                                 }
                                 "install" -> openSettings(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, true)
+                                "record_audio" -> askOnce(
+                                    Manifest.permission.RECORD_AUDIO,
+                                    { recordAudioLauncher.launch(it) },
+                                    { openSettings(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, true) }
+                                )
                             }
                         },
                         openAppSettings = { openSettings(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, true) },
@@ -436,6 +483,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        if (currentInstance === this) currentInstance = null
+        if (io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission != null) {
+            io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission = null
+        }
+        super.onDestroy()
+    }
+
+    private fun syncRestoredBitPerfectPrefs(libraryPath: String) {
+        val dbFile = File(libraryPath)
+        if (!dbFile.exists()) return
+        val restored = runCatching {
+            val map = linkedMapOf<String, String>()
+            android.database.sqlite.SQLiteDatabase.openDatabase(
+                dbFile.path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY,
+            ).use { db ->
+                db.rawQuery("SELECT \"key\", value FROM prefs", null).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        map[cursor.getString(0)] = cursor.getString(1)
+                    }
+                }
+            }
+            map
+        }.getOrNull() ?: return
+        io.max.paperplay.player.syncRestoredPrefsFromAndroidContext(applicationContext, restored)
+    }
+
     companion object {
         const val OPEN_EXTRA = "open"
 
@@ -443,15 +519,28 @@ class MainActivity : ComponentActivity() {
         @Volatile
         var shared: AppServices? = null
 
-
         /** True while an activity of the app is visible. */
         @Volatile
         var foreground = false
+
+        @Volatile
+        var currentInstance: MainActivity? = null
+            private set
     }
 
     override fun onStart() {
         super.onStart()
         foreground = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        io.max.paperplay.player.usb.UsbAudioManager.instance?.onActivityResumed()
+    }
+
+    override fun onPause() {
+        io.max.paperplay.player.usb.UsbAudioManager.instance?.onActivityPaused()
+        super.onPause()
     }
 
     override fun onStop() {
