@@ -824,6 +824,7 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Visualizer fed again on the phone (`EngineAudioSink.tap`). Phone standby landscape button (gravity sensor, only in standby).
 - [x] Visualizer also fed when the engine is off (no DSP or bit-perfect pass-through in `EngineAudioSink.handleBuffer`); the tap runs only while a visual read it in the last 2 s (`AudioTap.wanted`). Seen moving on the phone over Bluetooth 2026-11-23.
 - [~] Standby previous/next use the full player's icons (FastRewind/FastForward).
+- [ ] Desktop: run with the storage cleanup (shared limit, orphans, old temp files), Storage page total (data folder only), synced folders every 2 minutes, LAN announce every 30 s after a minute and dial backoff. Compiled only, not run.
 - [~] CPU: no audio analysis on battery (`canRunHeavy`, charging only), seek wave at 30 Hz, LAN announce every 30 s after a minute and dial backoff, memory line every minute, regex compiled once in `comparableText`. Measured: locked playback 33% -> 20% of a core, full player drawing about 3x less.
 - [x] Local folders: new songs are queued within 2 minutes while the app runs (was only at connect); files changed in the last minute wait. Seen on the phone 2026-11-23: the 7 new songs uploaded, uploading the folder again says already uploaded.
 - [~] Output pill: short name over a detail line. Lyrics: large bold lines, dim past, Sync pill. Desktop top bar with profile menu.
