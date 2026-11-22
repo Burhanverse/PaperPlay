@@ -53,7 +53,9 @@ Built with Kotlin and Compose Multiplatform.
 - Android: media notification, **standby mode** (a dark clock screen with the song, a grayscale cover tile and a Lyrics
   style that scrolls several lines with faded edges; a button turns it to landscape, either side picked by the motion sensor, only while standby is open), volume follows the system volume.
 - Desktop: a top bar with back, home, search and the profile menu; now playing view, full-screen player, always-on-top mini player, tray menu, media keys, keyboard shortcuts. With the optional mpv engine: one **Bit-perfect** switch (exclusive WASAPI output, equalizer and effects bypassed), equalizer, bass, crossfeed and stereo width.
-- The cache limit also covers what your own account and extra bots download, and Clear cache clears all of it.
+- One cache limit is shared by the main bot, your own account and each extra bot; the app trims them a minute after start and every 10 minutes, and Clear cache clears all of it (pinned songs stay). Settings > Storage and backup shows what is on the device (songs, covers, lyrics, song info, Telegram data, other) measured on disk, counts down while it clears, and can shrink covers to 600 px.
+- Folders you sync (Settings > Upload) are checked every 2 minutes while the app runs; new songs go to the main chat once they finish copying.
+- Light on battery: measuring how songs sound runs only while charging, the visualizer reads the audio only while it is on screen, and nearby devices are looked for less often after the first minute.
 
 **Info, covers and mixes**
 - Song info from MusicBrainz, Deezer, iTunes and TheAudioDB, plus tags and covers read from the audio files. Covers are saved at display size (at most 1000 px) and shared by the songs of one album, and cover files no song uses are removed.

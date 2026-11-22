@@ -91,6 +91,10 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - True Audio (mpv exclusive output): seeks are coalesced and muted across the jump (`MpvPlayerEngine.seek`); no filters, so bit-perfect stays.
 - The phone visualizer is fed in `EngineAudioSink.tap`, because Media3 skips audio processors for float output.
 - Rewind: one press restarts the song, a second within 2.5 s goes back, the first song only restarts.
+- The cache limit is one total shared by every Telegram store (`storeShare()`: limit / (2 + extra bots)). TDLib's `optimizeStorage` takes only `fileTypeAudio` and `fileTypeDocument` (there is no temp type; a wrong name fails the whole call). Never run it on the main bot: it would delete pinned songs; the main bot is cleared song by song (`deleteSongFile`). A file fetched only to read a cover is deleted after reading.
+- Work that decodes whole songs (`AudioFeatureStore`) runs only while charging (`Platform.canRunHeavy`). Anything on a timer must say why its interval is safe for battery, and a repeated failure must back off and must not write the database each time.
+- The audio thread feeds `AudioTap` only while a visual read it in the last 2 s (`AudioTap.wanted`), on both the engine path and the pass-through path in `EngineAudioSink`.
+- Measuring CPU: the release build is `profileable` from the shell, so `simpleperf record --app io.max.paperplay.compose -g` works without a debug build; names come back through `androidApp/build/outputs/mapping/release/mapping.txt`. A debuggable build runs mostly interpreted and overstates every number.
 
 ## Git
 - Short plain commit messages. No tool or AI mentions, no trailers.
