@@ -141,6 +141,8 @@ class UnifiedUsbAudioSink internal constructor(
     @Volatile
     private var activeHwVolRef: UsbHardwareVolume? = null
     private val statsScratch = LongArray(17)
+    private val usbPcmEq = io.max.paperplay.player.NativePcmEqStage()
+    private var pendingEqBuf: ByteBuffer? = null
 
     fun readExtendedStats(outStats: LongArray): Boolean =
         isUsbModeActive && coarseController.readStats(outStats)
@@ -442,6 +444,8 @@ class UnifiedUsbAudioSink internal constructor(
         bypassedForSpeed = false
         isUsbModeActive = true
         normalSinkConfigured = false
+        pendingEqBuf = null
+        usbPcmEq.configure(f.sampleRate, f.channelCount, f.pcmEncoding)
         PlaybackCore.usbActive = true
         PlaybackCore.usbStatus = "USB: configured (${f.sampleRate} Hz, alt ${alt.altSetting})"
         PlayLog.log(
@@ -469,8 +473,10 @@ class UnifiedUsbAudioSink internal constructor(
     override fun handleDiscontinuity() {
         anchorPositionUs = 0L
         hasAnchorPosition = false
+        pendingEqBuf = null
         if (isUsbModeActive) {
             PlayLog.log("usb", "UnifiedUsbAudioSink handleDiscontinuity")
+            usbPcmEq.reset()
             coarseController.onSeekOrFlush()
             if (coarseController.readStats(statsScratch)) {
                 baseFramesConsumed = statsScratch[0]
@@ -498,11 +504,23 @@ class UnifiedUsbAudioSink internal constructor(
                     releasedWhileIdle = false
                     bypassedForSpeed = false
                     if (!ensureNormalSinkConfigured()) return false
-                    return runCatching { super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+                    val feed = pendingEqBuf ?: buffer
+                    val ok = runCatching { super.handleBuffer(feed, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+                    if (ok || !feed.hasRemaining()) {
+                        pendingEqBuf = null
+                        buffer.position(buffer.limit())
+                    }
+                    return ok
                 }
             } else {
                 if (!ensureNormalSinkConfigured()) return false
-                return runCatching { super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+                val feed = pendingEqBuf ?: buffer
+                val ok = runCatching { super.handleBuffer(feed, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+                if (ok || !feed.hasRemaining()) {
+                    pendingEqBuf = null
+                    buffer.position(buffer.limit())
+                }
+                return ok
             }
         }
         val activeFmt = currentFormat ?: return false
@@ -511,7 +529,9 @@ class UnifiedUsbAudioSink internal constructor(
             closeCoarseAndNotify()
             isUsbModeActive = false
             PlaybackCore.usbActive = false
+            PlaybackCore.usbEqActive = false
             if (isDoP) {
+                pendingEqBuf = null
                 PlaybackCore.usbStatus = "Stopped: DoP requires Bit-perfect at 1.0x speed"
                 return false
             }
@@ -527,7 +547,13 @@ class UnifiedUsbAudioSink internal constructor(
             if (sinkPlaying || PlaybackCore.playerPlayWhenReady) {
                 runCatching { super.play() }
             }
-            return runCatching { super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+            val feed = pendingEqBuf ?: buffer
+            val ok = runCatching { super.handleBuffer(feed, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+            if (ok || !feed.hasRemaining()) {
+                pendingEqBuf = null
+                buffer.position(buffer.limit())
+            }
+            return ok
         }
 
         if (!hasAnchorPosition) {
@@ -538,21 +564,49 @@ class UnifiedUsbAudioSink internal constructor(
             }
         }
 
+        val isDoP = activeFmt.sampleMimeType == MIME_AUDIO_DOP
+        var eqBuf = pendingEqBuf
+        if (eqBuf == null) {
+            eqBuf = usbPcmEq.processToDirectBufferIfActive(buffer, isDoP = isDoP)
+            if (eqBuf != null) pendingEqBuf = eqBuf
+        }
+        val feedBuf = eqBuf ?: buffer
+
         val isFloat = activeFmt.pcmEncoding == C.ENCODING_PCM_FLOAT
         val srcBits = when (activeFmt.pcmEncoding) {
             C.ENCODING_PCM_16BIT -> 16
             C.ENCODING_PCM_24BIT -> 24
             else -> 32
         }
-        val ok = coarseController.writePcm(buffer, srcBits, isFloat)
+        val beforeRem = feedBuf.remaining()
+        val ok = coarseController.writePcm(feedBuf, srcBits, isFloat)
+        val afterRem = feedBuf.remaining()
+        val consumed = (beforeRem - afterRem).coerceAtLeast(0)
+        if (eqBuf != null && consumed > 0) {
+            buffer.position((buffer.position() + consumed).coerceAtMost(buffer.limit()))
+        }
         if (!ok) {
             isUsbModeActive = false
             PlaybackCore.usbActive = false
-            if (coarseController.isHardStopped) return false
+            PlaybackCore.usbEqActive = false
+            if (coarseController.isHardStopped) {
+                pendingEqBuf = null
+                return false
+            }
             if (!ensureNormalSinkConfigured()) return false
-            return runCatching { super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+            val fbOk = runCatching { super.handleBuffer(feedBuf, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+            if (fbOk || !feedBuf.hasRemaining()) {
+                pendingEqBuf = null
+                buffer.position(buffer.limit())
+            }
+            return fbOk
         }
-        return !buffer.hasRemaining()
+        val consumedAll = !feedBuf.hasRemaining()
+        if (consumedAll) {
+            pendingEqBuf = null
+            buffer.position(buffer.limit())
+        }
+        return consumedAll
     }
 
     override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
@@ -618,11 +672,13 @@ class UnifiedUsbAudioSink internal constructor(
 
     override fun flush() {
         hasAnchorPosition = false
+        pendingEqBuf = null
         if (!isUsbModeActive) {
             if (normalSinkConfigured) runCatching { super.flush() }
             return
         }
         PlayLog.log("usb", "UnifiedUsbAudioSink flush")
+        usbPcmEq.reset()
         anchorPositionUs = getCurrentPositionUs(false).takeIf { it != AudioSink.CURRENT_POSITION_NOT_SET } ?: anchorPositionUs
         if (coarseController.readStats(statsScratch)) {
             baseFramesConsumed = statsScratch[0]
@@ -634,6 +690,7 @@ class UnifiedUsbAudioSink internal constructor(
         anchorPositionUs = 0L
         hasAnchorPosition = false
         baseFramesConsumed = 0L
+        pendingEqBuf = null
         if (!isUsbModeActive) {
             if (normalSinkConfigured) runCatching { super.reset() }
             normalSinkConfigured = false
@@ -641,6 +698,7 @@ class UnifiedUsbAudioSink internal constructor(
             return
         }
         PlayLog.log("usb", "UnifiedUsbAudioSink reset")
+        usbPcmEq.reset()
         coarseController.onSeekOrFlush()
     }
 
@@ -673,6 +731,8 @@ class UnifiedUsbAudioSink internal constructor(
         normalSinkConfigured = false
         isUsbModeActive = false
         PlaybackCore.usbActive = false
+        pendingEqBuf = null
+        usbPcmEq.release()
         closeCoarseAndNotify()
         UnifiedUsbDacManager.instance?.onSinkFallback("Sink released")
         runCatching { super.release() }

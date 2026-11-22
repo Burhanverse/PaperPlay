@@ -35,15 +35,18 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 internal fun UsbAudioPage(backend: CoreBackend, stack: MutableList<String>? = null) {
     val bitPerfect by backend.bitPerfect.collectAsState()
     val bitPerfectStatus by backend.bitPerfectStatus.collectAsState()
+    val allowEqInUsb by backend.allowEqInUsbExclusive.collectAsState()
     val status by backend.usbExclusiveStatus.collectAsState()
     val devUnlocked by backend.devOptionsUnlocked.collectAsState()
     val sinkChain by backend.sinkChain.collectAsState()
 
     UsbAudioContent(
         exclusiveOn = bitPerfect,
+        allowEqInUsb = allowEqInUsb,
         status = status,
         bitPerfectStatus = bitPerfectStatus,
         onToggleExclusive = backend::setBitPerfect,
+        onToggleAllowEqInUsb = backend::setAllowEqInUsbExclusive,
         onRequestPermission = backend::requestUsbPermission,
         onOpenProbe = { stack?.add("usb_probe") },
         onRunPlaybackTest = backend::runUsbPlaybackTest,
@@ -60,6 +63,8 @@ internal fun UsbAudioContent(
     exclusiveOn: Boolean,
     status: UsbExclusiveStatus?,
     onToggleExclusive: (Boolean) -> Unit,
+    allowEqInUsb: Boolean = true,
+    onToggleAllowEqInUsb: ((Boolean) -> Unit)? = null,
     onRequestPermission: (() -> Unit)? = null,
     onOpenProbe: (() -> Unit)? = null,
     onRunPlaybackTest: (suspend () -> String)? = null,
@@ -80,8 +85,17 @@ internal fun UsbAudioContent(
             checked = exclusiveOn,
             onChange = onToggleExclusive,
             icon = io.max.paperplay.ui.components.TrueAudioIcon,
-            subtitle = "Streams eligible audio directly to your USB DAC without Android mixing, DSP, sample-rate conversion, or software volume scaling. Off by default."
+            subtitle = "Streams eligible audio directly to your USB DAC without Android mixing or sample-rate conversion. Off by default."
         )
+        if (onToggleAllowEqInUsb != null) {
+            SwitchRow(
+                title = "Allow EQ in USB Exclusive Mode",
+                checked = allowEqInUsb,
+                onChange = onToggleAllowEqInUsb,
+                icon = Icons.Rounded.GraphicEq,
+                subtitle = "Runs 31-band 64-bit EQ with TPDF dither at the track's native rate and bit depth while bypassing Android's mixer (reported as USB Direct + EQ). Turn off for strict bit-perfect EQ bypass."
+            )
+        }
 
         if (devOptionsUnlocked && onOpenProbe != null) {
             SettingsRow(
@@ -140,7 +154,10 @@ internal fun UsbAudioContent(
             is io.max.paperplay.player.BitPerfectStatus.Unsupported -> "Not supported: ${bp.reason}"
             is io.max.paperplay.player.BitPerfectStatus.PermissionRequired -> "USB permission required for ${bp.deviceName}"
             is io.max.paperplay.player.BitPerfectStatus.Standby -> bp.reason
-            is io.max.paperplay.player.BitPerfectStatus.Active -> "Bit-perfect active via ${bp.transportLabel}"
+            is io.max.paperplay.player.BitPerfectStatus.DirectWithEq ->
+                "USB Direct + EQ • ${formatSignalPathSpec(bp.sampleRateHz, bp.bitDepth)}"
+            is io.max.paperplay.player.BitPerfectStatus.Active ->
+                "USB Bit-Perfect • ${formatSignalPathSpec(bp.sampleRateHz, bp.bitDepth)}"
             io.max.paperplay.player.BitPerfectStatus.Off -> st?.statusReason ?: "Connect a USB audio DAC or dongle to stream bit-perfect audio."
         }
         if (st == null || !st.isConnected) {
@@ -155,16 +172,30 @@ internal fun UsbAudioContent(
             return@Column
         }
 
-        // Bit-perfect status banner
+        // Honest signal-path status banner (USB Bit-Perfect vs USB Direct + EQ vs Not bit-perfect)
         val isBitPerfect = st.isBitPerfect
-        val bannerBg = if (isBitPerfect) {
-            MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceContainerHigh
+        val directEqStatus = bitPerfectStatus as? io.max.paperplay.player.BitPerfectStatus.DirectWithEq
+        val fmtSpec = formatSignalPathSpec(st.activeRate ?: 0, st.activeBitDepth ?: 0)
+        val bannerBg = when {
+            isBitPerfect -> MaterialTheme.colorScheme.primaryContainer
+            directEqStatus != null -> MaterialTheme.colorScheme.secondaryContainer
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
-        val bannerIcon = if (isBitPerfect) Icons.Rounded.CheckCircle else Icons.Rounded.Info
-        val bannerTitle = if (isBitPerfect) "Bit-perfect active" else "Not bit-perfect"
-        val bannerTint = if (isBitPerfect) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+        val bannerIcon = when {
+            isBitPerfect -> Icons.Rounded.CheckCircle
+            directEqStatus != null -> Icons.Rounded.GraphicEq
+            else -> Icons.Rounded.Info
+        }
+        val bannerTitle = when {
+            isBitPerfect -> "USB Bit-Perfect • $fmtSpec"
+            directEqStatus != null -> "USB Direct + EQ • $fmtSpec"
+            else -> "Not bit-perfect"
+        }
+        val bannerTint = when {
+            isBitPerfect -> MaterialTheme.colorScheme.onPrimaryContainer
+            directEqStatus != null -> MaterialTheme.colorScheme.onSecondaryContainer
+            else -> MaterialTheme.colorScheme.onSurface
+        }
 
         Row(
             modifier = Modifier

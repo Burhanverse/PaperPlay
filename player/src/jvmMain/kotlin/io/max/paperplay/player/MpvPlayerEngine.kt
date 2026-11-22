@@ -53,6 +53,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     private var lastPos = -1L
 
     @Volatile private var eqGains: List<Float>? = null
+    @Volatile private var parametricEq: ParametricEqProfile? = null
+    @Volatile private var parametricEnabled: Boolean = false
     @Volatile private var bass = 0f
     @Volatile private var normalize = false
     @Volatile private var width = 1f
@@ -326,6 +328,11 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     }
 
     override fun setEqualizer(gainsDb: List<Float>?) { eqGains = gainsDb; cmd { applyFilters() } }
+    override fun setParametricEq(profile: ParametricEqProfile?, enabled: Boolean) {
+        parametricEq = profile
+        parametricEnabled = enabled
+        cmd { applyFilters() }
+    }
     override fun setBass(db: Float) { bass = db; cmd { applyFilters() } }
     override fun setNormalize(on: Boolean) { normalize = on; cmd { applyFilters() } }
     override fun setStereoWidth(width: Float) { this.width = width.coerceIn(0.5f, 1.6f); cmd { applyFilters() } }
@@ -344,10 +351,47 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         cmd { setProp("gapless-audio", if (on) "weak" else "yes"); setProp("audio-exclusive", if (on) "yes" else "no"); publishInfo() }
     }
 
+    private fun buildParametricAf(profile: ParametricEqProfile): String? {
+        if (!profile.hasActiveShaping()) return null
+        val parts = ArrayList<String>()
+        val effPreamp = NativeEqMath.evalResponse(48000, profile, floatArrayOf(1000f)).effectivePreampDb
+        if (abs(effPreamp) >= 0.05f) {
+            parts.add("volume=${"%.3f".format(java.util.Locale.ROOT, effPreamp)}dB")
+        }
+        for (raw in profile.bands.take(ParametricEqProfile.MAX_PEQ_BANDS)) {
+            val b = raw.clamped()
+            if (!b.enabled) continue
+            if (b.type.usesGain && abs(b.gainDb) < 0.05f) continue
+            val f = "%.2f".format(java.util.Locale.ROOT, b.freqHz)
+            val q = "%.3f".format(java.util.Locale.ROOT, b.q)
+            val g = "%.3f".format(java.util.Locale.ROOT, b.gainDb)
+            val filter = when (b.type) {
+                PeqFilterType.PK -> "equalizer=f=$f:t=q:w=$q:g=$g"
+                PeqFilterType.LSC -> "lowshelf=f=$f:t=q:w=$q:g=$g"
+                PeqFilterType.HSC -> "highshelf=f=$f:t=q:w=$q:g=$g"
+                PeqFilterType.LP -> "lowpass=f=$f:t=q:w=$q:p=2"
+                PeqFilterType.HP -> "highpass=f=$f:t=q:w=$q:p=2"
+                PeqFilterType.BP -> "bandpass=f=$f:t=q:w=$q"
+            }
+            parts.add(filter)
+        }
+        if (parts.isEmpty()) return null
+        if (profile.limiterEnabled) parts.add("alimiter=limit=0.944:attack=1:release=50:level=0")
+        return parts.joinToString(",")
+    }
+
     private fun applyFilters() {
-        val p = MpvFilters.plan(eqGains, bass)
-        val g = MpvFilters.graph(p, normalize, profile, width, crossfeed)
-        plan = p; graph = g
+        val peq = parametricEq
+        val peqActive = !exclusive && parametricEnabled && peq != null && peq.hasActiveShaping()
+        val g = if (peqActive && peq != null) {
+            plan = null
+            buildParametricAf(peq)
+        } else {
+            val p = MpvFilters.plan(eqGains, bass)
+            plan = p
+            MpvFilters.graph(p, normalize, profile, width, crossfeed)
+        }
+        graph = g
         val rc = lib.mpv_set_property_string(ctx, "af", MpvFilters.afValue(g))
         filterResult = rc; lastGraph = g
         if (rc < 0) PlayLog.log("mpv", "audio filters refused (${lib.mpv_error_string(rc)}): $g")
@@ -372,6 +416,10 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         // What mpv really has set, not what this class last asked for.
         val exclusiveNow = str("audio-exclusive") == "yes"
         val effects = buildList {
+            val peq = parametricEq
+            if (!exclusiveNow && parametricEnabled && peq != null && peq.hasActiveShaping()) {
+                add("Parametric EQ (${peq.bands.count { it.enabled }} bands)")
+            }
             val p = plan
             if (p != null && p.bands.any { abs(it) >= 0.05 }) add("Equalizer")
             if (p != null && p.bassDb >= 0.05) add("Bass +${"%.1f".format(java.util.Locale.ROOT, p.bassDb)} dB")
@@ -401,7 +449,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             lowTrimDb = plan?.lowTrimDb,
             highTrimDb = plan?.highTrimDb,
         )
-        _info.value = evaluated.outputInfo
+        val rawDevId = str("audio-device")?.takeIf { it.isNotBlank() } ?: "auto"
+        _info.value = evaluated.outputInfo.copy(deviceKey = "desktop:$rawDevId")
         _bitPerfectStatus.value = evaluated.status
     }
 

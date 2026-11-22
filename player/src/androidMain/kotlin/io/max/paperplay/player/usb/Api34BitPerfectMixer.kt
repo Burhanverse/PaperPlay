@@ -63,7 +63,8 @@ internal object Api34BitPerfectMixer {
             return null
         }
         lastDeviceName = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "USB DAC"
-        if (!isDspAndEffectsBypassed()) {
+        val allowEq = PlaybackCore.allowEqInUsbExclusive && hasOnlyPermittedDirectEq()
+        if (!isDspAndEffectsBypassed() && !allowEq) {
             lastVerification = Api34MixerVerification.Rejected(4, "DSP or effects active")
             return null
         }
@@ -106,13 +107,14 @@ internal object Api34BitPerfectMixer {
                         audioTrackEncoding = track.audioFormat,
                         audioTrackRateHz = track.sampleRate,
                         audioTrackChannels = track.channelCount,
+                        allowEqInDirectMixer = PlaybackCore.allowEqInUsbExclusive && hasOnlyPermittedDirectEq(),
                     ),
                 )
                 lastVerification = result
                 when (result) {
                     is Api34MixerVerification.Verified -> PlayLog.log(
                         "usb",
-                        "Api34BitPerfectMixer VERIFIED: ${result.sampleRateHz} Hz / ${result.bitDepth}-bit (enc=${result.encoding}) on ${lastDeviceName ?: "USB"}",
+                        "Api34BitPerfectMixer VERIFIED${if (result.eqActive) " (USB Direct + EQ)" else ""}: ${result.sampleRateHz} Hz / ${result.bitDepth}-bit (enc=${result.encoding}) on ${lastDeviceName ?: "USB"}",
                     )
                     is Api34MixerVerification.Rejected -> PlayLog.log(
                         "usb",
@@ -126,12 +128,20 @@ internal object Api34BitPerfectMixer {
         return DefaultAudioSink.Builder(appCtx)
             .setEnableFloatOutput(false)
             .setEnableAudioTrackPlaybackParams(enableAudioOutputPlaybackParams)
+            .setAudioProcessors(arrayOf(io.max.paperplay.player.TapProcessor(enableDirectPcmEq = true)))
             .setAudioTrackProvider(provider)
             .build()
     }
 
+    fun hasOnlyPermittedDirectEq(): Boolean {
+        if (PlaybackCore.bassDb >= 0.05f || PlaybackCore.correction != null || PlaybackCore.options != 0) return false
+        if (PlaybackCore.normalize || abs(PlaybackCore.speed - 1f) > 0.001f || abs(PlaybackCore.width - 1f) > 0.005f) return false
+        return true
+    }
+
     fun isDspAndEffectsBypassed(): Boolean {
-        if (PlaybackCore.engineActive) return false
+        if (PlaybackCore.engineActive || PlaybackCore.usbEqActive) return false
+        if (PlaybackCore.parametricEnabled && PlaybackCore.parametricEq?.hasActiveShaping() == true) return false
         if (PlaybackCore.eqGains?.any { abs(it) >= 0.05f } == true) return false
         if (PlaybackCore.bassDb >= 0.05f || PlaybackCore.correction != null || PlaybackCore.options != 0) return false
         if (PlaybackCore.normalize || abs(PlaybackCore.speed - 1f) > 0.001f || abs(PlaybackCore.width - 1f) > 0.005f) return false

@@ -21,6 +21,24 @@ actual object PlatformBitPerfectPrefs {
         BitPerfectPrefs.saveDesktop(store, mode)
     }
 
+    actual fun loadAllowEqInUsbExclusive(sqliteGet: ((String) -> String?)?, sqliteSet: ((String, String) -> Unit)?): Boolean {
+        val get = sqliteGet ?: return true
+        val store = object : PrefKeyValueStore {
+            override fun get(key: String): String? = get(key)
+            override fun set(key: String, value: String) { sqliteSet?.invoke(key, value) }
+        }
+        return BitPerfectPrefs.loadAllowEqInUsbExclusive(store)
+    }
+
+    actual fun saveAllowEqInUsbExclusive(allow: Boolean, sqliteSet: ((String, String) -> Unit)?) {
+        val set = sqliteSet ?: return
+        val store = object : PrefKeyValueStore {
+            override fun get(key: String): String? = null
+            override fun set(key: String, value: String) { set(key, value) }
+        }
+        BitPerfectPrefs.saveAllowEqInUsbExclusive(store, null, allow)
+    }
+
     actual fun syncFromRestoredPrefs(restoredPrefs: Map<String, String>) {
         // Desktop reads SQLite directly; resolveBackupRestore handles isolation on read.
     }

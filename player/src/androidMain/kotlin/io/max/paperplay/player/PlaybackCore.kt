@@ -31,6 +31,13 @@ internal object PlaybackCore {
     @Volatile var appContext: Context? = null
     @Volatile var upstream: DataSource.Factory? = null
     @Volatile var eqGains: List<Float>? = null
+    /** 31-band parametric EQ profile and master toggle; read lock-free on the audio sink thread. */
+    @Volatile var parametricEq: ParametricEqProfile? = null
+    @Volatile var parametricEnabled: Boolean = false
+    /** When true, 31-band parametric EQ runs in-place on USB Exclusive / API 34 Direct output without falling back to AudioFlinger. */
+    @Volatile var allowEqInUsbExclusive: Boolean = true
+    /** True while the Rust EQ is actively processing PCM on the USB Exclusive / Direct path (for honest UI reporting). */
+    @Volatile var usbEqActive: Boolean = false
     /** True while the Rust engine is in the audio path (set by the sink wrapper), so the output info tells the truth. */
     @Volatile var engineActive = false
     /** Extra bass in dB for the Rust engine, 0 when the equalizer is off. */
@@ -173,6 +180,7 @@ internal object PlaybackCore {
         devApi34MixerEnabled = sp.getBoolean("dev_api34_bitperfect_mixer", false)
         devUsbAdpfEnabled = sp.getBoolean(KEY_DEV_USB_ADPF, false)
         devUsbSilentKeepAliveEnabled = sp.getBoolean(KEY_DEV_USB_SILENT_KEEPALIVE, false)
+        allowEqInUsbExclusive = PlatformBitPerfectPrefs.loadAllowEqInUsbExclusive()
         loadPersistedUseUnifiedBitPerfect(context)
         if (useUnifiedBitPerfect) {
             val mode = PlatformBitPerfectPrefs.load()

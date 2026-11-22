@@ -55,6 +55,21 @@ pub const MAX_CORR: usize = 16;
 pub const CORR_PK: u8 = 0;
 pub const CORR_LSC: u8 = 1;
 pub const CORR_HSC: u8 = 2;
+/// Maximum number of parametric EQ bands (Poweramp 31-band parity).
+pub const MAX_PEQ_BANDS: usize = 31;
+/// Parametric EQ filter types.
+pub const PEQ_PK: u8 = 0;
+pub const PEQ_LSC: u8 = 1;
+pub const PEQ_HSC: u8 = 2;
+pub const PEQ_LP: u8 = 3;
+pub const PEQ_HP: u8 = 4;
+pub const PEQ_BP: u8 = 5;
+/// Parametric EQ per-band channel assignment.
+pub const PEQ_CH_STEREO: u8 = 0;
+pub const PEQ_CH_LEFT: u8 = 1;
+pub const PEQ_CH_RIGHT: u8 = 2;
+/// Parametric limiter ceiling: -0.5 dBFS.
+const PEQ_LIM_CEILING: f64 = 0.9440608762859234;
 /// Filters in the bass stage.
 const BASS_F: usize = 4;
 /// Time constant of the level trims.
@@ -150,12 +165,157 @@ fn high_pass(rate: f64, hz: f64) -> Coef {
 }
 
 /// RBJ low-pass, Q = 0.707.
-pub(crate) fn low_pass(rate: f64, hz: f64) -> Coef {
+pub(crate) fn low_pass(rate: f64, hz: f64) -> Coef { low_pass_q(rate, hz, std::f64::consts::FRAC_1_SQRT_2) }
+
+/// RBJ high-pass with custom Q.
+fn high_pass_q(rate: f64, hz: f64, q: f64) -> Coef {
     let w = 2.0 * PI * hz / rate;
     let (sw, cw) = (w.sin(), w.cos());
-    let alpha = sw / (2.0 * std::f64::consts::FRAC_1_SQRT_2);
+    let alpha = sw / (2.0 * q);
+    let a0 = 1.0 + alpha;
+    Coef { b0: (1.0 + cw) / 2.0 / a0, b1: -(1.0 + cw) / a0, b2: (1.0 + cw) / 2.0 / a0, a1: -2.0 * cw / a0, a2: (1.0 - alpha) / a0 }
+}
+
+/// RBJ low-pass with custom Q.
+fn low_pass_q(rate: f64, hz: f64, q: f64) -> Coef {
+    let w = 2.0 * PI * hz / rate;
+    let (sw, cw) = (w.sin(), w.cos());
+    let alpha = sw / (2.0 * q);
     let a0 = 1.0 + alpha;
     Coef { b0: (1.0 - cw) / 2.0 / a0, b1: (1.0 - cw) / a0, b2: (1.0 - cw) / 2.0 / a0, a1: -2.0 * cw / a0, a2: (1.0 - alpha) / a0 }
+}
+
+/// RBJ band-pass (constant 0 dB peak gain) with custom Q.
+fn band_pass_q(rate: f64, hz: f64, q: f64) -> Coef {
+    let w = 2.0 * PI * hz / rate;
+    let (sw, cw) = (w.sin(), w.cos());
+    let alpha = sw / (2.0 * q);
+    let a0 = 1.0 + alpha;
+    Coef { b0: alpha / a0, b1: 0.0, b2: -alpha / a0, a1: -2.0 * cw / a0, a2: (1.0 - alpha) / a0 }
+}
+
+/// Specification of one parametric EQ band.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PeqBand {
+    pub kind: u8,
+    pub channel: u8,
+    pub enabled: bool,
+    pub freq_hz: f64,
+    pub gain_db: f64,
+    pub q: f64,
+}
+
+/// Builds a double-precision RBJ biquad for a parametric band, clamping frequency to `[10, 0.49 * rate]`,
+/// Q to `[0.1, 20.0]`, and gain to `[-24, +24] dB`. Returns `None` when disabled or an exact identity filter.
+pub(crate) fn peq_coef(rate: f64, band: &PeqBand) -> Option<Coef> {
+    if !band.enabled || !band.freq_hz.is_finite() || !band.gain_db.is_finite() || !band.q.is_finite() {
+        return None;
+    }
+    let max_hz = (rate * 0.49).max(10.0);
+    let hz = band.freq_hz.clamp(10.0, max_hz);
+    let q = band.q.clamp(0.1, 20.0);
+    let db = band.gain_db.clamp(-24.0, 24.0);
+    match band.kind {
+        PEQ_PK => if db.abs() < 1e-4 { None } else { Some(peaking_q(rate, hz, db, q)) },
+        PEQ_LSC => if db.abs() < 1e-4 { None } else { Some(low_shelf_q(rate, hz, db, q)) },
+        PEQ_HSC => if db.abs() < 1e-4 { None } else { Some(high_shelf_q(rate, hz, db, q)) },
+        PEQ_LP => Some(low_pass_q(rate, hz, q)),
+        PEQ_HP => Some(high_pass_q(rate, hz, q)),
+        PEQ_BP => Some(band_pass_q(rate, hz, q)),
+        _ => if db.abs() < 1e-4 { None } else { Some(peaking_q(rate, hz, db, q)) },
+    }
+}
+
+/// Computes automatic headroom preamp (`-max(0.0, peak_gain_db)`) by scanning 256 log-spaced frequencies
+/// across `20 Hz .. 20 kHz` (clamped below Nyquist) on both Left and Right channels.
+pub fn compute_auto_preamp_db(rate: f64, bands: &[PeqBand]) -> f64 {
+    let rate = rate.max(8000.0);
+    let mut coefs = [Coef::default(); MAX_PEQ_BANDS];
+    let mut chans = [0u8; MAX_PEQ_BANDS];
+    let mut n = 0usize;
+    for b in bands.iter().take(MAX_PEQ_BANDS) {
+        if let Some(c) = peq_coef(rate, b) {
+            coefs[n] = c;
+            chans[n] = b.channel;
+            n += 1;
+        }
+    }
+    if n == 0 { return 0.0; }
+    let f_min = 20.0f64;
+    let f_max = 20000.0f64.min(rate * 0.49).max(f_min);
+    let steps = 256usize;
+    let ratio = (f_max / f_min).ln();
+    let mut peak = 0.0f64;
+    for i in 0..steps {
+        let hz = f_min * (ratio * (i as f64) / ((steps - 1) as f64)).exp();
+        let mut dl = 0.0f64;
+        let mut dr = 0.0f64;
+        for k in 0..n {
+            let m = mag_db(&coefs[k], rate, hz);
+            if m.is_finite() {
+                match chans[k] {
+                    PEQ_CH_LEFT => dl += m,
+                    PEQ_CH_RIGHT => dr += m,
+                    _ => { dl += m; dr += m; }
+                }
+            }
+        }
+        peak = peak.max(dl).max(dr);
+    }
+    -peak.max(0.0)
+}
+
+/// Evaluates the exact combined magnitude response (in dB, including manual + optional auto-preamp)
+/// of up to `MAX_PEQ_BANDS` parametric bands at every frequency in `freqs_hz`, writing into `out_db`.
+/// `channel`: `0` = stereo/average, `1` = Left, `2` = Right.
+/// Returns the effective preamp in dB (manual + auto).
+pub fn eval_parametric_response(
+    rate: f64,
+    preamp_db: f64,
+    auto_preamp: bool,
+    bands: &[PeqBand],
+    freqs_hz: &[f32],
+    out_db: &mut [f32],
+    channel: u8,
+) -> f32 {
+    let rate = rate.max(8000.0);
+    let manual = if preamp_db.is_finite() { preamp_db.clamp(-24.0, 24.0) } else { 0.0 };
+    let auto = if auto_preamp { compute_auto_preamp_db(rate, bands) } else { 0.0 };
+    let eff_preamp = manual + auto;
+    let mut coefs = [Coef::default(); MAX_PEQ_BANDS];
+    let mut chans = [0u8; MAX_PEQ_BANDS];
+    let mut n = 0usize;
+    for b in bands.iter().take(MAX_PEQ_BANDS) {
+        if let Some(c) = peq_coef(rate, b) {
+            coefs[n] = c;
+            chans[n] = b.channel;
+            n += 1;
+        }
+    }
+    let count = freqs_hz.len().min(out_db.len());
+    let max_hz = (rate * 0.499).max(10.0);
+    for i in 0..count {
+        let hz = (freqs_hz[i] as f64).clamp(1.0, max_hz);
+        let mut dl = eff_preamp;
+        let mut dr = eff_preamp;
+        for k in 0..n {
+            let m = mag_db(&coefs[k], rate, hz);
+            if m.is_finite() {
+                match chans[k] {
+                    PEQ_CH_LEFT => dl += m,
+                    PEQ_CH_RIGHT => dr += m,
+                    _ => { dl += m; dr += m; }
+                }
+            }
+        }
+        let val = match channel {
+            PEQ_CH_LEFT => dl,
+            PEQ_CH_RIGHT => dr,
+            _ => 0.5 * (dl + dr),
+        };
+        out_db[i] = val.clamp(-96.0, 48.0) as f32;
+    }
+    eff_preamp as f32
 }
 
 /// Magnitude of one biquad at `hz`, in dB.
@@ -239,7 +399,7 @@ struct Limiter {
     hold: usize,
     hold_left: usize,
     tp: Option<Box<TruePeak>>,
-    delay: Vec<f32>,
+    delay: Vec<f64>,
     dlen: usize,
     dpos: usize,
     want: [f64; LOOK],
@@ -288,9 +448,17 @@ impl Limiter {
 
     /// Replaces the first `ch` values of `frame` with the frame from `latency()` frames ago, limited.
     fn process(&mut self, frame: &mut [f32; MAX_CH], ch: usize) {
+        let mut f64_frame = [0f64; MAX_CH];
+        for c in 0..ch { f64_frame[c] = frame[c] as f64; }
+        self.process_f64(&mut f64_frame, ch);
+        for c in 0..ch { frame[c] = f64_frame[c] as f32; }
+    }
+
+    /// Full double-precision look-ahead peak limiting (zero f32 quantization for 24/32-bit PCM).
+    fn process_f64(&mut self, frame: &mut [f64; MAX_CH], ch: usize) {
         let peak = match self.tp.as_mut() {
-            Some(tp) => (0..ch).fold(0f64, |m, c| m.max(tp.push(c, frame[c] as f64))),
-            None => frame[..ch].iter().fold(0f64, |m, v| m.max((*v as f64).abs())),
+            Some(tp) => (0..ch).fold(0f64, |m, c| m.max(tp.push(c, frame[c]))),
+            None => frame[..ch].iter().fold(0f64, |m, v| m.max(v.abs())),
         };
         let pos = self.pos;
         self.want[pos] = if peak > self.limit { self.limit / peak } else { 1.0 };
@@ -308,7 +476,7 @@ impl Limiter {
             self.gain += (g1 - self.gain) * self.release;
         }
         self.gr_min = self.gr_min.min(self.gain);
-        let g = self.gain as f32;
+        let g = self.gain;
         let rd = (self.dpos + 1) % self.dlen;
         for c in 0..ch {
             let o = self.delay[rd * MAX_CH + c];
@@ -323,6 +491,22 @@ impl Limiter {
         let v = 20.0 * self.gr_min.max(1e-6).log10();
         self.gr_min = 1.0;
         v as f32
+    }
+
+    /// Transparent soft-clipping brickwall safeguard above `self.limit`, asymptotic to 0.999 (< 0 dBFS).
+    #[inline]
+    fn soft_clamp_f64(&self, frame: &mut [f64; MAX_CH], ch: usize) {
+        let thr = self.limit;
+        let span = 0.999 - thr;
+        if span <= 0.0 { return; }
+        for c in 0..ch {
+            let x = frame[c];
+            let ax = x.abs();
+            if ax > thr {
+                let y = thr + span * ((ax - thr) / span).tanh();
+                frame[c] = y.copysign(x);
+            }
+        }
     }
 }
 
@@ -340,6 +524,13 @@ struct Chain {
     corr_state: [[State; MAX_CORR]; MAX_CH],
     /// Share of the bass stage mixed in (dynamic bass); 1 = all of it.
     bass_mix: f64,
+    /// 31-band parametric EQ stage (fixed-size arrays, zero allocations).
+    peq_on: bool,
+    peq_preamp_lin: f64,
+    peq_coefs: [Coef; MAX_PEQ_BANDS],
+    peq_ch: [u8; MAX_PEQ_BANDS],
+    peq_n: usize,
+    peq_state: [[State; MAX_PEQ_BANDS]; MAX_CH],
 }
 
 impl Chain {
@@ -355,6 +546,12 @@ impl Chain {
             corr_n: 0,
             corr_state: [[State::default(); MAX_CORR]; MAX_CH],
             bass_mix: 1.0,
+            peq_on: false,
+            peq_preamp_lin: 1.0,
+            peq_coefs: [Coef::default(); MAX_PEQ_BANDS],
+            peq_ch: [PEQ_CH_STEREO; MAX_PEQ_BANDS],
+            peq_n: 0,
+            peq_state: [[State::default(); MAX_PEQ_BANDS]; MAX_CH],
         }
     }
 
@@ -368,6 +565,15 @@ impl Chain {
             for b in 0..BASS_F { x = biquad(&self.bass[b], &mut self.bass_state[c][b], x); }
             if self.bass_mix < 1.0 { x = dry + (x - dry) * self.bass_mix; }
         }
+        if self.peq_on {
+            x *= self.peq_preamp_lin;
+            for b in 0..self.peq_n {
+                let mask = self.peq_ch[b];
+                if mask == PEQ_CH_STEREO || (mask == PEQ_CH_LEFT && c == 0) || (mask == PEQ_CH_RIGHT && c == 1) {
+                    x = biquad(&self.peq_coefs[b], &mut self.peq_state[c][b], x);
+                }
+            }
+        }
         x
     }
 
@@ -375,6 +581,7 @@ impl Chain {
         self.state = [[State::default(); N]; MAX_CH];
         self.bass_state = [[State::default(); BASS_F]; MAX_CH];
         self.corr_state = [[State::default(); MAX_CORR]; MAX_CH];
+        self.peq_state = [[State::default(); MAX_PEQ_BANDS]; MAX_CH];
     }
 }
 
@@ -408,6 +615,16 @@ pub struct Eq {
     lim_low: Limiter,
     lim_high: Limiter,
     lim_out: Limiter,
+    /// Transparent parametric EQ output limiter (-0.5 dBFS ceiling, 1 ms look-ahead attack, 50 ms release).
+    lim_peq: Limiter,
+    /// 31-band parametric EQ configuration.
+    peq_enabled: bool,
+    peq_preamp_db: f64,
+    peq_auto_preamp: bool,
+    peq_eff_preamp_db: f64,
+    peq_limiter_enabled: bool,
+    peq_bands: [PeqBand; MAX_PEQ_BANDS],
+    peq_band_count: usize,
     /// Whether the processed path is running, and whether it should; `m` fades the output across a switch.
     on: bool,
     want_on: bool,
@@ -417,9 +634,11 @@ pub struct Eq {
     dry: bool,
     ab: f64,
     ab_step: f64,
-    dry_delay: Vec<f32>,
+    dry_delay: Vec<f64>,
     dry_len: usize,
     dry_pos: usize,
+    /// Lock-free xorshift64* PRNG state for 1-LSB TPDF dithering when packing integer PCM.
+    dither_state: u64,
     // Loudness of input and output (approximate K-weighting), for the A/B level match.
     kw: [Coef; 2],
     kw_in: [[State; 2]; MAX_CH],
@@ -435,6 +654,7 @@ impl Eq {
         let lim_low = Limiter::new(rate, CEILING_LOW, 35.0, 200.0, false);
         let lim_high = Limiter::new(rate, CEILING, 5.0, 120.0, false);
         let lim_out = Limiter::new(rate, CEILING, 35.0, 200.0, true);
+        let lim_peq = Limiter::new(rate, PEQ_LIM_CEILING, 2.0, 50.0, false);
         let dry_len = lim_low.latency() + lim_out.latency() + 1;
         let frames = |ms: f64| (ms * 0.001 * rate).max(1.0);
         Eq {
@@ -465,6 +685,14 @@ impl Eq {
             lim_low,
             lim_high,
             lim_out,
+            lim_peq,
+            peq_enabled: false,
+            peq_preamp_db: 0.0,
+            peq_auto_preamp: false,
+            peq_eff_preamp_db: 0.0,
+            peq_limiter_enabled: true,
+            peq_bands: [PeqBand::default(); MAX_PEQ_BANDS],
+            peq_band_count: 0,
             on: false,
             want_on: false,
             m: 1.0,
@@ -475,6 +703,7 @@ impl Eq {
             dry_delay: vec![0.0; dry_len * MAX_CH],
             dry_len,
             dry_pos: 0,
+            dither_state: 0x9E37_79B9_7F4A_7C15u64,
             kw: [high_shelf(rate, 1500.0, 4.0), high_pass(rate, 40.0)],
             kw_in: [[State::default(); 2]; MAX_CH],
             kw_out: [[State::default(); 2]; MAX_CH],
@@ -484,13 +713,103 @@ impl Eq {
         }
     }
 
-    /// Combined response of the current filters at `hz`, in dB (without the level trims).
-    pub fn response_db(&self, hz: f64) -> f64 {
+    /// Combined response of only the legacy 10-band, Bass, and earphone correction filters at `hz`, in dB.
+    /// Excludes the 31-band parametric EQ, which manages its own manual/auto preamp and headroom.
+    fn legacy_response_db(&self, hz: f64) -> f64 {
         let ch = &self.chain;
         let bands: f64 = (0..N).filter(|&i| ch.active[i]).map(|i| mag_db(&ch.coefs[i], self.rate, hz)).sum();
         let bass: f64 = if ch.bass_on { ch.bass.iter().map(|k| mag_db(k, self.rate, hz)).sum() } else { 0.0 };
         let corr: f64 = ch.corr[..ch.corr_n].iter().map(|k| mag_db(k, self.rate, hz)).sum();
         bands + bass + corr
+    }
+
+    /// Combined response of the current filters at `hz`, in dB (without the level trims).
+    pub fn response_db(&self, hz: f64) -> f64 {
+        let ch = &self.chain;
+        let peq: f64 = if ch.peq_on {
+            self.peq_eff_preamp_db + ch.peq_coefs[..ch.peq_n].iter().map(|k| mag_db(k, self.rate, hz)).sum::<f64>()
+        } else {
+            0.0
+        };
+        self.legacy_response_db(hz) + peq
+    }
+
+    /// Configures the 31-band parametric EQ stage. Parameter updates crossfade smoothly over `FADE_MS`
+    /// with zero heap allocations.
+    pub fn set_parametric(
+        &mut self,
+        enabled: bool,
+        preamp_db: f32,
+        auto_preamp: bool,
+        limiter_enabled: bool,
+        bands: &[PeqBand],
+    ) {
+        self.begin_fade();
+        self.peq_enabled = enabled;
+        self.peq_preamp_db = if preamp_db.is_finite() { (preamp_db as f64).clamp(-24.0, 24.0) } else { 0.0 };
+        self.peq_auto_preamp = auto_preamp;
+        self.peq_limiter_enabled = limiter_enabled;
+        let count = bands.len().min(MAX_PEQ_BANDS);
+        self.peq_band_count = count;
+        for i in 0..count {
+            self.peq_bands[i] = bands[i];
+        }
+        for i in count..MAX_PEQ_BANDS {
+            self.peq_bands[i] = PeqBand::default();
+        }
+        let mut active_n = 0usize;
+        if enabled {
+            for b in self.peq_bands[..count].iter() {
+                if let Some(c) = peq_coef(self.rate, b) {
+                    self.chain.peq_coefs[active_n] = c;
+                    self.chain.peq_ch[active_n] = b.channel;
+                    active_n += 1;
+                }
+            }
+        }
+        if active_n != self.chain.peq_n {
+            self.chain.peq_state = [[State::default(); MAX_PEQ_BANDS]; MAX_CH];
+        }
+        self.chain.peq_n = active_n;
+        let auto = if enabled && auto_preamp && active_n > 0 {
+            compute_auto_preamp_db(self.rate, &self.peq_bands[..count])
+        } else {
+            0.0
+        };
+        let eff_preamp = if enabled { self.peq_preamp_db + auto } else { 0.0 };
+        self.peq_eff_preamp_db = eff_preamp;
+        let peq_active = enabled && (active_n > 0 || eff_preamp.abs() >= 0.01);
+        self.chain.peq_on = peq_active;
+        self.chain.peq_preamp_lin = if peq_active { 10f64.powf(eff_preamp / 20.0) } else { 1.0 };
+        self.refresh();
+    }
+
+    /// Evaluates the current parametric EQ's exact magnitude response at `freqs_hz` into `out_db`.
+    pub fn eval_eq_response(&self, freqs_hz: &[f32], out_db: &mut [f32]) -> f32 {
+        if !self.peq_enabled {
+            for v in out_db.iter_mut().take(freqs_hz.len()) { *v = 0.0; }
+            return 0.0;
+        }
+        eval_parametric_response(
+            self.rate,
+            self.peq_preamp_db,
+            self.peq_auto_preamp,
+            &self.peq_bands[..self.peq_band_count],
+            freqs_hz,
+            out_db,
+            PEQ_CH_STEREO,
+        )
+    }
+
+    /// Returns whether the engine should bypass the legacy 180 Hz split/trim stage and run the
+    /// direct high-precision parametric EQ + optional -0.5 dBFS limiter path.
+    #[inline]
+    fn pure_peq_mode(&self) -> bool {
+        self.chain.peq_on
+            && !self.bands_on
+            && !self.chain.bass_on
+            && self.chain.corr_n == 0
+            && !(self.channels == 2 && (self.width - 1.0).abs() > 0.005)
     }
 
     /// Keeps the current filters running as the old set, faded out over `FADE_MS` while the new set fades in.
@@ -565,15 +884,24 @@ impl Eq {
     }
 
     fn refresh(&mut self) {
-        self.want_on = self.bands_on || self.chain.bass_on || self.chain.corr_n > 0 || self.opts & OPT_DE_ESSER != 0
-            || (self.channels == 2 && self.opts & OPT_CROSSFEED != 0) || (self.channels == 2 && (self.width - 1.0).abs() > 0.005);
+        self.want_on = self.bands_on || self.chain.bass_on || self.chain.corr_n > 0 || self.chain.peq_on
+            || self.opts & OPT_DE_ESSER != 0
+            || (self.channels == 2 && self.opts & OPT_CROSSFEED != 0)
+            || (self.channels == 2 && (self.width - 1.0).abs() > 0.005);
         if !self.want_on { return; }
+        if self.pure_peq_mode() {
+            // Parametric EQ manages its own manual/auto preamp and optional -0.5 dBFS output limiter.
+            self.gain_low = 1.0;
+            self.gain_high = 1.0;
+            self.peak_db = -compute_auto_preamp_db(self.rate, &self.peq_bands[..self.peq_band_count]);
+            return;
+        }
         // Peak of the response below and above the split, separately: each half is trimmed only for its own boost.
         let top = self.rate * 0.45;
         let (mut pl, mut ph) = (0f64, 0f64);
         let mut f = 20.0;
         while f < top.min(20000.0) {
-            let r = self.response_db(f);
+            let r = self.legacy_response_db(f);
             // The band around the split belongs to the low half's limiter; only boosts well above it trim the highs.
             if f < HIGH_FROM_HZ { pl = pl.max(r); } else { ph = ph.max(r); }
             f *= 1.04;
@@ -652,49 +980,142 @@ impl Eq {
         self.cur_width = self.width;
     }
 
-    /// In place, interleaved. While the equalizer is on the output is delayed by the limiters' look-ahead (about 2 ms).
-    pub fn process(&mut self, buf: &mut [f32]) {
-        if !self.on && !self.want_on && self.m >= 1.0 { return; }
-        let ch = self.channels;
-        for frame in buf.chunks_exact_mut(ch) {
-            if self.on != self.want_on {
-                self.m -= self.switch_step;
-                if self.m <= 0.0 {
-                    self.m = 0.0;
-                    self.on = self.want_on;
-                    if self.on { self.start(); }
-                }
-            } else if self.m < 1.0 {
-                self.m = (self.m + self.switch_step).min(1.0);
-            }
-            if !self.on {
-                if self.m < 1.0 { for v in frame.iter_mut() { *v = (*v as f64 * self.m) as f32; } }
-                continue;
-            }
+    /// Dynamically reconfigures sample rate and channel count on track/USB rate switches
+    /// (e.g. 44.1 kHz -> 192 kHz / 384 kHz): recomputes all parametric biquad coefficients with
+    /// Nyquist clamping (`0.49 * rate`), refreshes rate-dependent time constants, and cleanly resets
+    /// filter delay states so no transient burst or DC thump occurs across the rate boundary.
+    pub fn reconfigure(&mut self, rate: u32, channels: u32) {
+        let new_rate = rate.max(8000) as f64;
+        let new_ch = (channels as usize).clamp(1, MAX_CH);
+        let frames = |ms: f64| (ms * 0.001 * new_rate).max(1.0);
+        self.rate = new_rate;
+        self.channels = new_ch;
+        self.fade = 0;
+        self.fade_len = frames(FADE_MS) as usize;
+        self.trim_k = 1.0 - (-1.0 / frames(TRIM_MS)).exp();
+        self.switch_step = 1.0 / frames(SWITCH_MS);
+        self.ab_step = 1.0 / frames(FADE_MS);
+        self.p_k = 1.0 - (-1.0 / (MATCH_S * new_rate)).exp();
+        self.xo_lp = low_pass(new_rate, CROSSOVER_HZ);
+        self.xo_hp = high_pass(new_rate, CROSSOVER_HZ);
+        self.kw = [high_shelf(new_rate, 1500.0, 4.0), high_pass(new_rate, 40.0)];
+        self.dyn_bass = DynBass::new(new_rate);
+        self.de_esser = DeEsser::new(new_rate);
+        self.crossfeed = Crossfeed::new(new_rate);
+        self.lim_low = Limiter::new(new_rate, CEILING_LOW, 35.0, 200.0, false);
+        self.lim_high = Limiter::new(new_rate, CEILING, 5.0, 120.0, false);
+        self.lim_out = Limiter::new(new_rate, CEILING, 35.0, 200.0, true);
+        self.lim_peq = Limiter::new(new_rate, PEQ_LIM_CEILING, 2.0, 50.0, false);
 
-            self.cur_low += (self.gain_low - self.cur_low) * self.trim_k;
-            self.cur_high += (self.gain_high - self.cur_high) * self.trim_k;
-            let a = if self.fade > 0 { self.fade -= 1; 1.0 - self.fade as f64 / self.fade_len as f64 } else { 1.0 };
+        // Recompute parametric EQ coefficients & auto-preamp for the new sample rate.
+        let count = self.peq_band_count;
+        let mut active_n = 0usize;
+        if self.peq_enabled {
+            for b in self.peq_bands[..count].iter() {
+                if let Some(c) = peq_coef(self.rate, b) {
+                    self.chain.peq_coefs[active_n] = c;
+                    self.chain.peq_ch[active_n] = b.channel;
+                    active_n += 1;
+                }
+            }
+        }
+        self.chain.peq_n = active_n;
+        let auto = if self.peq_enabled && self.peq_auto_preamp && active_n > 0 {
+            compute_auto_preamp_db(self.rate, &self.peq_bands[..count])
+        } else {
+            0.0
+        };
+        let eff_preamp = if self.peq_enabled { self.peq_preamp_db + auto } else { 0.0 };
+        self.peq_eff_preamp_db = eff_preamp;
+        let peq_active = self.peq_enabled && (active_n > 0 || eff_preamp.abs() >= 0.01);
+        self.chain.peq_on = peq_active;
+        self.chain.peq_preamp_lin = if peq_active { 10f64.powf(eff_preamp / 20.0) } else { 1.0 };
+
+        self.refresh();
+        self.reset();
+        self.on = self.want_on;
+        self.m = 1.0;
+        self.cur_low = self.gain_low;
+        self.cur_high = self.gain_high;
+        self.cur_width = self.width;
+    }
+
+    /// Returns true when the engine is actively shaping audio (not in bit-exact bypass).
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.on || self.want_on || self.m < 1.0
+    }
+
+    /// Generates 1-LSB peak-to-peak TPDF dither in `(-1.0, 1.0)` via lock-free `xorshift64*`.
+    #[inline]
+    fn tpdf_lsb(&mut self) -> f64 {
+        let mut x = self.dither_state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.dither_state = x;
+        let r = x.wrapping_mul(0x2545_F491_4F6C_DD1Du64);
+        let u1 = (r & 0xFFFF_FFFF) as f64 * (1.0 / 4294967296.0);
+        let u2 = (r >> 32) as f64 * (1.0 / 4294967296.0);
+        u1 - u2
+    }
+
+    /// Processes a single interleaved frame in full `f64` precision (zero heap allocations).
+    #[inline]
+    fn process_frame_f64(&mut self, frame: &mut [f64; MAX_CH]) {
+        let ch = self.channels;
+        if self.on != self.want_on {
+            self.m -= self.switch_step;
+            if self.m <= 0.0 {
+                self.m = 0.0;
+                self.on = self.want_on;
+                if self.on { self.start(); }
+            }
+        } else if self.m < 1.0 {
+            self.m = (self.m + self.switch_step).min(1.0);
+        }
+        if !self.on {
+            if self.m < 1.0 {
+                for c in 0..ch { frame[c] *= self.m; }
+            }
+            return;
+        }
+
+        self.cur_low += (self.gain_low - self.cur_low) * self.trim_k;
+        self.cur_high += (self.gain_high - self.cur_high) * self.trim_k;
+        let a = if self.fade > 0 { self.fade -= 1; 1.0 - self.fade as f64 / self.fade_len as f64 } else { 1.0 };
+        let mut p_in = 0.0;
+        if self.opts & OPT_DYNAMIC_BASS != 0 && self.chain.bass_on {
+            let mono = frame[..ch].iter().sum::<f64>() / ch as f64;
+            let mix = self.dyn_bass.mix(mono, self.bass_db);
+            self.chain.bass_mix = mix;
+            self.old.bass_mix = mix;
+        }
+        let mut vs = [0f64; MAX_CH];
+        for c in 0..ch {
+            let x = frame[c];
+            let w = kweight(&self.kw, &mut self.kw_in[c], x);
+            p_in += w * w;
+            let mut v = self.chain.run(c, x);
+            if a < 1.0 { v = a * v + (1.0 - a) * self.old.run(c, x); }
+            vs[c] = v;
+        }
+        if self.opts & OPT_DE_ESSER != 0 { self.de_esser.process(&mut vs, ch); }
+        if ch == 2 && self.opts & OPT_CROSSFEED != 0 { self.crossfeed.process(&mut vs); }
+
+        let mut sum = [0f64; MAX_CH];
+        let dry_lat = if self.pure_peq_mode() {
+            for c in 0..ch { sum[c] = vs[c]; }
+            if self.peq_limiter_enabled {
+                self.lim_peq.process_f64(&mut sum, ch);
+                self.lim_peq.soft_clamp_f64(&mut sum, ch);
+                self.lim_peq.latency()
+            } else {
+                0
+            }
+        } else {
             let mut low = [0f32; MAX_CH];
             let mut high = [0f32; MAX_CH];
-            let mut p_in = 0.0;
-            if self.opts & OPT_DYNAMIC_BASS != 0 && self.chain.bass_on {
-                let mono = frame.iter().map(|v| *v as f64).sum::<f64>() / ch as f64;
-                let mix = self.dyn_bass.mix(mono, self.bass_db);
-                self.chain.bass_mix = mix;
-                self.old.bass_mix = mix;
-            }
-            let mut vs = [0f64; MAX_CH];
-            for c in 0..ch {
-                let x = frame[c] as f64;
-                let w = kweight(&self.kw, &mut self.kw_in[c], x);
-                p_in += w * w;
-                let mut v = self.chain.run(c, x);
-                if a < 1.0 { v = a * v + (1.0 - a) * self.old.run(c, x); }
-                vs[c] = v;
-            }
-            if self.opts & OPT_DE_ESSER != 0 { self.de_esser.process(&mut vs, ch); }
-            if ch == 2 && self.opts & OPT_CROSSFEED != 0 { self.crossfeed.process(&mut vs); }
             for c in 0..ch {
                 let v = vs[c];
                 let l1 = biquad(&self.xo_lp, &mut self.xo_state[c][0], v);
@@ -715,41 +1136,155 @@ impl Eq {
             }
             self.lim_low.process(&mut low, ch);
             self.lim_high.process(&mut high, ch);
-            let mut sum = [0f32; MAX_CH];
-            for c in 0..ch { sum[c] = low[c] + high[c]; }
-            self.lim_out.process(&mut sum, ch);
+            let mut sum32 = [0f32; MAX_CH];
+            for c in 0..ch { sum32[c] = low[c] + high[c]; }
+            self.lim_out.process(&mut sum32, ch);
+            for c in 0..ch { sum[c] = sum32[c] as f64; }
+            self.dry_len - 1
+        };
 
-            let mut p_out = 0.0;
-            for c in 0..ch {
-                let w = kweight(&self.kw, &mut self.kw_out[c], sum[c] as f64);
-                p_out += w * w;
-            }
-            self.p_in += (p_in - self.p_in) * self.p_k;
-            self.p_out += (p_out - self.p_out) * self.p_k;
-
-            let rd = (self.dry_pos + 1) % self.dry_len;
-            let target = if self.dry { 1.0 } else { 0.0 };
-            if self.ab < target { self.ab = (self.ab + self.ab_step).min(1.0); } else if self.ab > target { self.ab = (self.ab - self.ab_step).max(0.0); }
-            let g = if self.ab > 0.0 { self.match_gain() } else { 1.0 };
-            for c in 0..ch {
-                let d = self.dry_delay[rd * MAX_CH + c] as f64;
-                self.dry_delay[self.dry_pos * MAX_CH + c] = frame[c];
-                let mut y = sum[c] as f64;
-                if self.ab > 0.0 { y = y * (1.0 - self.ab) + d * g * self.ab; }
-                if self.m < 1.0 { y *= self.m; }
-                frame[c] = y as f32;
-            }
-            self.dry_pos = rd;
+        let mut p_out = 0.0;
+        for c in 0..ch {
+            let w = kweight(&self.kw, &mut self.kw_out[c], sum[c]);
+            p_out += w * w;
         }
+        self.p_in += (p_in - self.p_in) * self.p_k;
+        self.p_out += (p_out - self.p_out) * self.p_k;
+
+        let next_pos = (self.dry_pos + 1) % self.dry_len;
+        let rd = if dry_lat == 0 { self.dry_pos } else { (self.dry_pos + self.dry_len - dry_lat.min(self.dry_len - 1)) % self.dry_len };
+        let target = if self.dry { 1.0 } else { 0.0 };
+        if self.ab < target { self.ab = (self.ab + self.ab_step).min(1.0); } else if self.ab > target { self.ab = (self.ab - self.ab_step).max(0.0); }
+        let g = if self.ab > 0.0 { self.match_gain() } else { 1.0 };
+        for c in 0..ch {
+            let d = if dry_lat == 0 { frame[c] } else { self.dry_delay[rd * MAX_CH + c] };
+            self.dry_delay[self.dry_pos * MAX_CH + c] = frame[c];
+            let mut y = sum[c];
+            if self.ab > 0.0 { y = y * (1.0 - self.ab) + d * g * self.ab; }
+            if self.m < 1.0 { y *= self.m; }
+            frame[c] = y;
+        }
+        self.dry_pos = next_pos;
+    }
+
+    /// In place, interleaved `f32`. While the equalizer is on the output is delayed by the limiters' look-ahead (about 1-2 ms).
+    pub fn process(&mut self, buf: &mut [f32]) {
+        if !self.on && !self.want_on && self.m >= 1.0 { return; }
+        let ch = self.channels;
+        for frame in buf.chunks_exact_mut(ch) {
+            let mut f = [0f64; MAX_CH];
+            for c in 0..ch { f[c] = frame[c] as f64; }
+            self.process_frame_f64(&mut f);
+            for c in 0..ch { frame[c] = f[c] as f32; }
+        }
+    }
+
+    /// In-place multi-format PCM processing for USB Exclusive & API 34 Direct Mixer paths.
+    /// `kind`: `0` = PCM_16BIT (LE i16), `1` = PCM_24BIT (3-byte packed LE signed), `2` = PCM_32BIT (LE i32), `3` = PCM_FLOAT (native f32).
+    /// Applies full `f64` processing + 1-LSB TPDF dither when packing 16-bit or 24-bit integer PCM.
+    /// When bypassed (`!is_active()`), leaves `buf` byte-for-byte untouched (zero copies, zero dithering).
+    /// Returns the number of samples processed.
+    pub fn process_pcm_in_place(&mut self, buf: &mut [u8], kind: i32) -> usize {
+        let step = crate::pcm_bytes(kind);
+        if step == 0 { return 0; }
+        let ch = self.channels;
+        let frame_bytes = step * ch;
+        let n_frames = buf.len() / frame_bytes;
+        if n_frames == 0 { return 0; }
+        if !self.is_active() {
+            return n_frames * ch;
+        }
+        for frame_slice in buf[..n_frames * frame_bytes].chunks_exact_mut(frame_bytes) {
+            let mut f = [0f64; MAX_CH];
+            match kind {
+                crate::PCM_16 => {
+                    for c in 0..ch {
+                        let o = c * 2;
+                        f[c] = i16::from_le_bytes([frame_slice[o], frame_slice[o + 1]]) as f64 * (1.0 / 32768.0);
+                    }
+                }
+                crate::PCM_24 => {
+                    for c in 0..ch {
+                        let o = c * 3;
+                        let s24 = i32::from_le_bytes([0, frame_slice[o], frame_slice[o + 1], frame_slice[o + 2]]) >> 8;
+                        f[c] = s24 as f64 * (1.0 / 8388608.0);
+                    }
+                }
+                crate::PCM_32 => {
+                    for c in 0..ch {
+                        let o = c * 4;
+                        let s32 = i32::from_le_bytes([frame_slice[o], frame_slice[o + 1], frame_slice[o + 2], frame_slice[o + 3]]);
+                        f[c] = s32 as f64 * (1.0 / 2147483648.0);
+                    }
+                }
+                _ => {
+                    for c in 0..ch {
+                        let o = c * 4;
+                        f[c] = f32::from_ne_bytes([frame_slice[o], frame_slice[o + 1], frame_slice[o + 2], frame_slice[o + 3]]) as f64;
+                    }
+                }
+            }
+
+            self.process_frame_f64(&mut f);
+
+            match kind {
+                crate::PCM_16 => {
+                    for c in 0..ch {
+                        let d = self.tpdf_lsb();
+                        let s = (f[c] * 32768.0 + d).round().clamp(-32768.0, 32767.0) as i16;
+                        let b = s.to_le_bytes();
+                        let o = c * 2;
+                        frame_slice[o] = b[0];
+                        frame_slice[o + 1] = b[1];
+                    }
+                }
+                crate::PCM_24 => {
+                    for c in 0..ch {
+                        let d = self.tpdf_lsb();
+                        let s = (f[c] * 8388608.0 + d).round().clamp(-8388608.0, 8388607.0) as i32;
+                        let b = s.to_le_bytes();
+                        let o = c * 3;
+                        frame_slice[o] = b[0];
+                        frame_slice[o + 1] = b[1];
+                        frame_slice[o + 2] = b[2];
+                    }
+                }
+                crate::PCM_32 => {
+                    for c in 0..ch {
+                        let s = (f[c] * 2147483648.0).round().clamp(-2147483648.0, 2147483647.0) as i32;
+                        let b = s.to_le_bytes();
+                        let o = c * 4;
+                        frame_slice[o] = b[0];
+                        frame_slice[o + 1] = b[1];
+                        frame_slice[o + 2] = b[2];
+                        frame_slice[o + 3] = b[3];
+                    }
+                }
+                _ => {
+                    for c in 0..ch {
+                        let b = (f[c] as f32).to_ne_bytes();
+                        let o = c * 4;
+                        frame_slice[o] = b[0];
+                        frame_slice[o + 1] = b[1];
+                        frame_slice[o + 2] = b[2];
+                        frame_slice[o + 3] = b[3];
+                    }
+                }
+            }
+        }
+        n_frames * ch
     }
 
     /// `[low-half level dB, high-half level dB, bass dB, bass-half limiter reduction dB, other limiter reduction dB,
     /// curve peak dB, A/B level match dB]`. The reductions are the deepest since the last call (0 or below).
     pub fn take_stats(&mut self) -> [f32; 7] {
         let gl = self.lim_low.take_gr_db();
-        let gh = self.lim_high.take_gr_db().min(self.lim_out.take_gr_db());
+        let gh = self.lim_high.take_gr_db().min(self.lim_out.take_gr_db()).min(self.lim_peq.take_gr_db());
         if !self.on { return [0.0, 0.0, 0.0, gl, gh, 0.0, 0.0]; }
         let db = |v: f64| (20.0 * v.log10()) as f32;
+        if self.pure_peq_mode() {
+            return [self.peq_eff_preamp_db as f32, self.peq_eff_preamp_db as f32, 0.0, 0.0, gh, self.peak_db as f32, db(self.match_gain())];
+        }
         [db(self.gain_low), db(self.gain_high), self.bass_db as f32, gl, gh, self.peak_db as f32, db(self.match_gain())]
     }
 
@@ -761,6 +1296,7 @@ impl Eq {
         self.lim_low.clear();
         self.lim_high.clear();
         self.lim_out.clear();
+        self.lim_peq.clear();
         self.dry_delay.iter_mut().for_each(|v| *v = 0.0);
         self.dry_pos = 0;
         self.kw_in = [[State::default(); 2]; MAX_CH];
@@ -1151,5 +1687,305 @@ mod tests {
         let mut a = sine(44100.0, 440.0, 0.5, 20000);
         e.process(&mut a);
         assert!(a.iter().all(|v| v.is_finite()));
+    }
+
+    // ---- Gate 1: 31-Band Parametric EQ Verification Tests ----
+
+    #[test]
+    fn peq_gate1_flat_response_is_identity() {
+        let mut e = Eq::new(48000, 2);
+        let flat_bands = [PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 0.0, q: 1.41 }; 31];
+        e.set_parametric(true, 0.0, true, true, &flat_bands);
+        let mut a = sine(48000.0, 1000.0, 0.5, 9600);
+        let b = a.clone();
+        e.process(&mut a);
+        let max_err = a.iter().zip(&b).map(|(x, y)| (*x as f64 - *y as f64).abs()).fold(0.0f64, f64::max);
+        assert!(max_err < 1e-6, "flat PEQ error {max_err} exceeds -120 dBFS");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn peq_gate1_biquad_accuracy() {
+        let rate = 48000.0;
+        let band = [PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 6.0, q: 1.41 }];
+        for (hz, tol) in [(1000.0, 0.1), (50.0, 0.2), (15000.0, 0.2)] {
+            let mut e = Eq::new(48000, 1);
+            e.set_parametric(true, 0.0, false, false, &band);
+            let mut buf = sine(rate, hz, 0.1, 96000);
+            e.process(&mut buf);
+            let got = db(amp_at(&buf[48000..], hz, rate) / 0.1);
+            let want = if (hz - 1000.0).abs() < 1.0 { 6.0 } else { 0.0 };
+            assert!((got - want).abs() < tol, "{hz} Hz: got {got:.4} dB, want {want:.4} ± {tol} dB");
+        }
+    }
+
+    #[test]
+    fn peq_gate1_stability_at_extreme_q_and_rates() {
+        for &rate in &[44100u32, 192000u32] {
+            let mut e = Eq::new(rate, 2);
+            let extreme = [PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 20.0, gain_db: 24.0, q: 20.0 }];
+            e.set_parametric(true, 0.0, true, true, &extreme);
+            let mut buf = vec![0f32; 100_000 * 2];
+            for i in 0..100_000 {
+                let s = (0.3 * (2.0 * PI * 20.0 * i as f64 / rate as f64).sin()) as f32;
+                buf[2 * i] = s;
+                buf[2 * i + 1] = s;
+            }
+            e.process(&mut buf);
+            assert!(buf.iter().all(|v| v.is_finite()), "non-finite sample at {rate} Hz");
+        }
+    }
+
+    #[test]
+    fn peq_gate1_limiter_prevents_clipping_at_plus18db() {
+        let rate = 48000.0;
+        let mut e = Eq::new(48000, 2);
+        let boost = [PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 18.0, q: 1.0 }];
+        e.set_parametric(true, 0.0, false, true, &boost);
+        let mut buf = vec![0f32; 48000 * 2];
+        for i in 0..48000 {
+            let s = (2.0 * PI * 1000.0 * i as f64 / rate).sin() as f32; // 0 dBFS sine
+            buf[2 * i] = s;
+            buf[2 * i + 1] = s;
+        }
+        e.process(&mut buf);
+        let peak = buf.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(peak <= 1.0 && buf.iter().all(|v| v.is_finite()), "output clipped at peak={peak}");
+        assert!(peak <= 0.9995, "peak {peak} too close to 0 dBFS");
+    }
+
+    #[test]
+    fn peq_gate1_eval_response_matches_sine_sweep() {
+        let rate = 48000.0;
+        let bands = [
+            PeqBand { kind: PEQ_LSC, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 105.0, gain_db: 4.5, q: 0.71 },
+            PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 500.0, gain_db: -3.0, q: 1.8 },
+            PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 3200.0, gain_db: 5.0, q: 2.2 },
+            PeqBand { kind: PEQ_HSC, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 9000.0, gain_db: -2.5, q: 0.71 },
+        ];
+        let test_freqs: [f32; 7] = [40.0, 105.0, 250.0, 500.0, 1000.0, 3200.0, 10000.0];
+        let mut predicted = [0f32; 7];
+        let mut eq_ref = Eq::new(48000, 1);
+        eq_ref.set_parametric(true, -1.5, true, false, &bands);
+        let eff_preamp = eq_ref.eval_eq_response(&test_freqs, &mut predicted);
+        assert!(eff_preamp < -1.5, "auto-preamp should reduce headroom, got {eff_preamp}");
+
+        for (idx, &hz) in test_freqs.iter().enumerate() {
+            let mut e = Eq::new(48000, 1);
+            e.set_parametric(true, -1.5, true, false, &bands);
+            let mut buf = sine(rate, hz as f64, 0.1, 96000);
+            e.process(&mut buf);
+            let measured = db(amp_at(&buf[48000..], hz as f64, rate) / 0.1);
+            assert!(
+                (measured - predicted[idx] as f64).abs() < 0.15,
+                "{hz} Hz: eval={:.3} dB vs sine-sweep={:.3} dB",
+                predicted[idx], measured
+            );
+        }
+    }
+
+    #[test]
+    fn peq_per_channel_routing_isolates_left_and_right() {
+        let rate = 48000.0;
+        let bands = [
+            PeqBand { kind: PEQ_PK, channel: PEQ_CH_LEFT, enabled: true, freq_hz: 1000.0, gain_db: 6.0, q: 1.41 },
+            PeqBand { kind: PEQ_PK, channel: PEQ_CH_RIGHT, enabled: true, freq_hz: 1000.0, gain_db: -6.0, q: 1.41 },
+        ];
+        let mut e = Eq::new(48000, 2);
+        e.set_parametric(true, 0.0, false, false, &bands);
+        let n = 96000;
+        let mut buf = vec![0f32; n * 2];
+        for i in 0..n {
+            let s = (0.1 * (2.0 * PI * 1000.0 * i as f64 / rate).sin()) as f32;
+            buf[2 * i] = s;
+            buf[2 * i + 1] = s;
+        }
+        e.process(&mut buf);
+        let left: Vec<f32> = buf.iter().skip(0).step_by(2).skip(n / 2).copied().collect();
+        let right: Vec<f32> = buf.iter().skip(1).step_by(2).skip(n / 2).copied().collect();
+        let l_db = db(amp_at(&left, 1000.0, rate) / 0.1);
+        let r_db = db(amp_at(&right, 1000.0, rate) / 0.1);
+        assert!((l_db - 6.0).abs() < 0.15, "left got {l_db} dB");
+        assert!((r_db + 6.0).abs() < 0.15, "right got {r_db} dB");
+    }
+
+    #[test]
+    fn peq_all_31_bands_and_lp_hp_bp_work() {
+        let rate = 48000.0;
+        let mut bands = [PeqBand::default(); 31];
+        for i in 0..28 {
+            bands[i] = PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 30.0 * 1.25f64.powi(i as i32), gain_db: 0.5, q: 4.0 };
+        }
+        bands[28] = PeqBand { kind: PEQ_HP, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 30.0, gain_db: 0.0, q: 0.707 };
+        bands[29] = PeqBand { kind: PEQ_LP, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 18000.0, gain_db: 0.0, q: 0.707 };
+        bands[30] = PeqBand { kind: PEQ_BP, channel: PEQ_CH_STEREO, enabled: false, freq_hz: 1000.0, gain_db: 0.0, q: 1.0 };
+        let mut e = Eq::new(48000, 2);
+        e.set_parametric(true, 0.0, true, true, &bands);
+        let mut buf = sine(rate, 1000.0, 0.3, 48000 * 2);
+        e.process(&mut buf);
+        assert!(buf.iter().all(|v| v.is_finite()));
+        // Also verify BP filter attenuates out-of-band frequencies
+        let bp = [PeqBand { kind: PEQ_BP, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 0.0, q: 2.0 }];
+        let mut out = [0f32; 3];
+        eval_parametric_response(rate, 0.0, false, &bp, &[100.0, 1000.0, 10000.0], &mut out, PEQ_CH_STEREO);
+        assert!(out[1].abs() < 0.1, "BP center should be ~0 dB, got {}", out[1]);
+        assert!(out[0] < -15.0 && out[2] < -15.0, "BP skirts should roll off: {:?}", out);
+    }
+
+    // ---- USB Exclusive High-Res Multi-Format PCM + TPDF Dither + Dynamic Rate Reconfigure Tests ----
+
+    fn encode_pcm(samples: &[f64], kind: i32) -> Vec<u8> {
+        let mut out = Vec::with_capacity(samples.len() * crate::pcm_bytes(kind));
+        for &s in samples {
+            match kind {
+                crate::PCM_16 => out.extend_from_slice(&((s * 32768.0).round().clamp(-32768.0, 32767.0) as i16).to_le_bytes()),
+                crate::PCM_24 => {
+                    let b = ((s * 8388608.0).round().clamp(-8388608.0, 8388607.0) as i32).to_le_bytes();
+                    out.extend_from_slice(&[b[0], b[1], b[2]]);
+                }
+                crate::PCM_32 => out.extend_from_slice(&((s * 2147483648.0).round().clamp(-2147483648.0, 2147483647.0) as i32).to_le_bytes()),
+                _ => out.extend_from_slice(&(s as f32).to_ne_bytes()),
+            }
+        }
+        out
+    }
+
+    fn decode_pcm_ch0(bytes: &[u8], kind: i32, channels: usize) -> Vec<f32> {
+        let step = crate::pcm_bytes(kind);
+        bytes.chunks_exact(step * channels).map(|frame| {
+            match kind {
+                crate::PCM_16 => i16::from_le_bytes([frame[0], frame[1]]) as f32 / 32768.0,
+                crate::PCM_24 => (i32::from_le_bytes([0, frame[0], frame[1], frame[2]]) >> 8) as f32 / 8388608.0,
+                crate::PCM_32 => i32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as f32 / 2147483648.0,
+                _ => f32::from_ne_bytes([frame[0], frame[1], frame[2], frame[3]]),
+            }
+        }).collect()
+    }
+
+    #[test]
+    fn usb_gate1_all_four_pcm_encodings_apply_plus6db_accurately() {
+        let rate = 96000.0;
+        let frames = 96000usize;
+        let band = [PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 6.0, q: 1.41 }];
+        let mut stereo = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let s = 0.1 * (2.0 * PI * 1000.0 * i as f64 / rate).sin();
+            stereo.push(s);
+            stereo.push(s);
+        }
+        for &kind in &[crate::PCM_16, crate::PCM_24, crate::PCM_32, crate::PCM_FLOAT] {
+            let mut e = Eq::new(96000, 2);
+            e.set_parametric(true, 0.0, false, false, &band);
+            let mut bytes = encode_pcm(&stereo, kind);
+            let processed = e.process_pcm_in_place(&mut bytes, kind);
+            assert_eq!(processed, frames * 2, "sample count mismatch for kind={kind}");
+            let ch0 = decode_pcm_ch0(&bytes, kind, 2);
+            let got = db(amp_at(&ch0[frames / 2..], 1000.0, rate) / 0.1);
+            assert!((got - 6.0).abs() < 0.15, "kind={kind}: got {got:.4} dB, expected 6.0 ± 0.15 dB");
+        }
+    }
+
+    #[test]
+    fn usb_gate1_high_sample_rates_44k_to_384k_match_gain() {
+        let bands = [
+            PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 6.0, q: 1.41 },
+            PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 10000.0, gain_db: -4.0, q: 2.0 },
+        ];
+        for &rate in &[44100u32, 96000u32, 192000u32, 384000u32] {
+            let frames = (rate as usize) / 2; // 0.5 s at each rate
+            for &(hz, want) in &[(1000.0, 6.0), (10000.0, -4.0)] {
+                let mut e = Eq::new(rate, 2);
+                e.set_parametric(true, 0.0, false, false, &bands);
+                let mut stereo = Vec::with_capacity(frames * 2);
+                for i in 0..frames {
+                    let s = 0.1 * (2.0 * PI * hz * i as f64 / rate as f64).sin();
+                    stereo.push(s);
+                    stereo.push(s);
+                }
+                let mut bytes = encode_pcm(&stereo, crate::PCM_24);
+                e.process_pcm_in_place(&mut bytes, crate::PCM_24);
+                let ch0 = decode_pcm_ch0(&bytes, crate::PCM_24, 2);
+                assert!(ch0.iter().all(|v| v.is_finite()), "non-finite at {rate} Hz");
+                let got = db(amp_at(&ch0[frames / 2..], hz, rate as f64) / 0.1);
+                assert!((got - want).abs() < 0.15, "{rate} Hz @ {hz} Hz: got {got:.4} dB, want {want:.4} ± 0.15 dB");
+            }
+        }
+    }
+
+    #[test]
+    fn usb_gate1_sample_rate_switch_44k_to_192k_resets_cleanly_without_spike() {
+        let band = [PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 6.0, q: 1.41 }];
+        let mut e = Eq::new(44100, 2);
+        e.set_parametric(true, 0.0, false, true, &band);
+
+        // Drive heavily at 44.1 kHz to charge all biquad delay lines.
+        let mut warm = Vec::with_capacity(22050 * 2);
+        for i in 0..22050 {
+            let s = 0.6 * (2.0 * PI * 1000.0 * i as f64 / 44100.0).sin();
+            warm.push(s); warm.push(s);
+        }
+        let mut warm_bytes = encode_pcm(&warm, crate::PCM_24);
+        e.process_pcm_in_place(&mut warm_bytes, crate::PCM_24);
+
+        // Mid-session switch to 192 kHz: first frames start from 0.0 silence -> must NOT spike!
+        e.reconfigure(192000, 2);
+        let frames = 96000usize;
+        let mut hi = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let s = if i < 64 { 0.0 } else { 0.1 * (2.0 * PI * 1000.0 * (i - 64) as f64 / 192000.0).sin() };
+            hi.push(s); hi.push(s);
+        }
+        let mut hi_bytes = encode_pcm(&hi, crate::PCM_24);
+        e.process_pcm_in_place(&mut hi_bytes, crate::PCM_24);
+        let ch0 = decode_pcm_ch0(&hi_bytes, crate::PCM_24, 2);
+        let first_peak = ch0[..64].iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(first_peak < 1e-4, "stale state spike after 44.1->192 kHz switch: {first_peak}");
+        let got = db(amp_at(&ch0[frames / 2..], 1000.0, 192000.0) / 0.1);
+        assert!((got - 6.0).abs() < 0.15, "post-reconfigure 192 kHz gain got {got:.4} dB");
+    }
+
+    #[test]
+    fn usb_gate1_bypass_is_byte_exact_across_all_four_encodings() {
+        let frames = 4096usize;
+        let mut stereo = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let s = 0.45 * (2.0 * PI * 733.0 * i as f64 / 96000.0).sin();
+            stereo.push(s);
+            stereo.push(-s * 0.7);
+        }
+        for &kind in &[crate::PCM_16, crate::PCM_24, crate::PCM_32, crate::PCM_FLOAT] {
+            let mut e = Eq::new(96000, 2);
+            e.set_parametric(false, -3.0, true, true, &[
+                PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 9.0, q: 1.41 },
+            ]);
+            let mut bytes = encode_pcm(&stereo, kind);
+            let orig = bytes.clone();
+            e.process_pcm_in_place(&mut bytes, kind);
+            assert_eq!(bytes, orig, "bypass modified bytes for kind={kind}");
+        }
+    }
+
+    #[test]
+    fn peq_boost_not_cancelled_by_legacy_bass_trim() {
+        let rate = 48000.0;
+        let frames = 48000usize;
+        let mut e = Eq::new(48000, 2);
+        // Simulate saved eq_bass = 3.0 together with Parametric EQ (+4 dB preamp +6 dB peak @ 1 kHz).
+        e.set_bass(3.0);
+        let band = [PeqBand { kind: PEQ_PK, channel: PEQ_CH_STEREO, enabled: true, freq_hz: 1000.0, gain_db: 6.0, q: 1.41 }];
+        e.set_parametric(true, 4.0, false, false, &band);
+
+        let amp = 0.05f64;
+        let mut buf = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let s = (amp * (2.0 * PI * 1000.0 * i as f64 / rate).sin()) as f32;
+            buf.push(s);
+            buf.push(s);
+        }
+        let in_rms = rms(&buf[frames..]);
+        e.process(&mut buf);
+        let out_rms = rms(&buf[frames..]);
+        let delta_db = db(out_rms / in_rms);
+        assert!(delta_db >= 8.5, "expected >= +8.5 dB net PEQ gain with bass=3.0, got {delta_db:.3} dB");
     }
 }

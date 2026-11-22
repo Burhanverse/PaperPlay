@@ -115,6 +115,7 @@ import io.max.paperplay.ui.theme.schemeFromSeed
 fun FullPlayer(
     state: PlaybackUiState, error: String?, backend: PlayerControls, actions: ListActions, onClose: () -> Unit, modifier: Modifier = Modifier,
     onOpenSettings: ((String) -> Unit)? = null,
+    onOpenEq: (() -> Unit)? = null,
 ) {
     val song = state.current ?: return
     val base = MaterialTheme.colorScheme
@@ -152,7 +153,7 @@ fun FullPlayer(
                                 AppIcon(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, if (fullscreen) "Exit full screen" else "Full screen", Modifier.size(28.dp))
                             }
                         }
-                        PlayerBody(song, state, error, backend, actions, onClose, grabber = false, Modifier.weight(1f), contentMax = 720.dp)
+                        PlayerBody(song, state, error, backend, actions, onClose, grabber = false, Modifier.weight(1f), contentMax = 720.dp, onOpenEq = onOpenEq)
                     }
                     Column(Modifier.weight(1f).fillMaxHeight().padding(end = 16.dp)) {
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -181,7 +182,7 @@ fun FullPlayer(
                             Spacer(Modifier.width(12.dp))
                         }
                         QueueList(state, backend, Modifier.weight(1f))
-                    } else PlayerBody(song, state, error, backend, actions, onClose, grabber = true, Modifier.fillMaxSize(), onQueue = { showQueue = true }, onStandby = openStandby, onDevices = onOpenSettings?.let { open -> { id: String -> onClose(); open(id) } })
+                    } else PlayerBody(song, state, error, backend, actions, onClose, grabber = true, Modifier.fillMaxSize(), onQueue = { showQueue = true }, onStandby = openStandby, onDevices = onOpenSettings?.let { open -> { id: String -> onClose(); open(id) } }, onOpenEq = onOpenEq)
                 }
             }
         }
@@ -193,6 +194,7 @@ private fun PlayerBody(
     song: SongUi, state: PlaybackUiState, error: String?, backend: PlayerControls, actions: ListActions, onClose: () -> Unit,
     grabber: Boolean, modifier: Modifier = Modifier, onQueue: (() -> Unit)? = null, onDevices: ((String) -> Unit)? = null,
     contentMax: androidx.compose.ui.unit.Dp = 560.dp, onStandby: (() -> Unit)? = null,
+    onOpenEq: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     var outputInfoOpen by remember { mutableStateOf(false) }
@@ -346,7 +348,10 @@ private fun PlayerBody(
                         }
                         androidx.compose.material3.DropdownMenu(more, { more = false }) {
                             androidx.compose.material3.DropdownMenuItem({ Text(if (sleepAt != null) "Sleep timer (on)" else "Sleep timer") }, { more = false; showSleep = true })
-                            androidx.compose.material3.DropdownMenuItem({ Text(if (eqOn) "Equalizer (on)" else "Equalizer") }, { more = false; showEq = true })
+                            androidx.compose.material3.DropdownMenuItem({ Text(if (eqOn) "Equalizer (on)" else "Equalizer") }, {
+                                more = false
+                                if (onOpenEq != null) onOpenEq() else showEq = true
+                            })
                             androidx.compose.material3.DropdownMenuItem({ Text("Speed (${speedLabel(speed)})") }, { more = false; showSpeed = true })
                             if (onStandby != null) androidx.compose.material3.DropdownMenuItem({ Text("Standby mode") }, { more = false; onStandby() })
                             if (onDevices != null) androidx.compose.material3.DropdownMenuItem({ Text("Devices") }, { more = false; devicesOpen = true })
@@ -636,20 +641,15 @@ internal fun SpeedDialog(backend: PlayerControls, onClose: () -> Unit) {
     )
 }
 
-/** The equalizer from Settings > Listening, opened from the player so a curve can be tried while a song plays. */
+/** Desktop equalizer dialog; on Android phones FullPlayer navigates to [FullScreenEqualizerPage] instead. */
 @Composable
 internal fun EqualizerDialog(backend: PlayerControls, onClose: () -> Unit) {
-    val on by backend.eqOn.collectAsState()
-    val gains by backend.eqGains.collectAsState()
-    val bass by backend.eqBass.collectAsState()
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text("Equalizer") },
         text = {
-            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
-                BitPerfectRow(backend)
-                EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
-                EngineExtras(backend)
+            Column(Modifier.widthIn(min = 420.dp, max = 640.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                ParametricEqualizerContent(backend = backend, showTopMasterSwitch = true)
             }
         },
         confirmButton = { TextButton(onClose) { Text("Close") } },

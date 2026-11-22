@@ -101,6 +101,8 @@ data class OutputInfo(
     val details: List<Pair<String, String>> = emptyList(),
     /** Verified transport telemetry when available. */
     val transport: TransportInfo? = null,
+    /** Stable per-device key for EQ auto-assignment (e.g. `usb:1234:5678`, `bt:AA:BB`, `wired:3.5mm`, `speaker:internal`, `desktop:id`). */
+    val deviceKey: String? = null,
 )
 
 internal val NoOutputInfo: StateFlow<OutputInfo?> = kotlinx.coroutines.flow.MutableStateFlow(null)
@@ -145,6 +147,10 @@ interface PlayerEngine {
     val dacController: io.max.paperplay.player.usb.UsbDacController? get() = null
     /** Gains in dB for the bands of [EQ_BANDS_HZ], or null to turn the equalizer off. */
     fun setEqualizer(gainsDb: List<Float>?) {}
+    /** 31-band parametric equalizer profile and master toggle; runs in-place on USB Exclusive when allowed. */
+    fun setParametricEq(profile: ParametricEqProfile?, enabled: Boolean) {}
+    /** Policy toggle: when true, parametric EQ runs at native rate/bit-depth in USB Exclusive mode; when false, strict Bit-Perfect bypasses EQ. */
+    fun setAllowEqInUsbExclusive(allow: Boolean) {}
     /** Extra bass in dB (0 to 12) on top of the equalizer; only engines with a DSP stage use it. */
     fun setBass(db: Float) {}
     /** Exact level: everything is lowered by the curve's peak so the heard balance is the drawn curve; off keeps it loud. */

@@ -88,4 +88,37 @@ class BitPerfectEvaluatorTest {
         val mixer = TransportInfo(kind = TransportKind.ANDROID_MIXER, verified = false)
         assertFalse(BitPerfectEvaluator.evaluate(mixer, pcm, pcm, emptyList()).bitPerfect)
     }
+
+    @Test
+    fun `allowEqInUsbExclusive distinguishes strict bit-perfect from USB Direct plus EQ honestly`() {
+        val pcm96 = PcmFormat(96_000, 24, 24, 24, SampleEncoding.PCM_INT, 2)
+        val usb96 = verifiedUsb.copy(confirmedRateHz = 96_000, confirmedBitDepth = 24)
+
+        // EQ off -> Bit-Perfect active
+        val offV = BitPerfectEvaluator.evaluate(usb96, pcm96, pcm96, emptyList(), requestedOn = true, allowEqInUsbExclusive = true)
+        assertTrue(offV.bitPerfect)
+        assertFalse(offV.directWithEq)
+
+        // EQ on + allowEqInUsbExclusive = true -> USB Direct + EQ (never claims Bit-Perfect)
+        val directEqV = BitPerfectEvaluator.evaluate(
+            usb96, pcm96, pcm96, listOf("Parametric EQ (10 bands)"), requestedOn = true, allowEqInUsbExclusive = true,
+        )
+        assertFalse(directEqV.bitPerfect)
+        assertTrue(directEqV.directWithEq)
+        assertTrue(directEqV.note.contains("USB Direct + EQ"))
+
+        // EQ on + allowEqInUsbExclusive = false -> rejected as non-bit-perfect (strict mode bypasses EQ)
+        val strictV = BitPerfectEvaluator.evaluate(
+            usb96, pcm96, pcm96, listOf("Parametric EQ (10 bands)"), requestedOn = true, allowEqInUsbExclusive = false,
+        )
+        assertFalse(strictV.bitPerfect)
+        assertFalse(strictV.directWithEq)
+
+        // Non-EQ effect (e.g. Normalise) is never treated as Direct+EQ
+        val normV = BitPerfectEvaluator.evaluate(
+            usb96, pcm96, pcm96, listOf("Parametric EQ (10 bands)", "Normalise"), requestedOn = true, allowEqInUsbExclusive = true,
+        )
+        assertFalse(normV.bitPerfect)
+        assertFalse(normV.directWithEq)
+    }
 }

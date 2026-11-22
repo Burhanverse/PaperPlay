@@ -338,6 +338,8 @@ class PlaybackController(
     val dacController get() = engine.dacController
     fun setBitPerfect(on: Boolean) = engine.setBitPerfect(on)
     fun setEqualizer(gainsDb: List<Float>?) = engine.setEqualizer(gainsDb)
+    fun setParametricEq(profile: io.max.paperplay.player.ParametricEqProfile?, enabled: Boolean) = engine.setParametricEq(profile, enabled)
+    fun setAllowEqInUsbExclusive(allow: Boolean) = engine.setAllowEqInUsbExclusive(allow)
     fun setBass(db: Float) = engine.setBass(db)
     fun setExactLevel(on: Boolean) = engine.setExactLevel(on)
     fun setDryCompare(on: Boolean) = engine.setDryCompare(on)

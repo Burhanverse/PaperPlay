@@ -1,0 +1,45 @@
+CREATE TABLE IF NOT EXISTS eq_presets (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'Custom',
+    preamp_db REAL NOT NULL DEFAULT 0.0,
+    auto_preamp INTEGER NOT NULL DEFAULT 1,
+    limiter_enabled INTEGER NOT NULL DEFAULT 1,
+    bands_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS eq_device_map (
+    device_key TEXT NOT NULL PRIMARY KEY,
+    device_label TEXT NOT NULL,
+    preset_id TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    profile_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0
+);
+
+allEqPresets:
+SELECT * FROM eq_presets ORDER BY updated_at DESC, name ASC;
+
+eqPresetById:
+SELECT * FROM eq_presets WHERE id = ?;
+
+upsertEqPreset:
+INSERT OR REPLACE INTO eq_presets(id, name, source, preamp_db, auto_preamp, limiter_enabled, bands_json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteEqPreset:
+DELETE FROM eq_presets WHERE id = ?;
+
+allEqDeviceMaps:
+SELECT * FROM eq_device_map ORDER BY updated_at DESC;
+
+eqDeviceMapByKey:
+SELECT * FROM eq_device_map WHERE device_key = ?;
+
+upsertEqDeviceMap:
+INSERT OR REPLACE INTO eq_device_map(device_key, device_label, preset_id, enabled, profile_json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+deleteEqDeviceMap:
+DELETE FROM eq_device_map WHERE device_key = ?;

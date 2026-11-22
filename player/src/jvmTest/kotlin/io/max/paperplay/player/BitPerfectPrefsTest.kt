@@ -52,4 +52,19 @@ class BitPerfectPrefsTest {
             BitPerfectPrefs.resolveBackupRestore(isPhone = false, mapOf(BitPerfectPrefs.KEY_BACKUP_DESKTOP to "false")),
         )
     }
+
+    @Test
+    fun `allowEqInUsbExclusive defaults to true and persists cleanly`() {
+        val sp = MapStore()
+        val db = MapStore()
+        assertEquals(true, BitPerfectPrefs.loadAllowEqInUsbExclusive(sp, db))
+
+        BitPerfectPrefs.saveAllowEqInUsbExclusive(sp, db, false)
+        assertEquals(false, BitPerfectPrefs.loadAllowEqInUsbExclusive(sp, db))
+        assertEquals("false", sp.get(BitPerfectPrefs.KEY_ALLOW_EQ_IN_USB_EXCLUSIVE))
+        assertEquals("false", db.get(BitPerfectPrefs.KEY_ALLOW_EQ_IN_USB_EXCLUSIVE))
+
+        BitPerfectPrefs.saveAllowEqInUsbExclusive(sp, db, true)
+        assertEquals(true, BitPerfectPrefs.loadAllowEqInUsbExclusive(sp, db))
+    }
 }

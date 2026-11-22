@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import androidx.compose.foundation.background
 import io.max.paperplay.ui.theme.schemeFromSeed
@@ -146,8 +146,10 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             else -> { tab = 0; page = "home" }
         }
     }
+    var showEqFullScreen by remember { mutableStateOf(false) }
     fun handleBack() {
         when {
+            showEqFullScreen -> showEqFullScreen = false
             showPlayer -> showPlayer = false
             settings && settingsStack.size > (if (settingsDeep || !isPhone) 1 else 0) -> settingsStack.removeAt(settingsStack.lastIndex)
             else -> goBack()
@@ -264,9 +266,9 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
     // One handler: several enabled handlers would let the last one win.
     PlatformBackHandler(
-        showPlayer || settings || detail != null || profilePage != null || tab != 0 || history.isNotEmpty(),
+        showEqFullScreen || showPlayer || settings || detail != null || profilePage != null || tab != 0 || history.isNotEmpty(),
         // The player shrinks a little as the swipe goes; a cancelled swipe puts it back.
-        onProgress = { p -> if (showPlayer) scope.launch { sheet.progress.snapTo(1f - 0.3f * p) } },
+        onProgress = { p -> if (showPlayer && !showEqFullScreen) scope.launch { sheet.progress.snapTo(1f - 0.3f * p) } },
         onBack = ::handleBack,
     )
 
@@ -419,6 +421,17 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     FullPlayer(
                         pb, pbError, backend, actions, { showPlayer = false },
                         onOpenSettings = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } },
+                        onOpenEq = { showEqFullScreen = true },
+                    )
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showEqFullScreen,
+                    enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it / 6 }) + androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it / 6 }) + androidx.compose.animation.fadeOut(),
+                ) {
+                    FullScreenEqualizerPage(
+                        backend = backend,
+                        onBack = { showEqFullScreen = false },
                     )
                 }
             } else {

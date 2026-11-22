@@ -49,8 +49,11 @@ class LazyPlayerEngine(
     private var pendingSeekMs: Long = 0L
     private var pendingVolume: Float? = null
     private var pendingEq: List<Float>? = null
+    private var pendingParametricEq: Pair<ParametricEqProfile?, Boolean>? = null
+    private var pendingAllowEqInUsbExclusive: Boolean? = null
     private var pendingBass: Float? = null
     private var pendingExact: Boolean? = null
+    private var pendingDry: Boolean? = null
     private var pendingWidth: Float? = null
     private var pendingEarphone: String? = null
     private var earphoneSet = false
@@ -83,8 +86,11 @@ class LazyPlayerEngine(
             val engine = factory()
             pendingVolume?.let { engine.setVolume(it) }
             pendingEq?.let { engine.setEqualizer(it) }
+            pendingAllowEqInUsbExclusive?.let { engine.setAllowEqInUsbExclusive(it) }
+            pendingParametricEq?.let { (p, on) -> engine.setParametricEq(p, on) }
             pendingBass?.let { engine.setBass(it) }
             pendingExact?.let { engine.setExactLevel(it) }
+            pendingDry?.let { engine.setDryCompare(it) }
             pendingWidth?.let { engine.setStereoWidth(it) }
             if (earphoneSet) engine.setEarphoneCorrection(pendingEarphone)
             pendingOptions?.let { engine.setEngineOptions(it) }
@@ -214,7 +220,10 @@ class LazyPlayerEngine(
         real?.setExactLevel(on)
     }
 
-    override fun setDryCompare(on: Boolean) { real?.setDryCompare(on) }
+    override fun setDryCompare(on: Boolean) {
+        pendingDry = on
+        real?.setDryCompare(on)
+    }
 
     override fun setEngineOptions(bits: Int) {
         pendingOptions = bits
@@ -235,6 +244,16 @@ class LazyPlayerEngine(
     override fun setEqualizer(gainsDb: List<Float>?) {
         pendingEq = gainsDb
         real?.setEqualizer(gainsDb)
+    }
+
+    override fun setParametricEq(profile: ParametricEqProfile?, enabled: Boolean) {
+        pendingParametricEq = profile to enabled
+        real?.setParametricEq(profile, enabled)
+    }
+
+    override fun setAllowEqInUsbExclusive(allow: Boolean) {
+        pendingAllowEqInUsbExclusive = allow
+        real?.setAllowEqInUsbExclusive(allow)
     }
 
     override fun setSpeed(speed: Float) {
