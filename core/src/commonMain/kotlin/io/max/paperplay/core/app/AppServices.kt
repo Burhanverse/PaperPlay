@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlin.time.Clock
@@ -498,7 +499,6 @@ class AppServices(
     private val cachePending = HashMap<String, Pair<Long, Boolean>>()
     private val clockMs = clock
     private var lastEvict = 0L
-    private var lastTrim = 0L
     private var cacheFlushJob: Job? = null
     private val _auth = MutableStateFlow("")
     private val _error = MutableStateFlow<String?>(null)
@@ -581,7 +581,9 @@ class AppServices(
                 c.ready()
                 playlistSync.start()
                 botPool.load()
-                
+                // A minute after startup (extra bots log in first) the full cleanup, then every 10 minutes only the cheap trim of open sessions, not only when the main bot downloads, or songs played through the account or extra bots pile up.
+                launch { kotlinx.coroutines.delay(60_000L); trimOtherStores(full = true); while (true) { kotlinx.coroutines.delay(600_000L); trimOtherStores(full = false) } }
+
                 platform.secrets.get("restoredExtraBots")?.let { raw ->
                     val array = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonArray }.getOrNull()
                     if (array != null) {
@@ -700,24 +702,85 @@ class AppServices(
         runCatching { account.clearDownloads() }
         // Extra bots keep their own download folders; the eviction below only looks at the main bot's, so clear theirs here.
         for (b in botPool.bots.value) botPool.clientOf(b.id)?.let { bc -> runCatching { bc.call(optimizeRequest(0L), 300.seconds) } }
-        c.call(optimizeRequest(0L), 300.seconds)
+        // The main bot's store holds pinned songs too, so it is cleared song by song instead of with TDLib's optimizer.
+        for (s in library.cachedSongs().filter { !it.pinned }) deleteSongFile(c, s)
         driver.execute(null, "UPDATE songs SET cached_bytes = 0 WHERE pinned = 0", 0)
         library.invalidate()
         return true
     }
 
-    /** TDLib's storage optimizer for audio, documents and the half-finished files in `temp`: keeps at most [size] bytes (0 deletes them all). */
+    /** The cache limit is one total shared by every Telegram store: the main bot, the account and each extra bot. */
+    private fun storeShare(): Long = library.cacheLimit() / (2 + botPool.bots.value.size)
+
+    /** The account's own downloads and the extra bots' are outside the song cache, so each is held to its share through TDLib's optimizer. */
+    /**
+     * [full] (once per start) also opens the account session to trim it, deletes main-bot orphans (one Telegram call per cached
+     * song) and old unfinished downloads. The 10-minute rounds only trim sessions already open: no network, no login.
+     */
+    private suspend fun trimOtherStores(full: Boolean) {
+        val share = storeShare()
+        fun report(name: String, r: Result<JsonObject?>) = activityLog("Storage", "Trim $name to ${share / (1L shl 20)} MB: " + r.fold(
+            { it?.let { s -> "deleted ${s.long("count") ?: 0} files, ${(s.long("size") ?: 0) / (1L shl 20)} MB" } ?: "not connected" },
+            { "failed: ${it.message}" }))
+        report("account", runCatching { account.trimDownloads(share, open = full) })
+        for (b in botPool.bots.value) report("bot ${b.id}", runCatching { botPool.clientOf(b.id)?.call(optimizeRequest(share), 300.seconds) })
+        if (!full) return
+        runCatching { pruneMainOrphans() }.onFailure { activityLog("Storage", "Main bot orphan cleanup failed: ${it.message}") }
+        // TDLib's optimizer skips unfinished downloads, so the account's and extra bots' `temp` files older than a day go here.
+        // They download again when played.
+        val dirs = listOf("user_td_files") + botPool.bots.value.map { "td_extra_files_${it.id}" }
+        val cutoff = clockMs() - 24 * 3_600_000L
+        var count = 0
+        var bytes = 0L
+        for (d in dirs) for (p in listFiles("${platform.dataDir}/$d/temp")) {
+            val f = java.io.File(p)
+            if (f.lastModified() > cutoff) continue
+            bytes += f.length(); deleteFile(p); count++
+        }
+        activityLog("Storage", "Unfinished downloads older than a day: deleted $count files, ${bytes / (1L shl 20)} MB")
+    }
+
+    /**
+     * The main bot's audio that no cached or pinned song points to (songs removed, merged, filed, or reset by an old Clear cache)
+     * is deleted from disk. TDLib's optimizer cannot do this without also taking pinned songs. Files touched in the last
+     * 30 minutes are left alone, so nothing playing or downloading is touched.
+     */
+    private suspend fun pruneMainOrphans() {
+        val c = client ?: return
+        val keep = HashSet<String>()
+        for (s in library.cachedSongs()) {
+            val msg = c.call(request("getMessage") { put("chat_id", s.chat_id); put("message_id", s.message_id) })
+            // One unreadable song would make its file look orphaned, so give up instead of guessing.
+            val path = fileOfMessage(msg)?.obj("local")?.str("path") ?: return
+            if (path.isNotEmpty()) keep += path.replace('\\', '/')
+        }
+        val cutoff = clockMs() - 30 * 60_000L
+        var count = 0
+        var bytes = 0L
+        for (dir in listOf("music", "temp")) {
+            for (p in listFiles("${platform.dataDir}/td_files/$dir")) {
+                val f = java.io.File(p)
+                if (p.replace('\\', '/') in keep || f.lastModified() > cutoff) continue
+                val size = f.length()
+                deleteFile(p)
+                count++; bytes += size
+            }
+        }
+        activityLog("Storage", "Main bot: deleted $count files no song uses, ${bytes / (1L shl 20)} MB (kept ${keep.size})")
+    }
+
+    /** TDLib's storage optimizer for audio and documents (half-finished ones in `temp` included): keeps at most [size] bytes (0 deletes them all). */
     private fun optimizeRequest(size: Long) = request("optimizeStorage") {
         put("size", size)
         put("ttl", -1)
         put("count", -1)
         put("immunity_delay", if (size == 0L) 0 else 600)
         put("file_types", buildJsonArray {
-            for (t in listOf("fileTypeAudio", "fileTypeDocument", "fileTypeTemporary")) add(buildJsonObject { put("@type", t) })
+            for (t in listOf("fileTypeAudio", "fileTypeDocument")) add(buildJsonObject { put("@type", t) })
         })
         put("chat_ids", buildJsonArray { })
         put("exclude_chat_ids", buildJsonArray { })
-        put("return_deleted_file_statistics", false)
+        put("return_deleted_file_statistics", true)
         put("chat_limit", 0)
     }
 
@@ -776,35 +839,29 @@ class AppServices(
         val now = clockMs()
         if (now - lastEvict < 60_000L) return
         lastEvict = now
-        val limit = library.cacheLimit()
-        // The account's own downloads and the extra bots' are outside the song cache above, so each gets the same limit through TDLib's optimizer (every 10 minutes).
-        if (now - lastTrim > 600_000L) {
-            lastTrim = now
-            scope.launch {
-                runCatching { account.trimDownloads(limit) }
-                for (b in botPool.bots.value) botPool.clientOf(b.id)?.let { bc -> runCatching { bc.call(optimizeRequest(limit), 300.seconds) } }
-            }
-        }
+        val limit = storeShare()
         val rows = library.cachedSongs().filter { !it.pinned }.sortedBy { it.last_played_at ?: 0L }
         var total = rows.sumOf { it.cached_bytes }
         val protected = resolver.activeIds() + batch.keys
         for (s in rows) {
             if (total <= limit) break
             if (s.unique_id in protected) continue
-            val deleted = runCatching {
-                val msg = c.call(request("getMessage") { put("chat_id", s.chat_id); put("message_id", s.message_id) })
-                val fileId = fileOfMessage(msg)?.long("id")?.toInt()
-                if (fileId != null && fileId != 0) {
-                    c.call(request("deleteFile") { put("file_id", fileId) })
-                    true
-                } else false
-            }.getOrDefault(false)
-            if (deleted) {
+            if (deleteSongFile(c, s)) {
                 library.setCachedBytes(s.unique_id, 0L, notify = true)
                 total -= s.cached_bytes
             }
         }
     }
+
+    /** Deletes the main bot's downloaded file of [s]. False when it could not be found or deleted. */
+    private suspend fun deleteSongFile(c: TdClient, s: io.max.paperplay.core.library.Song): Boolean = runCatching {
+        val msg = c.call(request("getMessage") { put("chat_id", s.chat_id); put("message_id", s.message_id) })
+        val fileId = fileOfMessage(msg)?.long("id")?.toInt()
+        if (fileId != null && fileId != 0) {
+            c.call(request("deleteFile") { put("file_id", fileId) })
+            true
+        } else false
+    }.getOrDefault(false)
 
     /** Disconnects and forgets the main bot's credentials, so setup shows again. The account, extra bots, library and prefs stay. */
     suspend fun logOutBot() {
