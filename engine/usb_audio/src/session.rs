@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::device::{interface_release_and_reattach_plan, UsbDeviceSession};
 use crate::ring_buffer::{SpscRingBuffer, DEFAULT_RING_CAPACITY};
-use crate::streamer::{StreamConfig, UsbStreamer};
+use crate::streamer::{ControlCommand, ControlCommandQueue, ControlReply, StreamConfig, UsbStreamer};
 
 #[repr(i64)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -468,6 +468,9 @@ pub struct RealUsbControlTransport {
     mute_ramp: Arc<AtomicBool>,
     streaming_running: Arc<AtomicBool>,
     sample_rate: Arc<AtomicU32>,
+    ctrl_queue: Arc<ControlCommandQueue>,
+    escalate_requested: Arc<AtomicBool>,
+    resync_requested: Arc<AtomicBool>,
     claimed_done_in_open: bool,
 }
 
@@ -506,6 +509,9 @@ impl RealUsbControlTransport {
         let mute_ramp = Arc::new(AtomicBool::new(false));
         let streaming_running = Arc::new(AtomicBool::new(false));
         let sample_rate = Arc::new(AtomicU32::new(0));
+        let ctrl_queue = Arc::new(ControlCommandQueue::new());
+        let escalate_requested = Arc::new(AtomicBool::new(false));
+        let resync_requested = Arc::new(AtomicBool::new(false));
 
         let transport = Self {
             session: Some(Arc::clone(&dev_session)),
@@ -516,6 +522,9 @@ impl RealUsbControlTransport {
             mute_ramp: Arc::clone(&mute_ramp),
             streaming_running: Arc::clone(&streaming_running),
             sample_rate: Arc::clone(&sample_rate),
+            ctrl_queue: Arc::clone(&ctrl_queue),
+            escalate_requested: Arc::clone(&escalate_requested),
+            resync_requested: Arc::clone(&resync_requested),
             claimed_done_in_open: true,
         };
         let core = UsbSessionCore::open(transport, claimed, fus, has_hw_vol)?;
@@ -527,6 +536,8 @@ impl RealUsbControlTransport {
             mute_ramp,
             streaming_running,
             sample_rate,
+            escalate_requested,
+            resync_requested,
         })
     }
 }
@@ -540,6 +551,17 @@ pub struct UsbSessionInstance {
     pub mute_ramp: Arc<AtomicBool>,
     pub streaming_running: Arc<AtomicBool>,
     pub sample_rate: Arc<AtomicU32>,
+    pub escalate_requested: Arc<AtomicBool>,
+    pub resync_requested: Arc<AtomicBool>,
+}
+
+impl UsbSessionInstance {
+    /// Lock-free underrun recovery signal: escalates URB cushion (16 -> 32) and resyncs idle slots
+    /// without stopping streaming or reprogramming the DAC clock.
+    pub fn escalate_and_resync(&self) {
+        self.escalate_requested.store(true, Ordering::Release);
+        self.resync_requested.store(true, Ordering::Release);
+    }
 }
 
 impl UsbControlTransport for RealUsbControlTransport {
@@ -587,21 +609,67 @@ impl UsbControlTransport for RealUsbControlTransport {
     }
 
     fn read_fu_mute(&mut self, fu_id: u8, control_iface: u8, ch: u8) -> Result<bool, i32> {
+        if self.streaming_running.load(Ordering::Acquire) {
+            return match self.ctrl_queue.submit_and_wait(ControlCommand::GetMute {
+                fu_id,
+                control_iface,
+                channel: ch,
+            }) {
+                Ok(ControlReply::Mute(res)) => res,
+                Err(e) => Err(e),
+                _ => Err(-1),
+            };
+        }
         let s = self.session.as_ref().ok_or(-19)?;
         s.read_hardware_mute(fu_id, control_iface, ch)
     }
 
     fn write_fu_mute(&mut self, fu_id: u8, control_iface: u8, ch: u8, mute: bool) -> Result<bool, i32> {
+        if self.streaming_running.load(Ordering::Acquire) {
+            return match self.ctrl_queue.submit_and_wait(ControlCommand::SetMute {
+                fu_id,
+                control_iface,
+                channel: ch,
+                mute,
+            }) {
+                Ok(ControlReply::Mute(res)) => res,
+                Err(e) => Err(e),
+                _ => Err(-1),
+            };
+        }
         let s = self.session.as_ref().ok_or(-19)?;
         s.set_hardware_mute(fu_id, control_iface, ch, mute)
     }
 
     fn read_fu_volume(&mut self, fu_id: u8, control_iface: u8, ch: u8) -> Result<i16, i32> {
+        if self.streaming_running.load(Ordering::Acquire) {
+            return match self.ctrl_queue.submit_and_wait(ControlCommand::GetVolume {
+                fu_id,
+                control_iface,
+                channel: ch,
+            }) {
+                Ok(ControlReply::Volume(res)) => res,
+                Err(e) => Err(e),
+                _ => Err(-1),
+            };
+        }
         let s = self.session.as_ref().ok_or(-19)?;
         s.read_hardware_volume(fu_id, control_iface, ch)
     }
 
     fn write_fu_volume(&mut self, fu_id: u8, control_iface: u8, ch: u8, vol_raw: i16) -> Result<i16, i32> {
+        if self.streaming_running.load(Ordering::Acquire) {
+            return match self.ctrl_queue.submit_and_wait(ControlCommand::SetVolume {
+                fu_id,
+                control_iface,
+                channel: ch,
+                vol_raw,
+            }) {
+                Ok(ControlReply::Volume(res)) => res,
+                Err(e) => Err(e),
+                _ => Err(-1),
+            };
+        }
         let s = self.session.as_ref().ok_or(-19)?;
         s.set_hardware_volume(fu_id, control_iface, ch, vol_raw)
     }
@@ -634,6 +702,9 @@ impl UsbControlTransport for RealUsbControlTransport {
                 Arc::clone(&self.paused),
                 Arc::clone(&self.flushing),
                 Arc::clone(&self.mute_ramp),
+                Arc::clone(&self.ctrl_queue),
+                Arc::clone(&self.escalate_requested),
+                Arc::clone(&self.resync_requested),
             ));
         }
         self.paused.store(false, Ordering::Release);

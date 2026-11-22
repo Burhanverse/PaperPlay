@@ -3,13 +3,17 @@
 
 use std::panic::catch_unwind;
 use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
 
-use jni::objects::{JByteBuffer, JClass, JLongArray};
+use jni::objects::{GlobalRef, JByteBuffer, JClass, JLongArray, JValue};
 use jni::sys::{jboolean, jint, jlong, jstring};
-use jni::JNIEnv;
+use jni::{JNIEnv, JavaVM};
 
 use super::session::{EndpointFormatConfig, RealUsbControlTransport, UsbSessionInstance};
-use super::streamer::{StreamConfig, UsbStreamer};
+use super::streamer::{ControlCommand, ControlReply, StreamConfig, UsbStreamer};
+
+static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
+static THREAD_HELPER_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 
 pub fn ensure_no_device_discovery() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -25,9 +29,107 @@ pub fn ensure_no_device_discovery() {
 }
 
 #[no_mangle]
-pub extern "system" fn JNI_OnLoad(_vm: *mut std::ffi::c_void, _reserved: *mut std::ffi::c_void) -> jint {
+pub extern "system" fn JNI_OnLoad(vm: *mut std::ffi::c_void, _reserved: *mut std::ffi::c_void) -> jint {
     ensure_no_device_discovery();
+    if !vm.is_null() {
+        let _ = catch_unwind(|| {
+            if let Ok(jvm) = unsafe { JavaVM::from_raw(vm as *mut jni::sys::JavaVM) } {
+                if let Ok(mut env) = jvm.get_env() {
+                    if let Ok(cls) = env.find_class("io/max/paperplay/player/usb/UsbThreadHelper") {
+                        if let Ok(gref) = env.new_global_ref(cls) {
+                            let _ = THREAD_HELPER_CLASS.set(gref);
+                        }
+                    }
+                }
+                let _ = JAVA_VM.set(jvm);
+            }
+        });
+    }
     jni::sys::JNI_VERSION_1_6
+}
+
+/// Invokes Android's `UsbThreadHelper.onNativeAudioThreadStarted(tid)` via JNI so the native
+/// `UsbIsoAudio` thread receives `Process.setThreadPriority(tid, THREAD_PRIORITY_URGENT_AUDIO)`
+/// and optional ADPF `PerformanceHintManager` session. Returns `(jni_rc, adpf_active)`.
+pub(crate) fn notify_audio_thread_started(tid: i32) -> (i32, bool) {
+    let Some(vm) = JAVA_VM.get() else {
+        return (0, false);
+    };
+    let Some(cls_ref) = THREAD_HELPER_CLASS.get() else {
+        return (0, false);
+    };
+    let res = catch_unwind(|| {
+        let Ok(mut env) = vm.attach_current_thread() else {
+            return (-1, false);
+        };
+        let cls: &JClass = cls_ref.as_obj().into();
+        match env.call_static_method(
+            cls,
+            "onNativeAudioThreadStarted",
+            "(I)I",
+            &[JValue::Int(tid)],
+        ) {
+            Ok(v) => {
+                let bits = v.i().unwrap_or(-1);
+                if bits < 0 {
+                    (bits, false)
+                } else {
+                    let prio_ok = (bits & 1) != 0;
+                    let adpf_on = (bits & 2) != 0;
+                    (if prio_ok { 1 } else { 0 }, adpf_on)
+                }
+            }
+            Err(_) => {
+                let _ = env.exception_clear();
+                (-2, false)
+            }
+        }
+    });
+    res.unwrap_or((-3, false))
+}
+
+/// Closes any ADPF session associated with `tid` on thread teardown.
+pub(crate) fn notify_audio_thread_stopped(tid: i32) {
+    let Some(vm) = JAVA_VM.get() else {
+        return;
+    };
+    let Some(cls_ref) = THREAD_HELPER_CLASS.get() else {
+        return;
+    };
+    let _ = catch_unwind(|| {
+        if let Ok(mut env) = vm.attach_current_thread() {
+            let cls: &JClass = cls_ref.as_obj().into();
+            let _ = env.call_static_method(
+                cls,
+                "onNativeAudioThreadStopped",
+                "(I)V",
+                &[JValue::Int(tid)],
+            );
+            let _ = env.exception_clear();
+        }
+    });
+}
+
+/// Reports actual wakeup work duration to an active ADPF session (only called when ADPF is enabled).
+pub(crate) fn report_adpf_work_duration(tid: i32, duration_ns: i64) {
+    let Some(vm) = JAVA_VM.get() else {
+        return;
+    };
+    let Some(cls_ref) = THREAD_HELPER_CLASS.get() else {
+        return;
+    };
+    let _ = catch_unwind(|| {
+        if let Ok(mut env) = vm.attach_current_thread() {
+            let cls: &JClass = cls_ref.as_obj().into();
+            let _ = env.call_static_method(
+                cls,
+                "reportNativeWorkDuration",
+                "(IJ)V",
+                &[JValue::Int(tid), JValue::Long(duration_ns)],
+            );
+            let _ = env.exception_clear();
+        }
+    });
 }
 
 pub struct UsbNativeInstance {
@@ -306,14 +408,34 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_setHardw
     volume_raw: jint,
 ) -> jint {
     let result = catch_unwind(|| {
-        let session = if handle != 0 {
+        if handle != 0 {
             let instance = unsafe { &*(handle as *mut UsbNativeInstance) };
-            Some(std::sync::Arc::clone(&instance.streamer.session))
-        } else {
-            super::device::get_active_session()
-        };
-
-        if let Some(session) = session {
+            if instance.streamer.is_running() {
+                return match instance.streamer.ctrl_queue().submit_and_wait(
+                    ControlCommand::SetVolume {
+                        fu_id: fu_id as u8,
+                        control_iface: control_iface as u8,
+                        channel: channel as u8,
+                        vol_raw: volume_raw as i16,
+                    },
+                ) {
+                    Ok(ControlReply::Volume(Ok(read_val))) => (read_val as u16) as jint,
+                    Ok(ControlReply::Volume(Err(err))) => err,
+                    Err(err) => err,
+                    _ => -1,
+                };
+            }
+            return match instance.streamer.session.set_hardware_volume(
+                fu_id as u8,
+                control_iface as u8,
+                channel as u8,
+                volume_raw as i16,
+            ) {
+                Ok(read_val) => (read_val as u16) as jint,
+                Err(err) => err,
+            };
+        }
+        if let Some(session) = super::device::get_active_session() {
             match session.set_hardware_volume(
                 fu_id as u8,
                 control_iface as u8,
@@ -341,14 +463,34 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_setHardw
     mute: jboolean,
 ) -> jint {
     let result = catch_unwind(|| {
-        let session = if handle != 0 {
+        if handle != 0 {
             let instance = unsafe { &*(handle as *mut UsbNativeInstance) };
-            Some(std::sync::Arc::clone(&instance.streamer.session))
-        } else {
-            super::device::get_active_session()
-        };
-
-        if let Some(session) = session {
+            if instance.streamer.is_running() {
+                return match instance.streamer.ctrl_queue().submit_and_wait(
+                    ControlCommand::SetMute {
+                        fu_id: fu_id as u8,
+                        control_iface: control_iface as u8,
+                        channel: channel as u8,
+                        mute: mute != 0,
+                    },
+                ) {
+                    Ok(ControlReply::Mute(Ok(read_mute))) => if read_mute { 1 } else { 0 },
+                    Ok(ControlReply::Mute(Err(err))) => err,
+                    Err(err) => err,
+                    _ => -1,
+                };
+            }
+            return match instance.streamer.session.set_hardware_mute(
+                fu_id as u8,
+                control_iface as u8,
+                channel as u8,
+                mute != 0,
+            ) {
+                Ok(read_mute) => if read_mute { 1 } else { 0 },
+                Err(err) => err,
+            };
+        }
+        if let Some(session) = super::device::get_active_session() {
             match session.set_hardware_mute(
                 fu_id as u8,
                 control_iface as u8,
@@ -1022,6 +1164,22 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionF
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionEscalateAndResync(
+    _env: JNIEnv,
+    _c: JClass,
+    handle: jlong,
+) -> jint {
+    let result = catch_unwind(|| {
+        let Some(instance) = lookup_session(handle) else {
+            return -22;
+        };
+        instance.escalate_and_resync();
+        0
+    });
+    result.unwrap_or(-1)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionGetStats(
     env: JNIEnv,
     _c: JClass,
@@ -1046,8 +1204,33 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionG
             .try_lock()
             .map(|c| c.state() as i64)
             .unwrap_or(-1);
+        let pkt_errors = instance.ring_buffer.pkt_errors.load(Ordering::Relaxed) as i64;
+        let pkt_shorts = instance.ring_buffer.pkt_shorts.load(Ordering::Relaxed) as i64;
+        let last_pkt_err = instance.ring_buffer.last_pkt_err_status.load(Ordering::Relaxed) as i64;
+        let max_cb_gap_us = instance.ring_buffer.max_cb_gap_us.load(Ordering::Relaxed) as i64;
+        let late_callbacks = instance.ring_buffer.late_callbacks.load(Ordering::Relaxed) as i64;
+        let active_slots = instance.ring_buffer.active_slots.load(Ordering::Relaxed) as i64;
+        let cushion_escalations = instance.ring_buffer.cushion_escalations.load(Ordering::Relaxed) as i64;
 
-        let stats = [consumed, underruns, urb_errors, fill, cap, is_running, rate, is_paused, is_flushing, state_ord];
+        let stats = [
+            consumed,
+            underruns,
+            urb_errors,
+            fill,
+            cap,
+            is_running,
+            rate,
+            is_paused,
+            is_flushing,
+            state_ord,
+            pkt_errors,
+            pkt_shorts,
+            last_pkt_err,
+            max_cb_gap_us,
+            late_callbacks,
+            active_slots,
+            cushion_escalations,
+        ];
         let len = match env.get_array_length(&out_stats) {
             Ok(l) => (l.max(0) as usize).min(stats.len()),
             Err(_) => return -22,

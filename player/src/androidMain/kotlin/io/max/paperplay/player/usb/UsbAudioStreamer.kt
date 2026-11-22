@@ -205,6 +205,9 @@ class UsbAudioStreamer(
 
         _isRunning = true
         _isPaused = false
+        io.max.paperplay.player.PlaybackCore.appContext?.let { UsbStreamingWakeLock.init(it) }
+        UsbStreamingWakeLock.acquire("legacy:$h")
+        UsbSilentAudioKeepAlive.setActive(true)
         PlayLog.log("usb", "USB audio streaming started ($sampleRate Hz, ${bitDepth}-bit, $channels ch, subslot $subslotSize, confirmed: rate=$_nativeConfirmedRate alt=$_nativeConfirmedAlt)")
         UsbRingLog.record("UsbAudioStreamer", "Playback started: $sampleRate Hz, ${bitDepth}-bit, alt ${targetAltInterface.alternateSetting} (confirmed: $_nativeConfirmedRate Hz)", UsbRingLog.CODE_SINK_PLAY)
         return true
@@ -509,6 +512,8 @@ class UsbAudioStreamer(
             currentPreparedStreamer = null
         }
         if (h != 0L) {
+            UsbSilentAudioKeepAlive.setActive(false)
+            UsbStreamingWakeLock.release("legacy:$h")
             // 1. Stop streaming thread first so no isochronous URBs are in flight
             engineBridge.stop(h)
             // 2. Restore DAC feature units (mute + volume) WHILE interface 0 is still claimed,

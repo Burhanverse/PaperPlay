@@ -167,6 +167,8 @@ class PlaybackService : MediaSessionService() {
         rebuildHandler.removeCallbacks(rebuildRunnable)
         PlaybackCore.onRebuildPlayerForBitPerfect = null
         io.max.paperplay.player.usb.UsbAudioManager.instance?.forwardingPlayer = null
+        io.max.paperplay.player.usb.UsbSilentAudioKeepAlive.stop()
+        io.max.paperplay.player.usb.UsbStreamingWakeLock.releaseAll("PlaybackService.onDestroy")
         runCatching { eq?.release() }
         eq = null
         runCatching { leveller?.release() }

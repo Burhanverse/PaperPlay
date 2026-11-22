@@ -22,6 +22,9 @@ interface UsbSystemOps {
     fun pauseGraceNative(handle: Long): Int
     fun resumeGraceNative(handle: Long): Int
     fun releaseClaimAndReattach(handle: Long)
+    fun acquireStreamingWakeLock(owner: String) {}
+    fun releaseStreamingWakeLock(owner: String) {}
+    fun setSilentKeepAliveActive(active: Boolean) {}
 }
 
 /** Metadata-only representation of an attached USB device (no openDevice required). */
@@ -178,6 +181,8 @@ class UnifiedUsbCoordinator(
             }
         }
         if (wasActive) {
+            ops.setSilentKeepAliveActive(false)
+            ops.releaseStreamingWakeLock("unified:$handle")
             if (_mode.value == BitPerfectMode.ON) {
                 setStatus(BitPerfectStatus.Standby(reason = "Session closed"))
             } else {
@@ -203,6 +208,11 @@ class UnifiedUsbCoordinator(
         isPlaying = true
         if (hasActiveClaim && _mode.value == BitPerfectMode.ON) {
             isStreamingActive = true
+            val h = activeHandle
+            if (h != 0L) {
+                ops.acquireStreamingWakeLock("unified:$h")
+                ops.setSilentKeepAliveActive(true)
+            }
             setStatus(
                 BitPerfectStatus.Active(
                     transportLabel = io.max.paperplay.player.TransportKind.USB_UAC_DIRECT.displayName,
@@ -217,13 +227,17 @@ class UnifiedUsbCoordinator(
     fun onPlaybackStarted() {
         cancelPauseTimer()
         isPlaying = true
-        if (activeHandle != 0L && hasActiveClaim) {
+        val h = activeHandle
+        if (h != 0L && hasActiveClaim) {
             isStreamingActive = true
+            ops.acquireStreamingWakeLock("unified:$h")
+            ops.setSilentKeepAliveActive(true)
         }
     }
 
     fun onPlaybackPaused() {
         isPlaying = false
+        ops.setSilentKeepAliveActive(false)
         if (!hasActiveClaim || activeHandle == 0L) return
         ops.pauseGraceNative(activeHandle)
         isStreamingActive = false
@@ -239,10 +253,13 @@ class UnifiedUsbCoordinator(
     fun onPlaybackResumed(): Boolean {
         cancelPauseTimer()
         isPlaying = true
-        if (activeHandle != 0L && hasActiveClaim) {
-            val rc = ops.resumeGraceNative(activeHandle)
+        val h = activeHandle
+        if (h != 0L && hasActiveClaim) {
+            val rc = ops.resumeGraceNative(h)
             if (rc == 0) {
                 isStreamingActive = true
+                ops.acquireStreamingWakeLock("unified:$h")
+                ops.setSilentKeepAliveActive(true)
                 return true
             }
             releaseClaim("Resume failed (code=$rc)")
@@ -279,7 +296,9 @@ class UnifiedUsbCoordinator(
             lastSyncedVolumeIndex = null
             h
         }
+        ops.setSilentKeepAliveActive(false)
         if (hadClaim != 0L) {
+            ops.releaseStreamingWakeLock("unified:$hadClaim")
             ops.releaseClaimAndReattach(hadClaim)
         }
         if (_mode.value == BitPerfectMode.ON) {
@@ -332,7 +351,9 @@ class UnifiedUsbCoordinator(
             lastSyncedVolumeIndex = null
             prev
         }
+        ops.setSilentKeepAliveActive(false)
         if (h != 0L) {
+            ops.releaseStreamingWakeLock("unified:$h")
             ops.releaseClaimAndReattach(h)
         }
         if (_mode.value == BitPerfectMode.ON) {

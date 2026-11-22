@@ -68,6 +68,7 @@ internal object NativeCoarseUsbSessionApi : CoarseUsbSessionApi {
         UsbEngineNative.sessionWritePcm(handle, buffer, offset, length)
     override fun setMuteRamp(handle: Long, muted: Boolean): Int = UsbEngineNative.sessionSetMuteRamp(handle, muted)
     override fun flush(handle: Long): Int = UsbEngineNative.sessionFlush(handle)
+    override fun escalateCushionAndResync(handle: Long): Int = UsbEngineNative.sessionEscalateAndResync(handle)
     override fun getStats(handle: Long, outStats: LongArray): Int = UsbEngineNative.sessionGetStats(handle, outStats)
     override fun close(handle: Long) = UsbEngineNative.sessionClose(handle)
 }
@@ -139,7 +140,13 @@ class UnifiedUsbAudioSink internal constructor(
     private var activeFuMeta: UsbFeatureUnit? = null
     @Volatile
     private var activeHwVolRef: UsbHardwareVolume? = null
-    private val statsScratch = LongArray(10)
+    private val statsScratch = LongArray(17)
+
+    fun readExtendedStats(outStats: LongArray): Boolean =
+        isUsbModeActive && coarseController.readStats(outStats)
+
+    val realFaultReconfigures: Int get() = coarseController.realFaultReconfigures
+    val cushionEscalationRequests: Int get() = coarseController.cushionEscalationRequests
 
     init {
         currentInstance = this

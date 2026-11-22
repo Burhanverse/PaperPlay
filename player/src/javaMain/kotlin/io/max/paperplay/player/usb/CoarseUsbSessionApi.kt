@@ -47,6 +47,7 @@ interface CoarseUsbSessionApi {
     fun writePcm(handle: Long, buffer: ByteBuffer, offset: Int, length: Int): Int
     fun setMuteRamp(handle: Long, muted: Boolean): Int
     fun flush(handle: Long): Int
+    fun escalateCushionAndResync(handle: Long): Int = 0
     fun getStats(handle: Long, outStats: LongArray): Int
     fun close(handle: Long)
 }

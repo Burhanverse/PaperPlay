@@ -218,6 +218,7 @@ internal object UsbEngineNative : UsbEngineBridge {
     external fun sessionWritePcm(handle: Long, buffer: ByteBuffer, offset: Int, length: Int): Int
     external fun sessionSetMuteRamp(handle: Long, muted: Boolean): Int
     external fun sessionFlush(handle: Long): Int
+    external fun sessionEscalateAndResync(handle: Long): Int
     external fun sessionGetStats(handle: Long, outStats: LongArray): Int
     external fun sessionClose(handle: Long)
 

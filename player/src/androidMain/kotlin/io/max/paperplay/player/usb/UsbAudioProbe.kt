@@ -720,6 +720,12 @@ object UsbAudioProbe {
         sb.appendLine("3. POWER, DOZE, THERMAL & STANDBY TELEMETRY")
         sb.appendLine("--------------------------------------------------------------------------------")
         sb.appendLine("Current: ${UsbPowerTelemetry.snapshotSummary(context)}")
+        sb.appendLine(
+            "USB Power Hygiene: wakeLockHeld=${UsbStreamingWakeLock.isHeld} wakeLockRefCount=${UsbStreamingWakeLock.refCount} " +
+                "devAdpf=${io.max.paperplay.player.PlaybackCore.devUsbAdpfEnabled} " +
+                "devSilentKeepAlive=${io.max.paperplay.player.PlaybackCore.devUsbSilentKeepAliveEnabled} " +
+                "silentKeepAliveActive=${UsbSilentAudioKeepAlive.isActive}"
+        )
         val powerEvents = UsbPowerTelemetry.dumpEvents()
         if (powerEvents.isEmpty()) {
             sb.appendLine("(No power telemetry events recorded yet)")

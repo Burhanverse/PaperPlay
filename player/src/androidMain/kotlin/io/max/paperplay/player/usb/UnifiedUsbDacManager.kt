@@ -93,6 +93,19 @@ class UnifiedUsbDacManager(private val context: Context) {
             }
             UsbAudioManager.instance?.onUsbReleased(closeConnection = true, rescan = false)
         }
+
+        override fun acquireStreamingWakeLock(owner: String) {
+            UsbStreamingWakeLock.init(appContext)
+            UsbStreamingWakeLock.acquire(owner)
+        }
+
+        override fun releaseStreamingWakeLock(owner: String) {
+            UsbStreamingWakeLock.release(owner)
+        }
+
+        override fun setSilentKeepAliveActive(active: Boolean) {
+            UsbSilentAudioKeepAlive.setActive(active)
+        }
     }
 
     val coordinator: UnifiedUsbCoordinator = UnifiedUsbCoordinator(

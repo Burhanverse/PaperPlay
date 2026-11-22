@@ -53,6 +53,8 @@ internal object PlaybackCore {
     @Volatile var speed = 1f
     @Volatile var useUnifiedBitPerfect = USE_UNIFIED_BIT_PERFECT_DEFAULT
     @Volatile var devApi34MixerEnabled = false
+    @Volatile var devUsbAdpfEnabled = false
+    @Volatile var devUsbSilentKeepAliveEnabled = false
     @Volatile var usbExclusiveMode = false
     @Volatile var sinkChainMode: SinkChainMode = SinkChainMode.FULL
     @Volatile var usbActive = false
@@ -71,6 +73,28 @@ internal object PlaybackCore {
     private const val KEY_USB_EXCLUSIVE = "usb_exclusive_mode"
     private const val KEY_SINK_CHAIN = "sink_chain"
     private const val KEY_USE_UNIFIED_BIT_PERFECT = "dev_use_unified_bit_perfect"
+    private const val KEY_DEV_USB_ADPF = "dev_usb_adpf"
+    private const val KEY_DEV_USB_SILENT_KEEPALIVE = "dev_usb_silent_keepalive"
+
+    fun savePersistedUsbExperiments(context: Context, adpf: Boolean? = null, silentKeepAlive: Boolean? = null) {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val ed = sp.edit()
+        if (adpf != null) {
+            devUsbAdpfEnabled = adpf
+            ed.putBoolean(KEY_DEV_USB_ADPF, adpf)
+        }
+        if (silentKeepAlive != null) {
+            devUsbSilentKeepAliveEnabled = silentKeepAlive
+            ed.putBoolean(KEY_DEV_USB_SILENT_KEEPALIVE, silentKeepAlive)
+        }
+        ed.apply()
+    }
+
+    fun isNetworkMediaUri(uri: String?): Boolean {
+        if (uri.isNullOrBlank()) return false
+        val lower = uri.lowercase()
+        return lower.startsWith("stream://") || lower.startsWith("http://") || lower.startsWith("https://")
+    }
 
     fun loadPersistedUseUnifiedBitPerfect(context: Context): Boolean {
         val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -147,6 +171,8 @@ internal object PlaybackCore {
     fun loadPersistedUsbExclusiveMode(context: Context): Boolean {
         val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         devApi34MixerEnabled = sp.getBoolean("dev_api34_bitperfect_mixer", false)
+        devUsbAdpfEnabled = sp.getBoolean(KEY_DEV_USB_ADPF, false)
+        devUsbSilentKeepAliveEnabled = sp.getBoolean(KEY_DEV_USB_SILENT_KEEPALIVE, false)
         loadPersistedUseUnifiedBitPerfect(context)
         if (useUnifiedBitPerfect) {
             val mode = PlatformBitPerfectPrefs.load()
@@ -229,9 +255,22 @@ internal object PlaybackCore {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+        var currentWakeMode = C.WAKE_MODE_LOCAL
+        fun updateWakeModeForItem(item: androidx.media3.common.MediaItem?) {
+            val uriStr = item?.localConfiguration?.uri?.toString()
+            val desired = if (isNetworkMediaUri(uriStr)) C.WAKE_MODE_NETWORK else C.WAKE_MODE_LOCAL
+            if (desired != currentWakeMode) {
+                currentWakeMode = desired
+                p.setWakeMode(desired)
+                val label = if (desired == C.WAKE_MODE_NETWORK) "WAKE_MODE_NETWORK" else "WAKE_MODE_LOCAL"
+                PlayLog.log("usb", "PlaybackCore: switched ExoPlayer wakeMode=$label for uri=$uriStr")
+                io.max.paperplay.player.usb.UsbPowerTelemetry.recordCustom("EXO_WAKE_MODE", "$label uri=$uriStr")
+            }
+        }
         p.addAnalyticsListener(PlaybackLogging.analytics)
         p.addListener(object : androidx.media3.common.Player.Listener {
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                updateWakeModeForItem(mediaItem)
                 val id = mediaItem?.mediaId ?: "none"
                 val reasonStr = when (reason) {
                     androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
@@ -244,6 +283,9 @@ internal object PlaybackCore {
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 playerPlaybackState = playbackState
+                if (playbackState == androidx.media3.common.Player.STATE_BUFFERING || playbackState == androidx.media3.common.Player.STATE_READY) {
+                    updateWakeModeForItem(p.currentMediaItem)
+                }
                 if (playbackState == androidx.media3.common.Player.STATE_READY) {
                     playerHasError = false
                 }
