@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -136,9 +137,63 @@ private val auroraRibbons = listOf(
     ),
 )
 
-private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
-    val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
-    return t * t * (3f - 2f * t)
+/**
+ * Analytic C∞ window (`1 - cos^4(pi * u)`) with zero value and zero slope at both ends (`u = 0` and `u = 1`).
+ * Unlike a piecewise smoothstep plateau, its curvature never jumps when a wave crest drifts near either edge,
+ * while still giving waves full room across the bar.
+ */
+internal fun auroraWaveEnvelope(u: Float): Float {
+    val clamped = u.coerceIn(0f, 1f)
+    val s = sin(clamped * PI.toFloat())
+    val s2 = s * s
+    return s2 * (2f - s2)
+}
+
+internal class AuroraSeekInteractionState {
+    var dragging by mutableStateOf<Float?>(null)
+        private set
+    var longPressText by mutableStateOf<String?>(null)
+        private set
+    var longPressToken by mutableIntStateOf(0)
+        private set
+    private var nextToken = 0
+
+    fun onLongPress(fraction: Float, label: String?) {
+        dragging = fraction
+        longPressText = label
+        longPressToken = ++nextToken
+    }
+
+    fun onDragStart(fraction: Float) {
+        longPressToken = 0
+        longPressText = null
+        dragging = fraction
+    }
+
+    fun onDrag(fraction: Float) {
+        dragging = fraction
+    }
+
+    fun onDragEnd(): Float? {
+        val target = dragging
+        dragging = null
+        return target
+    }
+
+    fun onDragCancel() {
+        dragging = null
+    }
+
+    suspend fun runLongPressCleanup(timeoutMs: Long = 1500L) {
+        val token = longPressToken
+        if (token == 0) return
+        delay(timeoutMs)
+        if (longPressToken == token) {
+            longPressText = null
+            dragging = null
+            longPressToken = 0
+        }
+    }
 }
 
 /**
@@ -160,15 +215,12 @@ fun AuroraSeek(
     longPressLabel: ((Float) -> String)? = null,
     compact: Boolean = false,
 ) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    var longPressText by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(longPressText) {
-        if (longPressText != null) {
-            delay(1500)
-            longPressText = null
-            dragging = null
-        }
+    val interaction = remember { AuroraSeekInteractionState() }
+    LaunchedEffect(interaction.longPressToken) {
+        interaction.runLongPressCleanup()
     }
+    val dragging = interaction.dragging
+    val longPressText = interaction.longPressText
 
     val currentProgress by rememberUpdatedState(progress)
     val currentBuffered by rememberUpdatedState(buffered)
@@ -254,8 +306,7 @@ fun AuroraSeek(
                         onLongPress = {
                             if (abs(it.y - lineY) > reach) return@detectTapGestures
                             val fraction = (it.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
-                            dragging = fraction
-                            longPressText = currentLongPressLabel?.invoke(fraction) ?: currentLabel
+                            interaction.onLongPress(fraction, currentLongPressLabel?.invoke(fraction) ?: currentLabel)
                             currentOnSeek(fraction)
                         },
                     )
@@ -268,23 +319,22 @@ fun AuroraSeek(
                         onDragStart = {
                             live = abs(it.y - lineY) <= reach
                             if (live) {
-                                longPressText = null
-                                dragging = (it.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                                interaction.onDragStart((it.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f))
                             }
                         },
                         onDragEnd = {
-                            if (live) dragging?.let(currentOnSeek)
-                            dragging = null
+                            val target = interaction.onDragEnd()
+                            if (live) target?.let(currentOnSeek)
                             live = false
                         },
                         onDragCancel = {
-                            dragging = null
+                            interaction.onDragCancel()
                             live = false
                         },
                     ) { change, _ ->
                         if (live) {
                             change.consume()
-                            dragging = (change.position.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            interaction.onDrag((change.position.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f))
                         }
                     }
                 },
@@ -388,17 +438,19 @@ fun AuroraSeek(
                         val c2T = 0.5f + 0.5f * sin((phase * spec.secSpeedScale * 0.24f + spec.secOffset) * twoPi)
                         val center1X = startX + playedW * (spec.centerMin + (spec.centerMax - spec.centerMin) * c1T)
                         val center2X = startX + playedW * (spec.centerMin + (spec.centerMax - spec.centerMin) * c2T)
-                        val sigma1 = kotlin.math.max(playedW * spec.bellWidthFrac, spec.minBellWidthDp.dp.toPx())
-                        val sigma2 = sigma1 * 0.78f
+                        // Keep sigma proportional to playedW on short bars so crests stay organic instead of being crushed at the ends.
+                        val minSigma = minOf(spec.minBellWidthDp.dp.toPx(), playedW * 0.28f)
+                        val sigma1 = maxOf(playedW * spec.bellWidthFrac, minSigma).coerceAtLeast(1f)
+                        val sigma2 = (sigma1 * 0.78f).coerceAtLeast(1f)
                         val breathe1 = 0.62f + 0.38f * sin((phase * spec.breatheSpeed + spec.breatheOffset) * twoPi)
                         val breathe2 = 0.48f + 0.34f * sin((phase * spec.breatheSpeed * 0.83f + spec.secOffset) * twoPi)
                         val ribbonMaxH = maxWavePx * spec.heightScale * amp * lengthScale
 
-                        var x = startX
-                        while (x < waveEndX) {
-                            val u = (x - startX) / playedW
-                            // Plateau smoothstep: full wave height across 14%..86% of the bar, C1-smooth zero-slope taper only at the ends.
-                            val edgeEnv = smoothstep(0f, 0.14f, u) * smoothstep(1f, 0.86f, u)
+                        val steps = (playedW / stepPx).toInt().coerceAtLeast(16)
+                        for (s in 1 until steps) {
+                            val u = s.toFloat() / steps
+                            val x = startX + u * playedW
+                            val edgeEnv = auroraWaveEnvelope(u)
                             val d1 = (x - center1X) / sigma1
                             val d2 = (x - center2X) / sigma2
                             val h1 = (breathe1 * exp(-d1 * d1 * 1.45f)).coerceIn(0f, 1f)
@@ -407,7 +459,6 @@ fun AuroraSeek(
                             val combined = 1f - (1f - h1) * (1f - h2)
                             val y = baseY - ribbonMaxH * edgeEnv * combined
                             path.lineTo(x, y)
-                            x += stepPx
                         }
                         path.lineTo(waveEndX, baseY)
                         path.close()

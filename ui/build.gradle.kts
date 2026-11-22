@@ -32,6 +32,9 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(compose.uiTooling)
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
     }
 }
 
