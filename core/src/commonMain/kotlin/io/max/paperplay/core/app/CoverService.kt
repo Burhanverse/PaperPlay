@@ -697,6 +697,12 @@ class CoverService(
         if (have <= 0L) return Embedded(failed = true)
         val cover = runCatching { readEmbeddedTags(TagSource(have) { off, n -> readRange(path, off, n) })?.cover }.getOrNull()
             ?.takeIf { looksLikeImage(it, null) }
+        // A start fetched only for the cover stays in TDLib's temp folder forever (its optimizer skips unfinished files), so it is
+        // deleted here. A file that had bytes before (playing or cached) is left alone.
+        val before = file.obj("local")
+        if ((before?.long("downloaded_size") ?: 0L) == 0L && (before?.long("downloaded_prefix_size") ?: 0L) == 0L) {
+            runCatchingCancellable { client.call(request("deleteFile") { put("file_id", fileId) }) }
+        }
         return Embedded(bytes = cover)
     }
 

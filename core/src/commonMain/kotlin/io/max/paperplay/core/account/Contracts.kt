@@ -1,5 +1,7 @@
 package io.max.paperplay.core.account
 
+import kotlinx.serialization.json.JsonObject
+
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -43,7 +45,8 @@ interface AccountApi {
     /** Deletes the audio the account downloaded to play songs the bots cannot read. */
     suspend fun clearDownloads() {}
     /** Keeps those downloads under [maxBytes]. */
-    suspend fun trimDownloads(maxBytes: Long) {}
+    /** Returns TDLib's reply (what was deleted), or null when not connected. [open] false leaves a closed session closed. */
+    suspend fun trimDownloads(maxBytes: Long, open: Boolean = true): JsonObject? = null
 
     /** Which of [ids] this account can still see in [chatId]; null when Telegram could not be asked. */
     suspend fun existingPosts(chatId: Long, ids: List<Long>): Set<Long>? = null
