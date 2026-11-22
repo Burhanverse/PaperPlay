@@ -2,6 +2,23 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.11.0] - 2026-11-22
+
+### Added
+- Add Aurora Wave style seekbar with live settings preview ([`77b1175`](https://github.com/maxcodl/PaperPlay/commit/77b1175737864569d5f9384d37964bcc43a24704))
+
+### Fixed
+- Update AuroraSeek behavior ([`2576771`](https://github.com/maxcodl/PaperPlay/commit/2576771db6d51bd91c2f40913f43752669e5a7d2))
+- Add shutdown hook and graceful services cleanup on exit ([`7ecd60e`](https://github.com/maxcodl/PaperPlay/commit/7ecd60e4e24f7805608c10f5395264eac5cb43f7))
+- Handle unshifted TDLib forum topic IDs and repair legacy data ([`160556a`](https://github.com/maxcodl/PaperPlay/commit/160556af824148a13155ea18c0669f0e01ebe2fa))
+- Correct mouse back button mapping for Linux desktop X11 ([`95aca55`](https://github.com/maxcodl/PaperPlay/commit/95aca550124fa3a1f58d4fe6481cad98fc84730b))
+- Dynamically strip foreign natives based on host OS ([`f2d8373`](https://github.com/maxcodl/PaperPlay/commit/f2d837315394928340e95218bc2148413ca49858))
+- Implement safe usb interface claim lifecycle with tests ([`eb12d72`](https://github.com/maxcodl/PaperPlay/commit/eb12d72c03a5798f24c0d282a614df12d6229fd9))
+- Prevent race conditions and invalid pointers in ring buffer clear and read operations ([`d3f5f41`](https://github.com/maxcodl/PaperPlay/commit/d3f5f412ad2a9354567c1ac124105b5a99ef20f3))
+- Defer USB transfer deallocation until completion callback during active cancellation ([`0a937a3`](https://github.com/maxcodl/PaperPlay/commit/0a937a374f1311363a231b12a428b75f7167c47f))
+
+**Full changes:** [v1.10.0...v1.11.0](https://github.com/maxcodl/PaperPlay/compare/v1.10.0...v1.11.0)
+
 ## [1.10.0] - 2026-11-22
 
 ### Added
