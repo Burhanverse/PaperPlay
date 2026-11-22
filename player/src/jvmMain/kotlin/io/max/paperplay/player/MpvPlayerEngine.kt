@@ -22,12 +22,15 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     private val _bufferedMs = MutableStateFlow(0L)
     private val _currentIndex = MutableStateFlow(-1)
     private val _info = MutableStateFlow<OutputInfo?>(null)
+    private val _bitPerfectStatus = MutableStateFlow<BitPerfectStatus>(BitPerfectStatus.Off)
     override val state: StateFlow<PlayerState> = _state
     override val positionMs: StateFlow<Long> = _positionMs
     override val durationMs: StateFlow<Long> = _durationMs
     override val bufferedMs: StateFlow<Long> = _bufferedMs
     override val currentIndex: StateFlow<Int> = _currentIndex
     override val outputInfo: StateFlow<OutputInfo?> = _info
+    override val supportsBitPerfect: Boolean = true
+    override val bitPerfectStatus: StateFlow<BitPerfectStatus> = _bitPerfectStatus
 
     private val ctx: Pointer = lib.mpv_create() ?: error("mpv_create failed")
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "mpv-cmd").apply { isDaemon = true } }
@@ -330,8 +333,13 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     override fun setEngineOptions(bits: Int) { crossfeed = bits and 4 != 0; cmd { applyFilters() } }
     override fun setCorrectionProfile(text: String?) { profile = text?.let { CorrectionProfile.parse(it) }; cmd { applyFilters() } }
 
+    override fun setBitPerfect(on: Boolean) {
+        setExclusiveOutput(on)
+    }
+
     override fun setExclusiveOutput(on: Boolean) {
         exclusive = on
+        _bitPerfectStatus.value = if (on) BitPerfectStatus.Standby(reason = "Exclusive output requested") else BitPerfectStatus.Off
         // Bit-perfect needs the device opened at each song's own rate. "yes" would keep the first song's rate and convert every later song to it.
         cmd { setProp("gapless-audio", if (on) "weak" else "yes"); setProp("audio-exclusive", if (on) "yes" else "no"); publishInfo() }
     }
@@ -374,35 +382,27 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             if (speed != 1f) add("Speed ${speed}x")
             if (volume < 0.995f) add("Volume ${(volume * 100).toInt()}%")
         }
-        val same = srcFmt != null && srcFmt == outFmt && srcRate == outRate && srcCh == outCh
-        val wasapiExclusive = exclusiveNow && ao?.startsWith("wasapi") == true
-        val perfect = wasapiExclusive && effects.isEmpty() && same
-        val details = buildList {
-            if (srcFmt != null) add("Decoder output" to "$srcFmt, ${srcRate ?: "?"} Hz, ${srcCh ?: "?"} ch")
-            if (outFmt != null) add("Device format" to "$outFmt, ${outRate ?: "?"} Hz, ${outCh ?: "?"} ch" + if (ao != null) " (${if (wasapiExclusive) "WASAPI exclusive" else ao})" else "")
-            plan?.let {
-                add("Curve peak" to "%+.1f dB".format(java.util.Locale.ROOT, it.peakDb))
-                add("Level trim" to "bass %+.1f dB, rest %+.1f dB".format(java.util.Locale.ROOT, it.lowTrimDb, it.highTrimDb))
-            }
-        }
-        _info.value = OutputInfo(
+        val devName = deviceName()
+        val evaluated = MpvBitPerfectBridge.evaluate(
             codec = str("audio-codec-name")?.takeIf { it.isNotBlank() }?.uppercase(),
-            sampleRateHz = srcRate?.takeIf { it > 0 },
-            channels = srcCh?.takeIf { it > 0 },
             bitrateKbps = str("audio-bitrate")?.toDoubleOrNull()?.takeIf { it > 0 }?.let { (it / 1000).toInt() },
-            device = deviceName(),
-            outputRateHz = outRate?.takeIf { it > 0 },
+            srcFmt = srcFmt,
+            srcRate = srcRate,
+            srcCh = srcCh,
+            outFmt = outFmt,
+            outRate = outRate,
+            outCh = outCh,
+            ao = ao,
+            exclusiveNow = exclusiveNow,
+            exclusiveRequested = exclusive,
+            deviceName = devName,
             effects = effects,
-            bitPerfect = perfect,
-            note = when {
-                perfect -> "Exclusive WASAPI output: the samples reach the sound device in the format they were decoded in."
-                effects.isNotEmpty() -> "Effects change the sound before it reaches the output."
-                !exclusiveNow -> "Windows mixes sound at the format set in Sound settings. Turn on exclusive output for bit-perfect playback."
-                !same -> "The device did not accept the decoded format, so mpv converts it."
-                else -> null
-            },
-            details = details,
+            curvePeakDb = plan?.peakDb,
+            lowTrimDb = plan?.lowTrimDb,
+            highTrimDb = plan?.highTrimDb,
         )
+        _info.value = evaluated.outputInfo
+        _bitPerfectStatus.value = evaluated.status
     }
 
     override fun release() {
@@ -420,5 +420,105 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         const val RESTART_THRESHOLD_MS = 3000L
         /** Seeks closer together than this are one seek, to the last place. */
         const val SEEK_SETTLE_MS = 80L
+    }
+}
+
+/** Pure JVM helper computing desktop [OutputInfo] + [BitPerfectStatus] via [BitPerfectEvaluator]. */
+internal object MpvBitPerfectBridge {
+    data class Result(val outputInfo: OutputInfo, val status: BitPerfectStatus)
+
+    fun parsePcmFormat(fmt: String?, rateHz: Int?, ch: Int?): PcmFormat? {
+        if (fmt.isNullOrBlank() || rateHz == null || rateHz <= 0 || ch == null || ch <= 0) return null
+        val norm = fmt.lowercase()
+        return when {
+            norm == "u8" || norm == "u8p" -> PcmFormat(rateHz, 8, 8, 8, SampleEncoding.PCM_INT, ch)
+            norm == "s16" || norm == "s16p" -> PcmFormat(rateHz, 16, 16, 16, SampleEncoding.PCM_INT, ch)
+            norm == "s24" || norm == "s24p" -> PcmFormat(rateHz, 24, 24, 24, SampleEncoding.PCM_INT, ch)
+            norm == "s32" || norm == "s32p" -> PcmFormat(rateHz, 32, 32, 32, SampleEncoding.PCM_INT, ch)
+            norm == "float" || norm == "floatp" || norm == "flt" || norm == "fltp" ->
+                PcmFormat(rateHz, 32, 32, 32, SampleEncoding.PCM_FLOAT, ch)
+            norm == "double" || norm == "dblp" || norm == "dbl" ->
+                PcmFormat(rateHz, 64, 64, 64, SampleEncoding.PCM_FLOAT, ch)
+            else -> null
+        }
+    }
+
+    fun evaluate(
+        codec: String?,
+        bitrateKbps: Int?,
+        srcFmt: String?,
+        srcRate: Int?,
+        srcCh: Int?,
+        outFmt: String?,
+        outRate: Int?,
+        outCh: Int?,
+        ao: String?,
+        exclusiveNow: Boolean,
+        exclusiveRequested: Boolean,
+        deviceName: String,
+        effects: List<String>,
+        curvePeakDb: Double? = null,
+        lowTrimDb: Double? = null,
+        highTrimDb: Double? = null,
+    ): Result {
+        val srcPcm = parsePcmFormat(srcFmt, srcRate, srcCh)
+        val outPcm = parsePcmFormat(outFmt, outRate, outCh)
+        val isWasapi = ao?.startsWith("wasapi") == true
+        val wasapiExclusive = exclusiveNow && isWasapi
+        val transport = TransportInfo(
+            kind = if (wasapiExclusive) TransportKind.WASAPI_EXCLUSIVE else TransportKind.NONE,
+            verified = wasapiExclusive,
+            deviceName = deviceName,
+            protocolVersion = ao,
+            confirmedRateHz = outRate?.takeIf { it > 0 },
+            confirmedBitDepth = outPcm?.wireBitDepth,
+            confirmedContainerBits = outPcm?.containerBits,
+            unverifiedReason = when {
+                !exclusiveNow -> "Windows mixes sound at the format set in Sound settings. Turn on exclusive output for bit-perfect playback."
+                !isWasapi && ao != null -> "Output driver ($ao) is not WASAPI exclusive."
+                else -> null
+            },
+        )
+        val verdict = BitPerfectEvaluator.evaluate(
+            transport = transport,
+            source = srcPcm,
+            output = outPcm,
+            effects = effects,
+            requestedOn = exclusiveRequested,
+        )
+        val details = buildList {
+            if (srcFmt != null) add("Decoder output" to "$srcFmt, ${srcRate ?: "?"} Hz, ${srcCh ?: "?"} ch")
+            if (outFmt != null) add("Device format" to "$outFmt, ${outRate ?: "?"} Hz, ${outCh ?: "?"} ch" + if (ao != null) " (${if (wasapiExclusive) "WASAPI exclusive" else ao})" else "")
+            if (curvePeakDb != null && lowTrimDb != null && highTrimDb != null) {
+                add("Curve peak" to "%+.1f dB".format(java.util.Locale.ROOT, curvePeakDb))
+                add("Level trim" to "bass %+.1f dB, rest %+.1f dB".format(java.util.Locale.ROOT, lowTrimDb, highTrimDb))
+            }
+        }
+        val info = OutputInfo(
+            codec = codec,
+            sampleRateHz = srcRate?.takeIf { it > 0 },
+            channels = srcCh?.takeIf { it > 0 },
+            bitrateKbps = bitrateKbps,
+            bitDepth = srcPcm?.sourceBitDepth,
+            device = deviceName,
+            outputRateHz = outRate?.takeIf { it > 0 },
+            effects = effects,
+            bitPerfect = verdict.bitPerfect,
+            note = verdict.note,
+            details = details,
+            transport = transport,
+        )
+        val status = when {
+            !exclusiveRequested -> BitPerfectStatus.Off
+            verdict.bitPerfect && outRate != null && outPcm != null -> BitPerfectStatus.Active(
+                transportLabel = "WASAPI exclusive",
+                sampleRateHz = outRate,
+                bitDepth = outPcm.wireBitDepth,
+                deviceName = deviceName,
+            )
+            effects.isNotEmpty() -> BitPerfectStatus.Bypassed(verdict.note)
+            else -> BitPerfectStatus.Fallback(verdict.note)
+        }
+        return Result(info, status)
     }
 }

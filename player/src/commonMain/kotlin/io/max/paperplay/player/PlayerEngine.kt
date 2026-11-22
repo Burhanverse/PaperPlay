@@ -4,6 +4,27 @@ import kotlinx.coroutines.flow.StateFlow
 
 enum class PlayerState { Idle, Loading, Playing, Paused, Ended, Error }
 
+/** Developer option selecting the Android audio sink chain for delegate-path diagnostics. */
+enum class SinkChainMode(val id: String, val label: String) {
+    FULL("full", "Full"),
+    NO_DSP_FLOAT_ON("no_dsp_float_on", "No DSP (float on)"),
+    NO_DSP_FLOAT_OFF("no_dsp_float_off", "No DSP (float off)"),
+    PLAIN_FLOAT_OFF("plain_float_off", "Plain (float off)"),
+    PLAIN_FLOAT_ON("plain_float_on", "Plain (float on)");
+
+    val isPlain: Boolean get() = this == PLAIN_FLOAT_OFF || this == PLAIN_FLOAT_ON
+    val isNoDsp: Boolean get() = this == NO_DSP_FLOAT_ON || this == NO_DSP_FLOAT_OFF
+    val sinkFloatOutput: Boolean get() = this == FULL || this == NO_DSP_FLOAT_ON || this == PLAIN_FLOAT_ON
+
+    companion object {
+        fun fromId(id: String?): SinkChainMode = when (id) {
+            "no_dsp" -> NO_DSP_FLOAT_ON
+            "plain" -> PLAIN_FLOAT_OFF
+            else -> entries.firstOrNull { it.id == id } ?: FULL
+        }
+    }
+}
+
 /** Random-access byte source, e.g. a partially downloaded Telegram file. */
 interface StreamSource {
     /** Total size in bytes. */
@@ -78,9 +99,14 @@ data class OutputInfo(
     val note: String? = null,
     /** Further label and value rows the engine can state truthfully (formats, meters). */
     val details: List<Pair<String, String>> = emptyList(),
+    /** Verified transport telemetry when available. */
+    val transport: TransportInfo? = null,
 )
 
 internal val NoOutputInfo: StateFlow<OutputInfo?> = kotlinx.coroutines.flow.MutableStateFlow(null)
+internal val NoBitPerfectStatus: StateFlow<BitPerfectStatus> = kotlinx.coroutines.flow.MutableStateFlow(
+    BitPerfectStatus.Unsupported("Bit-perfect mode is not supported on this engine")
+)
 
 interface PlayerEngine {
     val state: StateFlow<PlayerState>
@@ -105,8 +131,18 @@ interface PlayerEngine {
     fun seek(positionMs: Long)
     /** 0 to 1. */
     fun setVolume(volume: Float)
+    /** Whether the active audio output bypasses software fades (e.g. exclusive USB mode with native hardware gain ramps). */
+    val bypassSoftwareFade: Boolean get() = false
     /** Describes the current track's source format and output path; null until known. */
     val outputInfo: StateFlow<OutputInfo?> get() = NoOutputInfo
+    /** True when this engine can run in verified bit-perfect mode. */
+    val supportsBitPerfect: Boolean get() = false
+    /** Live bit-perfect status for UI & settings. */
+    val bitPerfectStatus: StateFlow<BitPerfectStatus> get() = NoBitPerfectStatus
+    /** Enables or disables unified bit-perfect playback. */
+    fun setBitPerfect(on: Boolean) {}
+    /** Android-only USB DAC & diagnostic controller; null on desktop and non-USB engines. */
+    val dacController: io.max.paperplay.player.usb.UsbDacController? get() = null
     /** Gains in dB for the bands of [EQ_BANDS_HZ], or null to turn the equalizer off. */
     fun setEqualizer(gainsDb: List<Float>?) {}
     /** Extra bass in dB (0 to 12) on top of the equalizer; only engines with a DSP stage use it. */

@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
 import io.max.paperplay.ui.components.uniqueKeys
@@ -327,6 +327,10 @@ private fun PlayerBody(
                         )
                     }
                     if (onQueue != null) IconButton(onQueue) { AppIcon(Icons.AutoMirrored.Rounded.QueueMusic, "Queue") }
+                    if (backend.hasBass) {
+                        val bitPerfect by backend.bitPerfect.collectAsState()
+                        BitPerfectButton(bitPerfect, scheme.onSurface.copy(alpha = 0.7f), Modifier.size(22.dp)) { backend.setBitPerfect(!bitPerfect) }
+                    }
                     // Less used controls live behind one button.
                     var showSleep by remember { mutableStateOf(false) }
                     val sleepAt by backend.sleepAt.collectAsState()
@@ -746,6 +750,24 @@ internal fun OutputInfoDialog(song: SongUi, backend: PlayerControls, onDismiss: 
                 Text(song.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
                 DetailSection("Song", songRows)
                 DetailSection("Sound", rows)
+                info?.transport?.let { t ->
+                    val tRows = buildList {
+                        if (t.verified || t.kind != io.max.paperplay.player.TransportKind.NONE || t.protocolVersion != null) {
+                            add("Route" to (t.kind.displayName + if (t.verified) " (verified)" else ""))
+                        }
+                        t.protocolVersion?.let { add("Protocol" to it) }
+                        t.confirmedRateHz?.let { r ->
+                            t.confirmedBitDepth?.let { d -> add("Confirmed" to "$d-bit / ${khz(r)}") }
+                        }
+                        t.confirmedAlt?.let { add("Alt setting" to "#$it") }
+                        t.syncMode?.let { add("Sync mode" to it) }
+                        t.hardwareVolume?.let { add("Hardware volume" to it) }
+                        if (t.framesConsumed > 0L) add("Frames sent" to "${t.framesConsumed}")
+                        if (t.underruns > 0L) add("Underruns" to "${t.underruns}")
+                        if (t.errors > 0L) add("Transfer errors" to "${t.errors}")
+                    }
+                    DetailSection("Transport", tRows)
+                }
                 if (info == null) Text("Play the song to see how it is decoded and sent to the output.", color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 else Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (perfect) scheme.primaryContainer else scheme.surfaceContainerHighest).padding(14.dp),
@@ -777,11 +799,15 @@ private fun DetailSection(title: String, rows: List<Pair<String, String>>) {
     }
 }
 
-/** PC (mpv engine): one switch for untouched, exclusive output, drawn like the Equalizer switch under it. The equalizer and bass keep their settings and come back when it is off. */
+/** One switch for untouched verified output, drawn like the Equalizer switch under it. Equalizer, bass, levelling and profile keep their settings and come back when it is off. */
 @Composable
 internal fun BitPerfectRow(backend: PlayerControls) {
-    if (!backend.hasBass || io.max.paperplay.ui.isPhone) return
+    if (!backend.hasBass) return
     val on by backend.bitPerfect.collectAsState()
-    SwitchRow("Bit-perfect", on, { backend.setBitPerfect(it) }, io.max.paperplay.ui.components.TrueAudioIcon,
-        "Plays the file untouched through exclusive output. The equalizer and bass are bypassed, and other apps go quiet.")
+    val subtitle = if (io.max.paperplay.ui.isPhone) {
+        "Plays eligible audio untouched on verified USB DACs or bit-perfect mixers. Equalizer, bass, normalise and profile are bypassed."
+    } else {
+        "Plays the file untouched through exclusive output. The equalizer and bass are bypassed, and other apps go quiet."
+    }
+    SwitchRow("Bit-perfect", on, { backend.setBitPerfect(it) }, io.max.paperplay.ui.components.TrueAudioIcon, subtitle)
 }

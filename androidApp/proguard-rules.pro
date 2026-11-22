@@ -12,3 +12,4 @@
 
 # Rust audio engine: JNI looks these up by name.
 -keep class io.max.paperplay.player.EngineNative { *; }
+-keep class io.max.paperplay.player.usb.UsbEngineNative { *; }

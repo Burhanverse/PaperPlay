@@ -1,5 +1,6 @@
 package io.max.paperplay.ui.app
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,7 +43,8 @@ private const val REPO = "https://github.com/maxcodl/PaperPlay"
 internal fun AboutPage(backend: CoreBackend) {
     val updates = backend.services.updates
     val uri = LocalUriHandler.current
-    UpdateHeader(updates)
+    val devUnlocked by backend.devOptionsUnlocked.collectAsState()
+    UpdateHeader(updates, devUnlocked = devUnlocked, onUnlockDevOptions = backend::unlockDevOptions)
     SectionLabel("Updates")
     var beta by remember { mutableStateOf(updates.prefs.beta) }
     DropdownRow(
@@ -104,11 +106,16 @@ private fun shizukuStatus(s: ShizukuControl): Pair<String, String?> = when {
 
 /** The app, its version, the update status in one line, and the one button that fits the state. */
 @Composable
-private fun UpdateHeader(updates: UpdateService) {
+private fun UpdateHeader(
+    updates: UpdateService,
+    devUnlocked: Boolean = false,
+    onUnlockDevOptions: () -> Unit = {},
+) {
     val state by updates.state.collectAsState()
     val scope = rememberCoroutineScope()
     val uri = LocalUriHandler.current
     var blocked by remember { mutableStateOf<InstallBlocked?>(null) }
+    var versionTaps by remember { mutableStateOf(0) }
     // While the install waits for a permission, look for it once a second and carry on as soon as it is granted.
     val hooks = io.max.paperplay.ui.LocalAppEnv.current?.permissions
     LaunchedEffect(blocked) {
@@ -117,11 +124,25 @@ private fun UpdateHeader(updates: UpdateService) {
         blocked = updates.install()
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.clickable {
+                if (!devUnlocked) {
+                    val next = versionTaps + 1
+                    versionTaps = next
+                    if (next >= 7) onUnlockDevOptions()
+                }
+            },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             StaticLogo(size = 48.dp)
             Column(Modifier.padding(start = 16.dp)) {
                 Text("PaperPlay", style = MaterialTheme.typography.titleLarge)
                 Text("Version ${updates.installed}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (devUnlocked) {
+                    Text("Developer options enabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                } else if (versionTaps in 3..6) {
+                    Text("${7 - versionTaps} more taps for developer options", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
         when (val s = state) {

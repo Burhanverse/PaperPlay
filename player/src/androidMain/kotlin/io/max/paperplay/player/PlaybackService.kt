@@ -40,6 +40,8 @@ class PlaybackService : MediaSessionService() {
                 val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                     .add(PlaybackCore.CMD_SET_EQUALIZER)
                     .add(PlaybackCore.CMD_SET_NORMALIZE)
+                    .add(PlaybackCore.CMD_SET_SINK_CHAIN)
+                    .add(PlaybackCore.CMD_REBUILD_FOR_BIT_PERFECT)
                     .build()
                 return MediaSession.ConnectionResult.accept(
                     sessionCommands,
@@ -65,6 +67,15 @@ class PlaybackService : MediaSessionService() {
                 applyNormalize(player?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET)
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
+            if (customCommand.customAction == PlaybackCore.ACTION_SET_SINK_CHAIN && controller.packageName == packageName) {
+                val mode = SinkChainMode.fromId(args.getString(PlaybackCore.EXTRA_SINK_CHAIN))
+                PlaybackCore.savePersistedSinkChain(this@PlaybackService, mode)
+                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
+            if (customCommand.customAction == PlaybackCore.ACTION_REBUILD_FOR_BIT_PERFECT && controller.packageName == packageName) {
+                scheduleRebuildForBitPerfect()
+                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
             return super.onCustomCommand(session, controller, customCommand, args)
         }
     }
@@ -72,6 +83,16 @@ class PlaybackService : MediaSessionService() {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        val savedPref = PlaybackCore.loadPersistedUsbExclusiveMode(this)
+        val savedChain = PlaybackCore.loadPersistedSinkChain(this)
+        val initialFlag = PlaybackCore.usbExclusiveMode
+        PlaybackCore.usbExclusiveMode = savedPref
+        PlayLog.log("usb", "PlaybackService: usbExclusiveMode initial = $savedPref (pref=$savedPref), sinkChain = ${savedChain.id}")
+        if (initialFlag != savedPref) {
+            PlayLog.log("usb", "WARNING: usbExclusiveMode initial mismatch in PlaybackService: flag=$initialFlag pref=$savedPref")
+        }
+        io.max.paperplay.player.usb.UsbRingLog.record("PlaybackService", "usbExclusiveMode initial = $savedPref (pref=$savedPref), sinkChain = ${savedChain.id}", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
+
         // The media notification's small icon is the app's paper plane, not Media3's round play icon. The drawable
         // lives in the app module, so it is looked up by name.
         resources.getIdentifier("ic_stat_paperplay", "drawable", packageName).takeIf { it != 0 }?.let { icon ->
@@ -99,11 +120,17 @@ class PlaybackService : MediaSessionService() {
         applyEqualizer(exo.audioSessionId)
         applyNormalize(exo.audioSessionId)
 
+        val forwardingPlayer = io.max.paperplay.player.usb.UsbVolumeForwardingPlayer(exo, this)
+        io.max.paperplay.player.usb.UsbAudioManager.instance?.forwardingPlayer = forwardingPlayer
+        PlaybackCore.onRebuildPlayerForBitPerfect = {
+            scheduleRebuildForBitPerfect()
+        }
+
         // A tap on the notification opens the app on the player.
         val open = packageManager.getLaunchIntentForPackage(packageName)
             ?.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             ?.putExtra("open", "player")
-        val builder = MediaSession.Builder(this, exo)
+        val builder = MediaSession.Builder(this, forwardingPlayer)
             .setCallback(sessionCallback)
         if (open != null) {
             builder.setSessionActivity(
@@ -118,6 +145,14 @@ class PlaybackService : MediaSessionService() {
         session = builder.build()
     }
 
+    private val rebuildHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val rebuildRunnable = Runnable { rebuildPlayerForBitPerfect() }
+
+    private fun scheduleRebuildForBitPerfect() {
+        rebuildHandler.removeCallbacks(rebuildRunnable)
+        rebuildHandler.postDelayed(rebuildRunnable, 150L)
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     @OptIn(UnstableApi::class)
@@ -129,6 +164,9 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        rebuildHandler.removeCallbacks(rebuildRunnable)
+        PlaybackCore.onRebuildPlayerForBitPerfect = null
+        io.max.paperplay.player.usb.UsbAudioManager.instance?.forwardingPlayer = null
         runCatching { eq?.release() }
         eq = null
         runCatching { leveller?.release() }
@@ -139,6 +177,50 @@ class PlaybackService : MediaSessionService() {
         player?.release()
         player = null
         super.onDestroy()
+    }
+
+    /**
+     * Rebuilds ExoPlayer when Bit-perfect switches between ON and OFF while preserving
+     * current media items, queue index, playback position, playWhenReady, repeat, shuffle,
+     * playback speed, and MediaSession continuity.
+     */
+    @OptIn(UnstableApi::class)
+    private fun rebuildPlayerForBitPerfect() {
+        val old = player ?: return
+        val itemCount = old.mediaItemCount
+        val items = (0 until itemCount).map { old.getMediaItemAt(it) }
+        val index = old.currentMediaItemIndex
+        val posMs = old.currentPosition.coerceAtLeast(0L)
+        val playWhenReady = old.playWhenReady
+        val repeatMode = old.repeatMode
+        val shuffleEnabled = old.shuffleModeEnabled
+        val playbackParams = old.playbackParameters
+
+        old.removeListener(playerListener)
+        old.release()
+
+        val next = PlaybackCore.createPlayer(this)
+        next.addListener(playerListener)
+        next.addListener(PlaybackLogging.listener(next))
+        next.addAnalyticsListener(PlaybackLogging.analytics)
+        player = next
+        applyEqualizer(next.audioSessionId)
+        applyNormalize(next.audioSessionId)
+
+        val newForwardingPlayer = io.max.paperplay.player.usb.UsbVolumeForwardingPlayer(next, this)
+        io.max.paperplay.player.usb.UsbAudioManager.instance?.forwardingPlayer = newForwardingPlayer
+        session?.player = newForwardingPlayer
+
+        next.repeatMode = repeatMode
+        next.shuffleModeEnabled = shuffleEnabled
+        next.playbackParameters = playbackParams
+        if (items.isNotEmpty()) {
+            val safeIdx = if (index in items.indices) index else 0
+            next.setMediaItems(items, safeIdx, posMs)
+            next.prepare()
+        }
+        next.playWhenReady = playWhenReady
+        PlayLog.log("usb", "PlaybackService: rebuilt player (unified=${PlaybackCore.useUnifiedBitPerfect}, exclusive=${PlaybackCore.usbExclusiveMode}, items=${items.size}, idx=$index, pos=$posMs)")
     }
 
     /** A limiter that pulls loud peaks down and lifts the rest, so songs mastered at different levels sound alike. Needs Android 9. */

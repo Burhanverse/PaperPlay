@@ -303,32 +303,40 @@ class PlaybackController(
     }
 
     fun play() {
-        if (engine.state.value == PlayerState.Paused && baseVolume > 0f) {
+        if (!engine.bypassSoftwareFade && engine.state.value == PlayerState.Paused && baseVolume > 0f) {
             fadeJob?.cancel()
             engine.setVolume(0f)
             engine.play()
             fade(baseVolume, 0f)
         } else {
             fadeJob?.cancel()
-            engine.setVolume(baseVolume)
+            if (!engine.bypassSoftwareFade) {
+                engine.setVolume(baseVolume)
+            }
             engine.play()
         }
     }
 
     /** Pausing a playing song fades out over a fifth of a second, then pauses. */
     fun pause() {
-        if (engine.state.value == PlayerState.Playing && baseVolume > 0f) {
+        if (!engine.bypassSoftwareFade && engine.state.value == PlayerState.Playing && baseVolume > 0f) {
             fade(0f, baseVolume) { engine.pause(); engine.setVolume(baseVolume) }
         } else {
             fadeJob?.cancel()
             engine.pause()
-            engine.setVolume(baseVolume)
+            if (!engine.bypassSoftwareFade) {
+                engine.setVolume(baseVolume)
+            }
         }
         scope.launch { runCatching { resolver.pauseAll() } }
     }
     fun seek(positionMs: Long) = engine.seek(positionMs)
     fun setVolume(volume: Float) { baseVolume = volume; if (fadeJob?.isActive != true) engine.setVolume(volume) }
     val outputInfo get() = engine.outputInfo
+    val supportsBitPerfect: Boolean get() = engine.supportsBitPerfect
+    val bitPerfectStatus get() = engine.bitPerfectStatus
+    val dacController get() = engine.dacController
+    fun setBitPerfect(on: Boolean) = engine.setBitPerfect(on)
     fun setEqualizer(gainsDb: List<Float>?) = engine.setEqualizer(gainsDb)
     fun setBass(db: Float) = engine.setBass(db)
     fun setExactLevel(on: Boolean) = engine.setExactLevel(on)

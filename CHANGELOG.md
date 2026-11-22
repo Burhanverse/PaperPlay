@@ -2,6 +2,14 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [Unreleased]
+
+### Added
+- Shared Bit-perfect architecture across Android and desktop: one unified `Bit-perfect` switch (off by default), `BitPerfectRouter`, verified-only `BitPerfectEvaluator`, exact 2^23 float32<->int24 round-trip and integer widening, speed bypass at non-1.0x, DoP hard-stop safety, and platform-isolated backup keys (`bit_perfect_mode.android` / `bit_perfect_mode.desktop`) with Android backup restore SharedPreferences re-sync
+- Android: split standalone lazily-loaded `libusb_audio.so` (`engine/usb_audio/`, dynamically linked to LGPL `libusb-1.0.so`, 16 KB aligned) from pure DSP `libengine.so`; moved UAC 1.0/2.0 descriptor and topology resolution into Kotlin (`UsbDescriptorParser`, `UsbTopologyResolver`); added 25 s pause timeout release and immediate release on screen-off/route change/hot-unplug
+- UI: unified `Bit-perfect` switch in Settings > Listening, Equalizer page/dialog (`BitPerfectRow`), and player bar (`BitPerfectButton`); renamed Android Settings > Listening subpage to `USB DAC` (hidden on desktop); one-time `vid:pid` USB discovery hint card; dev-gated `USB probe`
+- Player: Screen-off and Doze CPU wakelock via Media3 `C.WAKE_MODE_LOCAL` and in-memory diagnostic ring log (`UsbRingLog`) with `PHASE0_SUMMARY` export
+
 ## [1.9.12] - 2026-11-19
 
 ### Documentation

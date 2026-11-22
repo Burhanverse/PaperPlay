@@ -30,6 +30,14 @@ __pycache__/
 # Rust engine build output
 engine/target/
 androidApp/src/main/jniLibs/arm64-v8a/libengine.so
+androidApp/src/main/jniLibs/arm64-v8a/libusb_audio.so
+androidApp/src/main/jniLibs/arm64-v8a/libusb-1.0.so
+.kotlin/
+dac-dump.txt
+usb_debug_log_*.txt
+*.raw
+scripts/test_audio/
+scratch/
 
 # Local secrets for manual Telegram tests: never commit
 .secrets/

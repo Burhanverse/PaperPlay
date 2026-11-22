@@ -10,6 +10,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -293,5 +294,98 @@ class MpvPlayerEngineTest {
             return amp(r, rate * 2, 300.0, rate)
         }
         assertTrue(right(0.5f) != right(1.5f), "width had no effect")
+    }
+
+    @Test
+    fun `MpvBitPerfectBridge passes lossless 16 to 24 or 32 WASAPI widening and rejects effects or truncation`() {
+        val dev = "DAC (WASAPI exclusive)"
+        val v16to32 = MpvBitPerfectBridge.evaluate(
+            codec = "FLAC",
+            bitrateKbps = 900,
+            srcFmt = "s16",
+            srcRate = 44100,
+            srcCh = 2,
+            outFmt = "s32",
+            outRate = 44100,
+            outCh = 2,
+            ao = "wasapi",
+            exclusiveNow = true,
+            exclusiveRequested = true,
+            deviceName = dev,
+            effects = emptyList(),
+        )
+        assertTrue(v16to32.outputInfo.bitPerfect, v16to32.outputInfo.note)
+        assertTrue(v16to32.status is BitPerfectStatus.Active)
+
+        val v16to24 = MpvBitPerfectBridge.evaluate(
+            codec = "FLAC",
+            bitrateKbps = 1000,
+            srcFmt = "s16",
+            srcRate = 48000,
+            srcCh = 2,
+            outFmt = "s24",
+            outRate = 48000,
+            outCh = 2,
+            ao = "wasapi",
+            exclusiveNow = true,
+            exclusiveRequested = true,
+            deviceName = dev,
+            effects = emptyList(),
+        )
+        assertTrue(v16to24.outputInfo.bitPerfect, v16to24.outputInfo.note)
+
+        val withEffects = MpvBitPerfectBridge.evaluate(
+            codec = "FLAC",
+            bitrateKbps = 900,
+            srcFmt = "s16",
+            srcRate = 44100,
+            srcCh = 2,
+            outFmt = "s32",
+            outRate = 44100,
+            outCh = 2,
+            ao = "wasapi",
+            exclusiveNow = true,
+            exclusiveRequested = true,
+            deviceName = dev,
+            effects = listOf("Equalizer"),
+        )
+        assertFalse(withEffects.outputInfo.bitPerfect)
+        assertTrue(withEffects.status is BitPerfectStatus.Bypassed)
+
+        val truncated = MpvBitPerfectBridge.evaluate(
+            codec = "FLAC",
+            bitrateKbps = 2500,
+            srcFmt = "s24",
+            srcRate = 96000,
+            srcCh = 2,
+            outFmt = "s16",
+            outRate = 96000,
+            outCh = 2,
+            ao = "wasapi",
+            exclusiveNow = true,
+            exclusiveRequested = true,
+            deviceName = dev,
+            effects = emptyList(),
+        )
+        assertFalse(truncated.outputInfo.bitPerfect)
+        assertTrue(truncated.status is BitPerfectStatus.Fallback)
+
+        val nonExclusive = MpvBitPerfectBridge.evaluate(
+            codec = "FLAC",
+            bitrateKbps = 900,
+            srcFmt = "s16",
+            srcRate = 44100,
+            srcCh = 2,
+            outFmt = "s32",
+            outRate = 44100,
+            outCh = 2,
+            ao = "wasapi",
+            exclusiveNow = false,
+            exclusiveRequested = false,
+            deviceName = "Speakers",
+            effects = emptyList(),
+        )
+        assertFalse(nonExclusive.outputInfo.bitPerfect)
+        assertTrue(nonExclusive.status is BitPerfectStatus.Off)
     }
 }

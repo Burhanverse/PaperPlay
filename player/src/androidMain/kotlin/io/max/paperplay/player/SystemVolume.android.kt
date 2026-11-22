@@ -18,6 +18,20 @@ actual object SystemVolume {
         val a = audio() ?: return false
         val max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         if (max <= 0) return false
-        return runCatching { a.setStreamVolume(AudioManager.STREAM_MUSIC, (volume.coerceIn(0f, 1f) * max).roundToInt().coerceIn(0, max), 0) }.isSuccess
+        val targetIdx = (volume.coerceIn(0f, 1f) * max).roundToInt().coerceIn(0, max)
+        val curIdx = a.getStreamVolume(AudioManager.STREAM_MUSIC)
+        if (targetIdx == curIdx) {
+            return true // Dedupe repeated writes of the same index
+        }
+        val caller = Throwable().stackTrace.take(6).joinToString(" -> ") {
+            "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}"
+        }
+        PlayLog.log("volume", "SystemVolume.set($volume): $curIdx -> $targetIdx from $caller")
+        io.max.paperplay.player.usb.UsbRingLog.record("Volume", "SystemVolume.set $curIdx->$targetIdx from $caller", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
+        val ok = runCatching { a.setStreamVolume(AudioManager.STREAM_MUSIC, targetIdx, 0) }.isSuccess
+        if (ok) {
+            io.max.paperplay.player.usb.UsbAudioManager.instance?.onSystemVolumeChanged(isUser = true)
+        }
+        return ok
     }
 }

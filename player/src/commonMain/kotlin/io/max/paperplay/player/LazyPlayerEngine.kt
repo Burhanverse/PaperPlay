@@ -1,5 +1,6 @@
 package io.max.paperplay.player
 
+import io.max.paperplay.player.usb.UsbDacController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,6 +14,9 @@ import kotlinx.coroutines.launch
  * Restoring a session or adjusting settings before playback does not initialize the real engine.
  */
 class LazyPlayerEngine(
+    override val supportsBitPerfect: Boolean = false,
+    override val dacController: UsbDacController? = null,
+    private val onPendingBitPerfect: ((Boolean) -> Unit)? = null,
     private val factory: () -> PlayerEngine,
 ) : PlayerEngine {
     @kotlin.concurrent.Volatile
@@ -26,6 +30,9 @@ class LazyPlayerEngine(
     private val _bufferedMs = MutableStateFlow(0L)
     private val _currentIndex = MutableStateFlow(-1)
     private val _outputInfo = MutableStateFlow<OutputInfo?>(null)
+    private val _bitPerfectStatus = MutableStateFlow<BitPerfectStatus>(
+        if (supportsBitPerfect) BitPerfectStatus.Off else BitPerfectStatus.Unsupported("Bit-perfect mode is not supported on this engine")
+    )
 
     override val state: StateFlow<PlayerState> get() = _state
     override val positionMs: StateFlow<Long> get() = _positionMs
@@ -33,6 +40,7 @@ class LazyPlayerEngine(
     override val bufferedMs: StateFlow<Long> get() = _bufferedMs
     override val currentIndex: StateFlow<Int> get() = _currentIndex
     override val outputInfo: StateFlow<OutputInfo?> get() = _outputInfo
+    override val bitPerfectStatus: StateFlow<BitPerfectStatus> get() = _bitPerfectStatus
 
     val isCreated: Boolean get() = real != null
 
@@ -47,6 +55,7 @@ class LazyPlayerEngine(
     private var pendingEarphone: String? = null
     private var earphoneSet = false
     private var pendingOptions: Int? = null
+    private var pendingBitPerfect: Boolean? = null
     private var pendingExclusive: Boolean? = null
     private var pendingProfile: String? = null
     private var profileSet = false
@@ -79,6 +88,7 @@ class LazyPlayerEngine(
             pendingWidth?.let { engine.setStereoWidth(it) }
             if (earphoneSet) engine.setEarphoneCorrection(pendingEarphone)
             pendingOptions?.let { engine.setEngineOptions(it) }
+            pendingBitPerfect?.let { engine.setBitPerfect(it) }
             pendingExclusive?.let { engine.setExclusiveOutput(it) }
             if (profileSet) engine.setCorrectionProfile(pendingProfile)
             pendingSpeed?.let { engine.setSpeed(it) }
@@ -101,6 +111,7 @@ class LazyPlayerEngine(
             scope.launch { engine.bufferedMs.collect { _bufferedMs.value = it } }
             scope.launch { engine.currentIndex.collect { _currentIndex.value = it } }
             scope.launch { engine.outputInfo.collect { _outputInfo.value = it } }
+            scope.launch { engine.bitPerfectStatus.collect { _bitPerfectStatus.value = it } }
 
             real = engine
             engine
@@ -112,44 +123,43 @@ class LazyPlayerEngine(
         if (r == null) {
             if (items.isEmpty()) {
                 pendingQueue = null
-                pendingIndex = -1
-                pendingSeekMs = 0L
                 _currentIndex.value = -1
                 _state.value = PlayerState.Idle
                 return
             }
-            pendingQueue = items
-            pendingIndex = startIndex
-            pendingSeekMs = 0L
-            ensureReal()
+            ensureReal().setQueue(items, startIndex)
         } else {
             r.setQueue(items, startIndex)
         }
     }
 
     override fun play() {
-        val r = ensureReal()
-        r.play()
+        val r = real
+        if (r == null) {
+            val q = pendingQueue
+            if (q == null || q.isEmpty()) return
+        }
+        ensureReal().play()
     }
 
     override fun pause() {
-        real?.pause() ?: run { _state.value = PlayerState.Paused }
+        val r = real
+        if (r == null) {
+            if (_state.value == PlayerState.Playing || _state.value == PlayerState.Paused) {
+                _state.value = PlayerState.Paused
+            }
+            return
+        }
+        r.pause()
     }
 
-    override fun next() {
-        val r = ensureReal()
-        r.next()
-    }
-
-    override fun previous() {
-        val r = ensureReal()
-        r.previous()
-    }
+    override fun next() = ensureReal().next()
+    override fun previous() = ensureReal().previous()
 
     override fun seek(positionMs: Long) {
         val r = real
         if (r == null) {
-            _positionMs.value = positionMs
+            if (pendingQueue == null) return
             pendingSeekMs = positionMs
             val wasPaused = _state.value == PlayerState.Paused
             val engine = ensureReal()
@@ -163,6 +173,24 @@ class LazyPlayerEngine(
     override fun setVolume(volume: Float) {
         pendingVolume = volume
         real?.setVolume(volume)
+    }
+
+    override val bypassSoftwareFade: Boolean
+        get() = real?.bypassSoftwareFade ?: false
+
+    override fun setBitPerfect(on: Boolean) {
+        pendingBitPerfect = on
+        val r = real
+        if (r != null) {
+            r.setBitPerfect(on)
+        } else {
+            _bitPerfectStatus.value = when {
+                !supportsBitPerfect -> BitPerfectStatus.Unsupported("Bit-perfect mode is not supported on this engine")
+                on -> BitPerfectStatus.Standby()
+                else -> BitPerfectStatus.Off
+            }
+            onPendingBitPerfect?.invoke(on)
+        }
     }
 
     override fun setExclusiveOutput(on: Boolean) {

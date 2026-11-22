@@ -25,6 +25,7 @@ val layoutPrefs = listOf(
     "norm_mode", "norm_preamp", "eq_on", "eq_gains", "rate_filing", "rate_uploads", "rate_reading",
     "rate_lookups", "rate_covers", "rate_accountCopy", "upload_slower", "upload_parallel", "upload_ask",
     "upload_skip_known", "keep_running", "listenbrainz_on", "weather_city", "weather_lat", "weather_lon",
+    "bit_perfect_mode.android", "bit_perfect_mode.desktop",
 ) + backgroundPrefs + standbyPrefs
 
 /** Prefs tied to one device (Flutter `AppDb.devicePrefs`): kept from this device, never taken from a backup. */
@@ -37,6 +38,8 @@ val devicePrefs = listOf(
     "topics_read", "floating_nav", "nav_radius", "nav_style", "glass_style", "reduce_motion", "profile_name", "profile_photo",
     "profile_name_at", "profile_photo_at", "file_here", "file_existing", "upload_ask", "keep_running", "export_lists", "lan_paired", "lan_name", "lan_port", "lan_on",
     "lan_require_pairing", "lan_token_mode", "bg_image",
+    "bit_perfect_mode", "bit_perfect_mode.android", "bit_perfect_mode.desktop",
+    "pc_bitperfect", "pc_exclusive", "usb_exclusive_mode",
 ) + backgroundPrefs + standbyPrefs
 
 /** One file in the backup zip, read once, in zip order. */
