@@ -3,12 +3,12 @@
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use libusb1_sys::{
     libusb_alloc_transfer, libusb_cancel_transfer, libusb_fill_iso_transfer,
-    libusb_free_transfer, libusb_submit_transfer, libusb_transfer,
+    libusb_free_transfer, libusb_iso_packet_descriptor, libusb_submit_transfer, libusb_transfer,
 };
 
 const STATE_IDLE: u8 = 0;
@@ -27,11 +27,15 @@ unsafe fn free_transfer_and_user_data(
     drop(Box::from_raw(user_data_ptr));
 }
 
-/// Lock-free transfer completion state.
+/// Lock-free transfer completion state, including per-packet ISO error/short telemetry.
 pub struct IsoTransferCompletion {
     pub completed: AtomicBool,
     pub status: AtomicI32,
     pub actual_length: AtomicUsize,
+    pub pkt_err_count: AtomicU32,
+    pub pkt_short_count: AtomicU32,
+    pub last_pkt_err_status: AtomicI32,
+    pub first_err_pkt_idx: AtomicI32,
 }
 
 impl IsoTransferCompletion {
@@ -40,6 +44,10 @@ impl IsoTransferCompletion {
             completed: AtomicBool::new(false),
             status: AtomicI32::new(0),
             actual_length: AtomicUsize::new(0),
+            pkt_err_count: AtomicU32::new(0),
+            pkt_short_count: AtomicU32::new(0),
+            last_pkt_err_status: AtomicI32::new(0),
+            first_err_pkt_idx: AtomicI32::new(-1),
         }
     }
 
@@ -47,7 +55,37 @@ impl IsoTransferCompletion {
         self.completed.store(false, Ordering::Release);
         self.status.store(0, Ordering::Release);
         self.actual_length.store(0, Ordering::Release);
+        self.pkt_err_count.store(0, Ordering::Release);
+        self.pkt_short_count.store(0, Ordering::Release);
+        self.last_pkt_err_status.store(0, Ordering::Release);
+        self.first_err_pkt_idx.store(-1, Ordering::Release);
     }
+}
+
+/// Inspects every ISO packet descriptor in a completed libusb transfer.
+/// Returns `(pkt_err_count, pkt_short_count, last_err_status, first_err_pkt_idx)`.
+/// Zero allocations, zero locks, panic-free.
+#[inline]
+pub(crate) fn inspect_iso_packets(descs: &[libusb_iso_packet_descriptor]) -> (u32, u32, i32, i32) {
+    let mut err_count: u32 = 0;
+    let mut short_count: u32 = 0;
+    let mut last_err_status: i32 = 0;
+    let mut first_err_idx: i32 = -1;
+    for (i, d) in descs.iter().enumerate() {
+        if d.status != libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED {
+            err_count = err_count.saturating_add(1);
+            last_err_status = d.status;
+            if first_err_idx < 0 {
+                first_err_idx = i as i32;
+            }
+        } else if d.actual_length != d.length {
+            short_count = short_count.saturating_add(1);
+            if first_err_idx < 0 {
+                first_err_idx = i as i32;
+            }
+        }
+    }
+    (err_count, short_count, last_err_status, first_err_idx)
 }
 
 /// User data structure passed into libusb callbacks.
@@ -255,7 +293,7 @@ impl Drop for IsoTransferSlot {
 }
 
 /// Real-time callback triggered when a transfer completes or fails.
-/// Catches unwinds to prevent panic across FFI boundaries. Zero locks.
+/// Catches unwinds to prevent panic across FFI boundaries. Zero locks, zero allocations.
 extern "system" fn iso_transfer_callback(transfer: *mut libusb_transfer) {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if transfer.is_null() {
@@ -268,10 +306,24 @@ extern "system" fn iso_transfer_callback(transfer: *mut libusb_transfer) {
             }
             let status = (*transfer).status;
             let actual_length = (*transfer).actual_length as usize;
+            let num_pkts = (*transfer).num_iso_packets.max(0) as usize;
+            let (pkt_errs, pkt_shorts, last_pkt_err, first_err_idx) = if num_pkts > 0 {
+                let descs = std::slice::from_raw_parts(
+                    (*transfer).iso_packet_desc.as_ptr(),
+                    num_pkts,
+                );
+                inspect_iso_packets(descs)
+            } else {
+                (0, 0, 0, -1)
+            };
             let prev_state = {
                 let user_data = &*user_data_ptr;
                 user_data.completion.status.store(status, Ordering::Release);
                 user_data.completion.actual_length.store(actual_length, Ordering::Release);
+                user_data.completion.pkt_err_count.store(pkt_errs, Ordering::Release);
+                user_data.completion.pkt_short_count.store(pkt_shorts, Ordering::Release);
+                user_data.completion.last_pkt_err_status.store(last_pkt_err, Ordering::Release);
+                user_data.completion.first_err_pkt_idx.store(first_err_idx, Ordering::Release);
                 user_data.completion.completed.store(true, Ordering::Release);
                 user_data.lifecycle.swap(STATE_COMPLETED, Ordering::AcqRel)
             };
@@ -385,5 +437,72 @@ mod tests {
 
         assert_eq!(Arc::strong_count(&completion), 1);
         assert!(freed_transfer.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_inspect_iso_packets_detects_per_packet_errors_and_short_packets() {
+        let mk_ok = || libusb_iso_packet_descriptor {
+            length: 192,
+            actual_length: 192,
+            status: libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED,
+        };
+        let short = libusb_iso_packet_descriptor {
+            length: 192,
+            actual_length: 96,
+            status: libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED,
+        };
+        let err_proto = libusb_iso_packet_descriptor {
+            length: 192,
+            actual_length: 0,
+            status: libusb1_sys::constants::LIBUSB_TRANSFER_ERROR,
+        };
+        let err_timeout = libusb_iso_packet_descriptor {
+            length: 192,
+            actual_length: 0,
+            status: libusb1_sys::constants::LIBUSB_TRANSFER_TIMED_OUT,
+        };
+
+        assert_eq!(inspect_iso_packets(&[mk_ok(), mk_ok(), mk_ok()]), (0, 0, 0, -1));
+        assert_eq!(
+            inspect_iso_packets(&[mk_ok(), short, err_proto, err_timeout]),
+            (2, 1, libusb1_sys::constants::LIBUSB_TRANSFER_TIMED_OUT, 1)
+        );
+    }
+
+    #[test]
+    fn test_callback_records_per_packet_errors_even_when_top_status_completed() {
+        let mut slot = IsoTransferSlot::new(4, 128).expect("Slot allocation succeeded");
+        let completion = Arc::clone(&slot.completion);
+        let raw_transfer = slot.transfer.as_ptr();
+        unsafe {
+            (*raw_transfer).user_data = slot.user_data as *mut c_void;
+            (*raw_transfer).status = libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED;
+            (*raw_transfer).actual_length = 256;
+            (*raw_transfer).num_iso_packets = 4;
+            let descs = (*raw_transfer).iso_packet_desc.as_mut_ptr();
+            (*descs.add(0)).length = 64;
+            (*descs.add(0)).actual_length = 64;
+            (*descs.add(0)).status = libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED;
+            (*descs.add(1)).length = 64;
+            (*descs.add(1)).actual_length = 32;
+            (*descs.add(1)).status = libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED;
+            (*descs.add(2)).length = 64;
+            (*descs.add(2)).actual_length = 0;
+            (*descs.add(2)).status = libusb1_sys::constants::LIBUSB_TRANSFER_ERROR;
+            (*descs.add(3)).length = 64;
+            (*descs.add(3)).actual_length = 64;
+            (*descs.add(3)).status = libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED;
+            (*slot.user_data).lifecycle.store(STATE_IN_FLIGHT, Ordering::Release);
+        }
+        slot.in_flight = true;
+
+        iso_transfer_callback(raw_transfer);
+
+        assert!(completion.completed.load(Ordering::Acquire));
+        assert_eq!(completion.status.load(Ordering::Acquire), libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED);
+        assert_eq!(completion.pkt_err_count.load(Ordering::Acquire), 1);
+        assert_eq!(completion.pkt_short_count.load(Ordering::Acquire), 1);
+        assert_eq!(completion.last_pkt_err_status.load(Ordering::Acquire), libusb1_sys::constants::LIBUSB_TRANSFER_ERROR);
+        assert_eq!(completion.first_err_pkt_idx.load(Ordering::Acquire), 1);
     }
 }

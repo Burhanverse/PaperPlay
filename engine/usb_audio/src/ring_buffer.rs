@@ -2,7 +2,7 @@
 //! Bounded to <= 1 MB. Zero locks, zero allocations in audio path.
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 pub const DEFAULT_RING_CAPACITY: usize = 1048576; // 1 MB (power of 2)
 
@@ -16,6 +16,15 @@ pub struct SpscRingBuffer {
     pub frames_consumed: AtomicU64,
     pub underruns: AtomicU64,
     pub urb_errors: AtomicU64,
+    pub pkt_errors: AtomicU64,
+    pub pkt_shorts: AtomicU64,
+    pub last_pkt_err_status: AtomicI32,
+    pub late_callbacks: AtomicU64,
+    pub max_cb_gap_us: AtomicU64,
+    pub max_slots_per_wakeup: AtomicU32,
+    pub min_ring_fill: AtomicUsize,
+    pub active_slots: AtomicU32,
+    pub cushion_escalations: AtomicU32,
 }
 
 unsafe impl Send for SpscRingBuffer {}
@@ -46,6 +55,15 @@ impl SpscRingBuffer {
             frames_consumed: AtomicU64::new(0),
             underruns: AtomicU64::new(0),
             urb_errors: AtomicU64::new(0),
+            pkt_errors: AtomicU64::new(0),
+            pkt_shorts: AtomicU64::new(0),
+            last_pkt_err_status: AtomicI32::new(0),
+            late_callbacks: AtomicU64::new(0),
+            max_cb_gap_us: AtomicU64::new(0),
+            max_slots_per_wakeup: AtomicU32::new(0),
+            min_ring_fill: AtomicUsize::new(actual_cap),
+            active_slots: AtomicU32::new(0),
+            cushion_escalations: AtomicU32::new(0),
         }
     }
 

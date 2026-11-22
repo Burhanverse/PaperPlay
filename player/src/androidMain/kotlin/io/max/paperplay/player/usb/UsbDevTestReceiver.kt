@@ -98,6 +98,17 @@ class UsbDevTestReceiver : BroadcastReceiver() {
                 }
             }
             "status" -> writeStatusSnapshot(context)
+            "export_debug_log" -> {
+                val pr = goAsync()
+                Thread {
+                    try {
+                        val report = UsbAudioProbe.buildFullDebugReport(context.applicationContext, "DEV_SOAK_EXPORT")
+                        File(context.cacheDir, "usb_dev_full_report.txt").writeText(report)
+                    } finally {
+                        pr.finish()
+                    }
+                }.start()
+            }
             "read_dac_baseline" -> {
                 val pr = goAsync()
                 Thread {
@@ -166,6 +177,7 @@ class UsbDevTestReceiver : BroadcastReceiver() {
             appendLine("bitPerfectStatus=${mgrStatus ?: BitPerfectStatus.Off}")
             appendLine("pcmDumpStatus=${UsbPcmDumper.status}")
             appendLine("pcmDumpPath=${UsbPcmDumper.dumpFilePath ?: ""}")
+            appendLine("powerSnapshot=${UsbPowerTelemetry.snapshotSummary(context)}")
             appendLine("phase0=$phase0")
             val nlog = if (UsbEngineNative.isAlreadyLoaded) UsbEngineNative.getNativeLog().orEmpty() else ""
             appendLine("---NATIVE_RING_LOG---")

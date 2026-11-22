@@ -42,6 +42,7 @@ fun initPlayer(context: Context, upstream: DataSource.Factory? = null) {
     if (initialFlag != savedPref) {
         PlayLog.log("usb", "WARNING: usbExclusiveMode initial mismatch in initPlayer: flag=$initialFlag pref=$savedPref")
     }
+    io.max.paperplay.player.usb.UsbPowerTelemetry.start(context.applicationContext)
     io.max.paperplay.player.usb.UsbRingLog.record("InitPlayer", "usbExclusiveMode initial = $savedPref (pref=$savedPref), sinkChain = ${savedChain.id}", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
     if (PlaybackCore.useUnifiedBitPerfect) {
         val um = io.max.paperplay.player.usb.UnifiedUsbDacManager.instance

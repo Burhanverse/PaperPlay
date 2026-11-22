@@ -40,6 +40,7 @@ object UsbRingLog {
     const val CODE_PERIODIC_STATS = 30
     const val CODE_CONTROL_REQ = 31
     const val CODE_SINK_UNDERRUN = 32
+    const val CODE_POWER_EVENT = 33
     const val CODE_ERROR = 99
 
     class Entry {
@@ -142,12 +143,15 @@ object UsbRingLog {
             CODE_SINK_FALLBACK -> "SINK_FALLBACK reason=${entry.message}"
             CODE_PERIODIC_STATS -> "PERIODIC_STATS framesConsumed=${entry.arg1} underruns=${entry.arg2}"
             CODE_CONTROL_REQ -> "CONTROL_REQ ${entry.message}"
+            CODE_POWER_EVENT -> "POWER_EVENT ${entry.message}"
             CODE_ERROR -> "ERROR err=${entry.message} code=${entry.arg1}"
             else -> entry.message ?: "EVENT(${entry.code}) a1=${entry.arg1} a2=${entry.arg2}"
         }
         val extra = if (entry.message != null &&
             entry.code != CODE_GENERIC &&
             entry.code != CODE_SINK_FALLBACK &&
+            entry.code != CODE_CONTROL_REQ &&
+            entry.code != CODE_POWER_EVENT &&
             entry.code != CODE_ERROR
         ) {
             " [${entry.message}]"

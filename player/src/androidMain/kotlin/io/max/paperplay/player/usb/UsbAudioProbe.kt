@@ -717,7 +717,21 @@ object UsbAudioProbe {
         sb.appendLine()
 
         sb.appendLine("--------------------------------------------------------------------------------")
-        sb.appendLine("3. APPLICATION LOGCAT (logcat -d -v time)")
+        sb.appendLine("3. POWER, DOZE, THERMAL & STANDBY TELEMETRY")
+        sb.appendLine("--------------------------------------------------------------------------------")
+        sb.appendLine("Current: ${UsbPowerTelemetry.snapshotSummary(context)}")
+        val powerEvents = UsbPowerTelemetry.dumpEvents()
+        if (powerEvents.isEmpty()) {
+            sb.appendLine("(No power telemetry events recorded yet)")
+        } else {
+            for (line in powerEvents) {
+                sb.appendLine(line)
+            }
+        }
+        sb.appendLine()
+
+        sb.appendLine("--------------------------------------------------------------------------------")
+        sb.appendLine("4. APPLICATION LOGCAT (logcat -d -v time)")
         sb.appendLine("--------------------------------------------------------------------------------")
         sb.appendLine(captureLogcat())
         sb.appendLine("================================================================================")

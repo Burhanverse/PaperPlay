@@ -14,11 +14,118 @@ use super::ring_buffer::SpscRingBuffer;
 use super::session::apply_pcm_ramp_frame;
 use super::transfer::IsoTransferSlot;
 use crate::log::{
-    GLOBAL_NATIVE_LOG, TAG_HOT_UNPLUG, TAG_PERIODIC_STATS, TAG_STREAM_START, TAG_STREAM_STOP,
-    TAG_URB_PACKET_ERR, TAG_URB_REAP_ERR, TAG_URB_SUBMIT_ERR,
+    record_thread_sched_detail, GLOBAL_NATIVE_LOG, TAG_HOT_UNPLUG, TAG_JITTER_STATS,
+    TAG_PERIODIC_STATS, TAG_STREAM_START, TAG_STREAM_STOP, TAG_THREAD_SCHED, TAG_URB_PACKET_ERR,
+    TAG_URB_REAP_ERR, TAG_URB_SUBMIT_ERR,
 };
 
 pub const NUM_AUDIO_SLOTS: usize = 8;
+pub const LATE_CALLBACK_THRESHOLD_US: u64 = 15_000;
+
+/// Per-5s window jitter & scheduling telemetry accumulator (zero allocations, zero locks).
+pub(crate) struct JitterWindowStats {
+    pub max_cb_gap_us: u64,
+    pub late_cb_15ms: u32,
+    pub max_slots_wakeup: u32,
+    pub min_ring_fill: usize,
+    pub saw_fill_sample: bool,
+    pub cpu_mask: u64,
+    pub last_cpu: i32,
+}
+
+impl JitterWindowStats {
+    pub fn new(ring_capacity: usize) -> Self {
+        Self {
+            max_cb_gap_us: 0,
+            late_cb_15ms: 0,
+            max_slots_wakeup: 0,
+            min_ring_fill: ring_capacity,
+            saw_fill_sample: false,
+            cpu_mask: 0,
+            last_cpu: -1,
+        }
+    }
+
+    #[inline]
+    pub fn record_wakeup(&mut self, gap_us: Option<u64>, slots_completed: u32, cpu: i32) {
+        if let Some(gap) = gap_us {
+            if gap > self.max_cb_gap_us {
+                self.max_cb_gap_us = gap;
+            }
+            if gap > LATE_CALLBACK_THRESHOLD_US {
+                self.late_cb_15ms = self.late_cb_15ms.saturating_add(1);
+            }
+        }
+        if slots_completed > self.max_slots_wakeup {
+            self.max_slots_wakeup = slots_completed;
+        }
+        if cpu >= 0 {
+            self.last_cpu = cpu;
+            if cpu < 48 {
+                self.cpu_mask |= 1u64 << (cpu as u64);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn record_fill(&mut self, fill_bytes: usize) {
+        if !self.saw_fill_sample || fill_bytes < self.min_ring_fill {
+            self.min_ring_fill = fill_bytes;
+            self.saw_fill_sample = true;
+        }
+    }
+
+    #[inline]
+    pub fn reset(&mut self, current_fill: usize) {
+        self.max_cb_gap_us = 0;
+        self.late_cb_15ms = 0;
+        self.max_slots_wakeup = 0;
+        self.min_ring_fill = current_fill;
+        self.saw_fill_sample = false;
+        self.cpu_mask = 0;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn read_thread_cgroup(tid: i32) -> String {
+    let path = format!("/proc/self/task/{}/cgroup", tid);
+    match std::fs::read_to_string(path) {
+        Ok(text) => text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(";"),
+        Err(_) => "unreadable".to_string(),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn read_thread_cgroup(_tid: i32) -> String {
+    "unsupported".to_string()
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[inline]
+fn current_cpu() -> i32 {
+    unsafe { libc::sched_getcpu() }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[inline]
+fn current_cpu() -> i32 {
+    -1
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn current_tid() -> i32 {
+    unsafe { libc::syscall(libc::SYS_gettid) as i32 }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn current_tid() -> i32 {
+    0
+}
 
 #[derive(Clone)]
 pub struct StreamConfig {
@@ -218,11 +325,38 @@ fn run_streaming_loop(
     let _handle_pin = Arc::clone(&session.handle);
     let _context_pin = Arc::clone(&session.context);
 
-    // Elevate thread priority for real-time isochronous audio
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe {
-        libc::setpriority(libc::PRIO_PROCESS, 0, -19);
-    }
+    // Elevate thread priority for real-time isochronous audio and log scheduling state.
+    let tid = current_tid();
+    let (setprio_rc, setprio_errno, actual_nice, sched_policy) = {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        unsafe {
+            let rc = libc::setpriority(libc::PRIO_PROCESS, 0, -19);
+            let err = if rc != 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
+            } else {
+                0
+            };
+            let nice = libc::getpriority(libc::PRIO_PROCESS, 0);
+            let policy = libc::sched_getscheduler(0);
+            (rc, err, nice, policy)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            (0, 0, 0, 0)
+        }
+    };
+    let start_cpu = current_cpu();
+    let cgroup = read_thread_cgroup(tid);
+    let sched_a2 = ((setprio_rc as i8 as u8) as u64)
+        | (((setprio_errno as i8 as u8) as u64) << 8)
+        | (((actual_nice as i8 as u8) as u64) << 16)
+        | (((sched_policy as i8 as u8) as u64) << 24)
+        | (((start_cpu as i8 as u8) as u64) << 32);
+    GLOBAL_NATIVE_LOG.record3(TAG_THREAD_SCHED, tid, sched_a2 as i64, 0);
+    record_thread_sched_detail(format!(
+        "tid={} setprio_rc={} setprio_errno={} nice={} policy={} cpu={} cgroup={}",
+        tid, setprio_rc, setprio_errno, actual_nice, sched_policy, start_cpu, cgroup
+    ));
 
     let raw_handle = session.handle.as_raw();
     GLOBAL_NATIVE_LOG.record(
@@ -322,6 +456,10 @@ fn run_streaming_loop(
         }
     }
 
+    ring_buffer.active_slots.store(NUM_AUDIO_SLOTS as u32, Ordering::Relaxed);
+    let mut jitter = JitterWindowStats::new(ring_buffer.available_read());
+    let mut last_audio_cb: Option<Instant> = None;
+
     // Main real-time event loop
     while running.load(Ordering::Acquire) {
         // Handle events with a 5 ms timeout
@@ -363,18 +501,57 @@ fn run_streaming_loop(
         };
 
         // Process completed audio slots
+        let mut completed_this_wakeup: u32 = 0;
         for (slot_idx, slot) in slots.iter_mut().enumerate() {
             if slot.completion.completed.swap(false, Ordering::AcqRel) {
+                completed_this_wakeup = completed_this_wakeup.saturating_add(1);
                 slot.mark_completed();
                 let status = slot.completion.status.load(Ordering::Acquire);
+                let pkt_errs = slot.completion.pkt_err_count.load(Ordering::Acquire);
+                let pkt_shorts = slot.completion.pkt_short_count.load(Ordering::Acquire);
+                let last_pkt_err = slot.completion.last_pkt_err_status.load(Ordering::Acquire);
+                let first_err_idx = slot.completion.first_err_pkt_idx.load(Ordering::Acquire);
+
+                if pkt_errs > 0 || pkt_shorts > 0 {
+                    if pkt_errs > 0 {
+                        ring_buffer.pkt_errors.fetch_add(pkt_errs as u64, Ordering::Relaxed);
+                        ring_buffer.last_pkt_err_status.store(last_pkt_err, Ordering::Relaxed);
+                    }
+                    if pkt_shorts > 0 {
+                        ring_buffer.pkt_shorts.fetch_add(pkt_shorts as u64, Ordering::Relaxed);
+                    }
+                    let packed_a2 = ((slot_idx as u64) & 0xFF)
+                        | (((first_err_idx.max(0) as u64) & 0xFFFF) << 8)
+                        | (((pkt_errs.min(0xFFFF) as u64) & 0xFFFF) << 24)
+                        | (((pkt_shorts.min(0xFFFF) as u64) & 0xFFFF) << 40);
+                    GLOBAL_NATIVE_LOG.record3(
+                        TAG_URB_PACKET_ERR,
+                        if pkt_errs > 0 { last_pkt_err } else { status },
+                        packed_a2 as i64,
+                        status as i64,
+                    );
+                }
+
                 if status != libusb1_sys::constants::LIBUSB_TRANSFER_COMPLETED {
                     ring_buffer.urb_errors.fetch_add(1, Ordering::Relaxed);
-                    GLOBAL_NATIVE_LOG.record(TAG_URB_PACKET_ERR, status, 0);
+                    if pkt_errs == 0 && pkt_shorts == 0 {
+                        let packed_a2 = ((slot_idx as u64) & 0xFF) | (0xFFFFu64 << 8);
+                        GLOBAL_NATIVE_LOG.record3(
+                            TAG_URB_PACKET_ERR,
+                            status,
+                            packed_a2 as i64,
+                            status as i64,
+                        );
+                    }
                     if status == libusb1_sys::constants::LIBUSB_TRANSFER_NO_DEVICE {
                         GLOBAL_NATIVE_LOG.record(TAG_HOT_UNPLUG, -19, 0);
                         running.store(false, Ordering::Release);
                         break;
                     }
+                }
+
+                if target_gain > 0.0 {
+                    jitter.record_fill(ring_buffer.available_read());
                 }
 
                 // Refill slot from ring buffer and resubmit
@@ -401,12 +578,56 @@ fn run_streaming_loop(
             }
         }
 
-        // Periodic stats logging (once every 5 seconds)
+        if completed_this_wakeup > 0 {
+            let now = Instant::now();
+            let gap_us = last_audio_cb.map(|prev| now.duration_since(prev).as_micros() as u64);
+            last_audio_cb = Some(now);
+            let cpu = current_cpu();
+            jitter.record_wakeup(gap_us, completed_this_wakeup, cpu);
+            if let Some(gap) = gap_us {
+                if gap > LATE_CALLBACK_THRESHOLD_US {
+                    ring_buffer.late_callbacks.fetch_add(1, Ordering::Relaxed);
+                }
+                let prev_max = ring_buffer.max_cb_gap_us.load(Ordering::Relaxed);
+                if gap > prev_max {
+                    ring_buffer.max_cb_gap_us.store(gap, Ordering::Relaxed);
+                }
+            }
+            let prev_max_w = ring_buffer.max_slots_per_wakeup.load(Ordering::Relaxed);
+            if completed_this_wakeup > prev_max_w {
+                ring_buffer.max_slots_per_wakeup.store(completed_this_wakeup, Ordering::Relaxed);
+            }
+        }
+
+        // Periodic stats + jitter telemetry logging (once every 5 seconds)
         if last_stat_instant.elapsed() >= Duration::from_secs(5) {
             last_stat_instant = Instant::now();
             let underruns = ring_buffer.underruns.load(Ordering::Relaxed);
             let fill = ring_buffer.available_read();
-            GLOBAL_NATIVE_LOG.record(TAG_PERIODIC_STATS, underruns as i32, fill as i64);
+            let pkt_errs = ring_buffer.pkt_errors.load(Ordering::Relaxed);
+            let pkt_shorts = ring_buffer.pkt_shorts.load(Ordering::Relaxed);
+            let last_pkt_err = ring_buffer.last_pkt_err_status.load(Ordering::Relaxed);
+            let periodic_a3 = ((pkt_errs.min(0xFFFFFF) as u64) << 40)
+                | ((pkt_shorts.min(0xFFFFFF) as u64) << 16)
+                | ((last_pkt_err as i16 as u16) as u64);
+            GLOBAL_NATIVE_LOG.record3(TAG_PERIODIC_STATS, underruns as i32, fill as i64, periodic_a3 as i64);
+
+            let in_flight = slots.iter().filter(|s| s.in_flight).count() as u64;
+            let min_fill = if jitter.saw_fill_sample { jitter.min_ring_fill } else { fill };
+            ring_buffer.min_ring_fill.store(min_fill, Ordering::Relaxed);
+            let jitter_a2 = (((jitter.late_cb_15ms.min(0xFFFFFF) as u64) & 0xFFFFFF) << 40)
+                | (((jitter.max_slots_wakeup.min(0xFF) as u64) & 0xFF) << 32)
+                | ((min_fill as u64) & 0xFFFF_FFFF);
+            let jitter_a3 = ((in_flight.min(0xFF) & 0xFF) << 56)
+                | ((((jitter.last_cpu as i8) as u8) as u64) << 48)
+                | (jitter.cpu_mask & 0xFFFF_FFFF_FFFF);
+            GLOBAL_NATIVE_LOG.record3(
+                TAG_JITTER_STATS,
+                jitter.max_cb_gap_us.min(i32::MAX as u64) as i32,
+                jitter_a2 as i64,
+                jitter_a3 as i64,
+            );
+            jitter.reset(fill);
         }
     }
 
@@ -702,5 +923,31 @@ mod tests {
         assert!(!initial_flushing_state(&rb));
         rb.clear();
         assert!(initial_flushing_state(&rb));
+    }
+
+    #[test]
+    fn jitter_window_tracks_max_gap_late_callbacks_min_fill_and_cpu_mask() {
+        let mut jw = JitterWindowStats::new(1024 * 1024);
+        jw.record_wakeup(None, 1, 2);
+        jw.record_wakeup(Some(4_000), 1, 2);
+        jw.record_wakeup(Some(18_500), 6, 7);
+        jw.record_wakeup(Some(15_001), 2, 0);
+        jw.record_fill(120_000);
+        jw.record_fill(8_192);
+        jw.record_fill(64_000);
+
+        assert_eq!(jw.max_cb_gap_us, 18_500);
+        assert_eq!(jw.late_cb_15ms, 2);
+        assert_eq!(jw.max_slots_wakeup, 6);
+        assert_eq!(jw.min_ring_fill, 8_192);
+        assert_eq!(jw.last_cpu, 0);
+        assert_eq!(jw.cpu_mask, (1u64 << 2) | (1u64 << 7) | (1u64 << 0));
+
+        jw.reset(50_000);
+        assert_eq!(jw.max_cb_gap_us, 0);
+        assert_eq!(jw.late_cb_15ms, 0);
+        assert_eq!(jw.max_slots_wakeup, 0);
+        assert_eq!(jw.min_ring_fill, 50_000);
+        assert_eq!(jw.cpu_mask, 0);
     }
 }
