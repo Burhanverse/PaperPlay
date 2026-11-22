@@ -172,4 +172,68 @@ class UpdateServiceTest {
         store["update_auto"] = "false"
         assertFalse(s.autoCheckDue())
     }
+
+    @Test fun loadsAndMergesChangelogFromMarkdownAndReleases() = runBlocking<Unit> {
+        val md = """
+            # Changelog
+
+            ## [1.3.1] - 2026-11-18
+
+            ### Added
+            - Storage page shows what is on the device ([`de2e981`](https://github.com/maxcodl/PaperPlay/commit/de2e981220fde0dcf534fb2803c5c032610e72be))
+
+            ### Fixed
+            - Desktop storage total measures only the app's folder ([`a131a6b`](https://github.com/maxcodl/PaperPlay/commit/a131a6b06aaddc62a719e3759118defaaa23db5f))
+
+            **Full changes:** [v1.3.0...v1.3.1](https://github.com/maxcodl/PaperPlay/compare/v1.3.0...v1.3.1)
+
+            ## [1.3.0] - 2026-11-14
+
+            ### Added
+            - Initial release ([`111eced`](https://github.com/maxcodl/PaperPlay/commit/111eced1349e77c0374146f8b4b7492336f28acd))
+        """.trimIndent()
+        val relFeed = "[" + listOf(
+            """{"tag_name":"v1.4.0-beta.1","draft":false,"prerelease":true,"published_at":"2026-11-22T10:00:00Z","body":"### Added\n- New beta feature ([`abcdef1`](https://github.com/maxcodl/PaperPlay/commit/abcdef1234567890))\n\n**Full changes:** [v1.3.1...v1.4.0-beta.1](https://github.com/maxcodl/PaperPlay/compare/v1.3.1...v1.4.0-beta.1)","html_url":"https://github.com/maxcodl/PaperPlay/releases/tag/v1.4.0-beta.1","assets":[]}""",
+        ).joinToString(",") + "]"
+        val http = object : HttpFetcher {
+            override suspend fun send(request: HttpRequest): HttpResponse = when {
+                request.url.contains("CHANGELOG.md") -> HttpResponse(200, emptyMap(), md.encodeToByteArray())
+                else -> HttpResponse(200, emptyMap(), relFeed.encodeToByteArray())
+            }
+        }
+        val s = service(http, null)
+        s.loadChangelog()
+        val ready = assertIs<ChangelogState.Ready>(s.changelog.value)
+        assertEquals(listOf("1.4.0-beta.1", "1.3.1", "1.3.0"), ready.entries.map { it.version })
+        assertTrue(ready.entries[0].prerelease)
+        assertEquals("2026-11-22", ready.entries[0].date)
+        assertEquals("New beta feature", ready.entries[0].notes.groups.single().items.single().text)
+        assertEquals("abcdef1", ready.entries[0].notes.groups.single().items.single().commitSha)
+        assertEquals("v1.3.0...v1.3.1", ready.entries[1].notes.compareLabel)
+        assertEquals("Storage page shows what is on the device", ready.entries[1].notes.groups[0].items[0].text)
+        assertEquals("de2e981", ready.entries[1].notes.groups[0].items[0].commitSha)
+    }
+}
+
+class ChangelogParserTest {
+    @Test fun parsesReleaseBodyAndStripsRawMarkdownLinks() {
+        val raw = """
+            ### Added
+            - Storage page shows what is on the device, shrink covers ([`de2e981`](https://github.com/maxcodl/PaperPlay/commit/de2e981220fde0dcf534fb2803c5c032610e72be))
+
+            ### Fixed
+            - Visualizer follows the music with the engine off ([`db44b7f`](https://github.com/maxcodl/PaperPlay/commit/db44b7f45c42a662ecfabee1bcd6ee4590565e58))
+
+            **Full changes:** [v1.11.0...v1.12.0](https://github.com/maxcodl/PaperPlay/compare/v1.11.0...v1.12.0)
+        """.trimIndent()
+        val doc = ChangelogParser.parseReleaseBody(raw)
+        assertEquals(2, doc.groups.size)
+        assertEquals("Added", doc.groups[0].heading)
+        assertEquals("Storage page shows what is on the device, shrink covers", doc.groups[0].items[0].text)
+        assertEquals("de2e981", doc.groups[0].items[0].commitSha)
+        assertEquals("https://github.com/maxcodl/PaperPlay/commit/de2e981220fde0dcf534fb2803c5c032610e72be", doc.groups[0].items[0].commitUrl)
+        assertEquals("Fixed", doc.groups[1].heading)
+        assertEquals("v1.11.0...v1.12.0", doc.compareLabel)
+        assertEquals("https://github.com/maxcodl/PaperPlay/compare/v1.11.0...v1.12.0", doc.compareUrl)
+    }
 }
