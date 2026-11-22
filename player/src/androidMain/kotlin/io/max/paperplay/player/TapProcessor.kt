@@ -181,6 +181,7 @@ internal class EngineAudioSink(
      * Media3 skips its processors for float, so the tap in [TapProcessor] never sees the audio while the engine is on.
      */
     private fun tap(src: ByteBuffer, samples: Int) {
+        if (!AudioTap.wanted) return
         val ch = channels.coerceAtLeast(1)
         val s = src.duplicate().order(ByteOrder.nativeOrder())
         repeat(samples / ch) {
@@ -491,7 +492,7 @@ internal class TapProcessor(
         val rate = inputAudioFormat.sampleRate
         val enc = inputAudioFormat.encoding
         val step = when (enc) { C.ENCODING_PCM_16BIT -> 2; C.ENCODING_PCM_24BIT -> 3; else -> 4 }
-        while (src.remaining() >= step * ch) {
+        if (AudioTap.wanted) while (src.remaining() >= step * ch) {
             var sum = 0f
             for (c in 0 until ch) sum += when (enc) {
                 C.ENCODING_PCM_FLOAT -> src.getFloat()

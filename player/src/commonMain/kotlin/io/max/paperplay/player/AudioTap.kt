@@ -26,6 +26,10 @@ object AudioTap {
     @Volatile var bands = FloatArray(BANDS)
         private set
     @Volatile private var stamp = 0L
+    @Volatile private var readAt = 0L
+
+    /** True while a visual has asked for the spectrum in the last two seconds. The audio thread skips all tap work otherwise. */
+    val wanted: Boolean get() = System.nanoTime() - readAt < 2_000_000_000L
 
     private val histBands = Array(96) { FloatArray(BANDS) }
     private val histStamp = LongArray(96)
@@ -33,6 +37,7 @@ object AudioTap {
 
     /** The spectrum as it was [delayMs] ago, since the sound leaves the speaker a little after it is analysed. */
     fun read(delayMs: Long): FloatArray {
+        readAt = System.nanoTime()
         val want = System.nanoTime() - delayMs * 1_000_000L
         val head = histHead
         for (k in 0 until 96) {
@@ -42,7 +47,11 @@ object AudioTap {
         return bands
     }
 
-    fun fresh(): Boolean = System.nanoTime() - stamp < 250_000_000L
+    fun fresh(): Boolean {
+        val now = System.nanoTime()
+        readAt = now
+        return now - stamp < 250_000_000L
+    }
 
     fun reset() { fill = 0; bands = FloatArray(BANDS); stamp = 0L; histStamp.fill(0L) }
 

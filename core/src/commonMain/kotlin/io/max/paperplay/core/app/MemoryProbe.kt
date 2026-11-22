@@ -8,7 +8,7 @@ import kotlinx.coroutines.launch
 import kotlin.concurrent.Volatile
 
 /**
- * Writes one line about memory every ten seconds, to the shared log (tag "memory"), so a leak shows as a number that only
+ * Writes one line about memory every minute, to the shared log (tag "memory"), so a leak shows as a number that only
  * climbs. The entry points say how to measure on their platform by setting [sample]; the app adds its own counters.
  */
 object MemoryProbe {
@@ -20,7 +20,7 @@ object MemoryProbe {
 
     private var started = false
 
-    fun start(scope: CoroutineScope, intervalMs: Long = 10_000, extra: () -> String = { "" }) {
+    fun start(scope: CoroutineScope, intervalMs: Long = 60_000, extra: () -> String = { "" }) {
         if (started) return
         started = true
         scope.launch(Dispatchers.Default) {

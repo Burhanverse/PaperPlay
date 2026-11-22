@@ -114,6 +114,8 @@ class AddressBook(
     /** Records a failed or successful try of an address without changing when it was last seen, unless it worked. */
     fun record(key: String, result: AddressState) {
         val old = state.value.firstOrNull { it.key == key } ?: return
+        // A failure repeated on every dial changes nothing; writing the list again each time cost a database write every few seconds.
+        if (result != AddressState.Connected && old.lastResult == result) return
         val now = clock()
         val upd = if (result == AddressState.Connected) old.copy(lastResult = result, lastSeen = now) else old.copy(lastResult = result)
         set(state.value.map { if (it.key == key) upd else it })

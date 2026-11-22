@@ -263,6 +263,9 @@ fun AuroraSeek(
         var last = 0L
         while (true) {
             withFrameNanos { t ->
+                // About 30 updates a second: the wave moves half a cycle a second, so this looks the same as 120 Hz, and each
+                // skipped update is a frame the seek bar is not drawn again (it was 10% of the main thread with the player open).
+                if (last != 0L && t - last < 33_000_000L) return@withFrameNanos
                 if (last != 0L) {
                     val dtSec = ((t - last) / 1_000_000_000f).coerceIn(0f, 0.1f)
                     phase = (phase + dtSec * 0.5f) % 1000f

@@ -746,10 +746,13 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             }
         }
         val announce = io.launch {
+            // Every 5 s for the first minute, then every 30 s: each round lists the network interfaces and broadcasts, all day.
+            // A device that shows up is answered at once (onAnnounce), so finding each other stays quick.
+            val started = env.clock()
             while (isActive && !sock.isClosed) {
                 _addresses.value = localIPv4()
                 runCatching { announceOnce(sock) }
-                delay(5_000)
+                delay(if (env.clock() - started < 60_000L) 5_000L else 30_000L)
             }
         }
         udpJobs = listOf(listen, announce)
@@ -780,6 +783,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         val port = o.reqLng("port").toInt()
         if (id == deviceId || port !in 1..65535 || o.str("hash") != announceHash(id, name, port)) return
         val host = pk.address?.hostAddress ?: return
+        // A device not heard lately gets our announcement back at once, since we only announce every 30 s after the first minute.
+        if (_discovered.value.none { it.id == id }) udp?.let { s -> io.launch { runCatching { announceOnce(s) } } }
         addDiscovered(DiscoveredDevice(id, name, o.flag("desktop") ?: false, host, port, env.clock(), isPaired(id)))
     }
 
@@ -865,13 +870,25 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     /** Dials every paired device that is not linked, now and then, so devices find each other without a tap. */
     private suspend fun autoConnect() {
         delay(2_000)
+        // A device that keeps failing (switched off, or on another network) is dialled less and less often, up to every
+        // 5 minutes, instead of every 20 seconds all day. A success starts over; a device heard on the network is dialled by
+        // discovery itself, apart from this.
+        val fails = HashMap<String, Int>()
+        val nextAt = HashMap<String, Long>()
         while (_listening.value) {
+            val now = System.currentTimeMillis()
             for (d in _paired.value) {
-                if (peers.containsKey(d.id) || autoBlocked(d.id) || _connecting.value.isNotEmpty()) continue
+                if (peers.containsKey(d.id)) { fails.remove(d.id); nextAt.remove(d.id); continue }
+                if (now < (nextAt[d.id] ?: 0L) || autoBlocked(d.id) || _connecting.value.isNotEmpty()) continue
                 // Both sides may dial at once; a short random wait and a second look keep that rare.
                 delay((200..2_500).random().toLong())
                 if (peers.containsKey(d.id) || autoBlocked(d.id)) continue
-                runCatching { connect(d.id) }
+                val ok = runCatching { connect(d.id).ok }.getOrDefault(false)
+                if (ok) { fails.remove(d.id); nextAt.remove(d.id) } else {
+                    val n = (fails[d.id] ?: 0) + 1
+                    fails[d.id] = n
+                    nextAt[d.id] = System.currentTimeMillis() + minOf(20_000L shl minOf(n - 1, 4), 300_000L)
+                }
             }
             delay(20_000)
         }

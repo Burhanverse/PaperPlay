@@ -21,7 +21,7 @@ class AudioFeatureStore(
     private val driver: SqlDriver,
     private val scope: CoroutineScope,
     private val clock: () -> Long,
-    /** False while heavy background work should wait (hidden on battery). */
+    /** False while heavy work should wait (on the phone: not charging). */
     private val canRun: () -> Boolean = { true },
     /** Local path of a cached song's complete file, or null when it is not on this device. */
     private val pathOf: suspend (uniqueId: String) -> String? = { null },
@@ -61,7 +61,8 @@ class AudioFeatureStore(
 
     /** Measures [uid] from the complete file at [path] unless it is already measured. A file that cannot be measured is stamped too. */
     fun onDownloaded(uid: String, path: String) {
-        if (!supported) return
+        // Measuring decodes the whole song again; on battery it waits for the backfill, which runs while charging.
+        if (!supported || !canRun()) return
         scope.launch(Dispatchers.Default) { measure(uid, path) }
     }
 

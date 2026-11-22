@@ -45,6 +45,9 @@ interface Platform {
 
     /** False when heavy background work should wait: app hidden and on battery, or on a metered network. */
     fun canRunBackground(): Boolean = true
+
+    /** False when CPU-heavy work (decoding whole songs to measure them) should wait: on the phone, whenever it is not charging. */
+    fun canRunHeavy(): Boolean = canRunBackground()
 }
 
 /** Keys used in [SecretStore] and [Settings]. */

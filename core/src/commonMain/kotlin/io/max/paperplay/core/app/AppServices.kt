@@ -409,7 +409,7 @@ class AppServices(
     )
 
     /** How each song sounds, measured from its file on the phone, for recommendations. */
-    val audioFeatures = io.max.paperplay.core.recs.AudioFeatureStore(driver, scope, clock, platform::canRunBackground) { uid ->
+    val audioFeatures = io.max.paperplay.core.recs.AudioFeatureStore(driver, scope, clock, platform::canRunHeavy) { uid ->
         val s = library.songByUniqueId(uid) ?: return@AudioFeatureStore null
         val main = client ?: return@AudioFeatureStore null
         val c = botOwnerOf(s.remote_id)?.let { botPool.clientOf(it) } ?: main
