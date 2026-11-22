@@ -62,6 +62,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.components.AppIcon
+import io.max.paperplay.ui.components.AuroraSeek
 import io.max.paperplay.ui.components.uniqueKeys
 import io.max.paperplay.ui.components.CoverImage
 import io.max.paperplay.ui.logic.formatDuration
@@ -146,7 +147,7 @@ private fun NowPlayingMain(
             io.max.paperplay.ui.components.SongMenu(song, actions.rowActions(), Icons.Rounded.MoreHoriz)
         }
         Spacer(Modifier.height(8.dp))
-        NowPlayingSeek(backend, state.durationMs, ink)
+        NowPlayingSeek(song, state, backend, ink)
         Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconButton({ backend.toggleShuffle() }) { AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) MaterialTheme.colorScheme.primary else ink) }
             IconButton({ backend.previous() }) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(30.dp), tint = ink) }
@@ -159,14 +160,30 @@ private fun NowPlayingMain(
     }
 }
 
-/** Elapsed time, a hover-preview seek bar tinted by the cover, and the total time. */
+/** Elapsed time, a seek bar (hover-preview or Aurora Wave) tinted by the cover, and the total time. */
 @Composable
-private fun NowPlayingSeek(backend: PlayerControls, durationMs: Long, ink: Color) {
+private fun NowPlayingSeek(song: SongUi, state: PlaybackUiState, backend: PlayerControls, ink: Color) {
     val pos = backend.position.collectAsState()
+    val durationMs = state.durationMs
     val style = MaterialTheme.typography.labelSmall.copy(color = ink.copy(alpha = 0.75f))
+    val barStyle = LocalUiPrefs.current?.progressBarStyle ?: ProgressBarStyle.SQUIGGLY_WAVE
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(formatDuration(pos.value.positionMs / 1000), style = style)
-        HoverSeek({ pos.value.progress(durationMs) }, durationMs, { backend.seekTo(it) }, ink, Modifier.weight(1f).padding(horizontal = 10.dp))
+        if (barStyle == ProgressBarStyle.AURORA_WAVE) {
+            AuroraSeek(
+                progress = { pos.value.progress(durationMs) },
+                buffered = { pos.value.bufferedProgress(durationMs) },
+                playing = state.playing,
+                onSeek = { backend.seekTo(it) },
+                colors = auroraPalette(song.coverUri, MaterialTheme.colorScheme.primary),
+                modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                label = formatDuration(pos.value.positionMs / 1000),
+                longPressLabel = { fraction -> formatDuration((durationMs * fraction / 1000L).toLong()) },
+                compact = true,
+            )
+        } else {
+            HoverSeek({ pos.value.progress(durationMs) }, durationMs, { backend.seekTo(it) }, ink, Modifier.weight(1f).padding(horizontal = 10.dp))
+        }
         Text(formatDuration(durationMs / 1000), style = style)
     }
 }

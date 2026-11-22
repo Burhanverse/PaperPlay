@@ -19,6 +19,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,8 +28,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
+import io.max.paperplay.ui.components.AuroraSeek
+import io.max.paperplay.ui.components.WavySeek
+import io.max.paperplay.ui.theme.schemeFromSeed
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.math.abs
 
@@ -53,6 +60,60 @@ fun BackgroundSettings(prefs: UiPrefs) {
         BgMode.Wallpaper -> WallpaperControls(prefs)
         BgMode.Animated -> AnimatedControls(prefs)
         else -> {}
+    }
+}
+
+/** Progress Bar Style selector with a compact interactive live preview on Settings > Appearance. */
+@Composable
+fun ProgressBarStyleSettings(prefs: UiPrefs, backend: CoreBackend? = null) {
+    SectionLabel("Progress bar")
+    ChoiceRow(ProgressBarStyle.entries, prefs.progressBarStyle, { it.label }, prefs::putProgressBarStyle)
+    Text(
+        when (prefs.progressBarStyle) {
+            ProgressBarStyle.SQUIGGLY_WAVE -> "Material 3 wavy progress bar."
+            ProgressBarStyle.AURORA_WAVE -> "Soft white aurora ribbons with a light tint from the playing cover."
+        },
+        Modifier.padding(horizontal = 20.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val coverUri = backend?.playback?.collectAsState()?.value?.current?.coverUri
+    val base = MaterialTheme.colorScheme
+    val previewScheme = coverScheme(coverUri) ?: remember(base.primary) { schemeFromSeed(base.primary.toArgb(), dark = true) }
+    val previewColors = auroraPalette(coverUri, previewScheme.primary)
+    var previewProgress by remember { mutableFloatStateOf(0.64f) }
+    MaterialTheme(colorScheme = previewScheme) {
+        Box(
+            Modifier
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+                .fillMaxWidth()
+                .clip(appShape(16.dp, CornerArea.Cards))
+                .background(
+                    Brush.verticalGradient(
+                        0f to lerp(previewScheme.primaryContainer, Color.Black, 0.35f),
+                        1f to lerp(previewScheme.surfaceContainerLow, Color.Black, 0.85f),
+                    ),
+                )
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+        ) {
+            when (prefs.progressBarStyle) {
+                ProgressBarStyle.SQUIGGLY_WAVE -> WavySeek(
+                    progress = { previewProgress },
+                    buffered = { (previewProgress + 0.2f).coerceAtMost(1f) },
+                    playing = true,
+                    onSeek = { previewProgress = it },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                ProgressBarStyle.AURORA_WAVE -> AuroraSeek(
+                    progress = { previewProgress },
+                    buffered = { (previewProgress + 0.2f).coerceAtMost(1f) },
+                    playing = true,
+                    onSeek = { previewProgress = it },
+                    colors = previewColors,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 

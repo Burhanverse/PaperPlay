@@ -88,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.PlatformBackHandler
+import io.max.paperplay.ui.components.AuroraSeek
 import io.max.paperplay.ui.components.CoverImage
 import io.max.paperplay.ui.components.SongMenu
 import io.max.paperplay.ui.components.WavySeek
@@ -394,13 +395,26 @@ private fun Progress(song: SongUi, state: PlaybackUiState, backend: PlayerContro
     val muted = MaterialTheme.typography.labelMedium.copy(color = scheme.onSurface.copy(alpha = 0.65f))
     val total = if (state.durationMs > 0) state.durationMs else song.durationSec * 1000L
     val pos by backend.position.collectAsState()
-    WavySeek(
-        progress = { pos.progress(state.durationMs) }, buffered = { pos.bufferedProgress(state.durationMs) }, playing = state.playing,
-        onSeek = backend::seekTo,
-        modifier = Modifier.fillMaxWidth(),
-        label = formatDuration(pos.positionMs / 1000),
-        longPressLabel = { fraction -> formatDuration((total * fraction / 1000L).toLong()) },
-    )
+    val style = LocalUiPrefs.current?.progressBarStyle ?: ProgressBarStyle.SQUIGGLY_WAVE
+    val label = formatDuration(pos.positionMs / 1000)
+    val longPressLabel: (Float) -> String = { fraction -> formatDuration((total * fraction / 1000L).toLong()) }
+    when (style) {
+        ProgressBarStyle.SQUIGGLY_WAVE -> WavySeek(
+            progress = { pos.progress(state.durationMs) }, buffered = { pos.bufferedProgress(state.durationMs) }, playing = state.playing,
+            onSeek = backend::seekTo,
+            modifier = Modifier.fillMaxWidth(),
+            label = label,
+            longPressLabel = longPressLabel,
+        )
+        ProgressBarStyle.AURORA_WAVE -> AuroraSeek(
+            progress = { pos.progress(state.durationMs) }, buffered = { pos.bufferedProgress(state.durationMs) }, playing = state.playing,
+            onSeek = backend::seekTo,
+            colors = auroraPalette(song.coverUri, scheme.primary),
+            modifier = Modifier.fillMaxWidth(),
+            label = label,
+            longPressLabel = longPressLabel,
+        )
+    }
     Spacer(Modifier.height(8.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(formatDuration(pos.positionMs / 1000), Modifier.weight(1f), style = muted)
