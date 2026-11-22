@@ -2,6 +2,21 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.10.0] - 2026-11-22
+
+### Added
+- Harden USB bit-perfect session lifecycle and enable unified path ([`94bb91a`](https://github.com/maxcodl/PaperPlay/commit/94bb91a5d7a1387781905aa6e505e7f536ae8067))
+- Add unified bit-perfect model, evaluator, prefs, and engine contracts ([`8fd32e5`](https://github.com/maxcodl/PaperPlay/commit/8fd32e53e28c179fd670e2cf7d4de3ac4a78b980))
+- Add USB direct exclusive audio playback with UAC 2.0 support ([`b23877a`](https://github.com/maxcodl/PaperPlay/commit/b23877a1d46e6236da322f40e559c8d2daff99e8))
+- Synced lyrics look with Sync pill, desktop top bar with profile menu, private session ([`c680477`](https://github.com/maxcodl/PaperPlay/commit/c68047784cf59fb5c52a0bb7e44fb91c44b03063))
+- Send the queue to another device, Move, cleaner output pill ([`f2c2949`](https://github.com/maxcodl/PaperPlay/commit/f2c2949f1a8a788134c27414f4347bf77a61d710))
+- Keep playing related songs when a list ends, landscape standby; fix seek static, device reconnect loop, recents at 30 seconds, visualizer ([`7cb05e6`](https://github.com/maxcodl/PaperPlay/commit/7cb05e66ac856bc5a888677405290b890d55a264))
+
+### Documentation
+- README, CHECKLIST and AGENTS for devices, autoplay, recents, lyrics, top bar ([`66ed999`](https://github.com/maxcodl/PaperPlay/commit/66ed99932199b9b2c078f15fa74b2d8f35bcec6a))
+
+**Full changes:** [v1.9.12...v1.10.0](https://github.com/maxcodl/PaperPlay/compare/v1.9.12...v1.10.0)
+
 ## [Unreleased]
 
 ### Added
