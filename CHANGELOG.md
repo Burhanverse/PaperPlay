@@ -2,6 +2,28 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.12.0] - 2026-11-22
+
+### Added
+- Storage page shows what is on the device, shrink covers ([`de2e981`](https://github.com/maxcodl/PaperPlay/commit/de2e981220fde0dcf534fb2803c5c032610e72be))
+
+### Fixed
+- Stable release is not skipped when beta tagged the same commit first ([`9944942`](https://github.com/maxcodl/PaperPlay/commit/9944942e78461b0ed337db9190a52e4aacc14e62))
+- Desktop storage total measures only the app's folder ([`a131a6b`](https://github.com/maxcodl/PaperPlay/commit/a131a6b06aaddc62a719e3759118defaaa23db5f))
+- Standby previous and next use the player's icons ([`56a5010`](https://github.com/maxcodl/PaperPlay/commit/56a5010f57d4d9ae2ecd83bae0416f0bf40cb545))
+- Visualizer follows the music with the engine off ([`db44b7f`](https://github.com/maxcodl/PaperPlay/commit/db44b7f45c42a662ecfabee1bcd6ee4590565e58))
+- Synced folders send songs added while the app runs ([`dcba616`](https://github.com/maxcodl/PaperPlay/commit/dcba6169cf46b6ade1dad4a6b67a812256449b9f))
+- Cache limit covers every Telegram store and actually frees space ([`e970526`](https://github.com/maxcodl/PaperPlay/commit/e970526ad7ab7a3132dd6cf1a878ac6f09beb9dc))
+
+### Improved
+- Less CPU while playing ([`6e557df`](https://github.com/maxcodl/PaperPlay/commit/6e557df89b3b810882a7c6602bf79a4133c83404))
+
+### Documentation
+- Desktop test still to do ([`0abea9a`](https://github.com/maxcodl/PaperPlay/commit/0abea9a715f562641f75bb74016b8ca3c41262c7))
+- Storage, battery, synced folders and visualizer ([`45687de`](https://github.com/maxcodl/PaperPlay/commit/45687de94e54bd3b1ddec7a8afd023e3e4f27a10))
+
+**Full changes:** [v1.11.0...v1.12.0](https://github.com/maxcodl/PaperPlay/compare/v1.11.0...v1.12.0)
+
 ## [1.11.0] - 2026-11-22
 
 ### Added
