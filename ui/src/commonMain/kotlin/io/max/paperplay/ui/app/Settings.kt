@@ -22,6 +22,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PhotoSizeSelectSmall
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Notes
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -78,6 +85,11 @@ internal val categories = listOf(
 )
 
 private val cacheLimits = listOf(1L shl 29, 1L shl 30, 2L shl 30, 5L shl 30, 10L shl 30, 20L shl 30, 50L shl 30)
+/** True while Clear cache or Shrink covers runs; the Storage page then measures every second. */
+private val storageBusy = androidx.compose.runtime.mutableStateOf(false)
+
+/** Disk use in decimal units, the way Android's App info shows it, so the two numbers match. */
+private fun diskText(b: Long) = if (b >= 1_000_000_000L) "${(b / 10_000_000L) / 100.0} GB" else "${b / 1_000_000L} MB"
 private fun bytesText(b: Long) = if (b >= 1L shl 30) "${b / (1L shl 30)} GB" else "${b / (1L shl 20)} MB"
 
 private class RateWork(val key: String, val label: String, val default: Int)
@@ -558,13 +570,36 @@ internal fun SettingsPage(
         "storage" -> {
             var limit by remember { mutableStateOf(pref("cache_limit")?.toLongOrNull() ?: (2L shl 30)) }
             val idx = cacheLimits.indexOfFirst { it >= limit }.coerceAtLeast(0)
-            val used by androidx.compose.runtime.produceState(0L to 0L, notice.value) { value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { backend.cacheUsed() } }
-            SettingsRow("Used: ${bytesText(used.second)}", icon = Icons.Rounded.Storage, subtitle = "Pinned songs: ${bytesText(used.first)}, not counted in the limit")
-            SettingsRow("Cache limit: ${bytesText(cacheLimits[idx])}", icon = Icons.Rounded.Storage, subtitle = "Pinned songs are not counted")
-            SliderRow("Cache size", idx.toFloat(), 0f..(cacheLimits.size - 1f), { limit = cacheLimits[it.toInt()] }, steps = cacheLimits.size - 2,
+            // Measured on disk off the main thread; measured again after a clear or shrink (they set the notice).
+            // Measured again every second while a clear or shrink runs, so the sizes count down as files go.
+            val parts by androidx.compose.runtime.produceState<List<Pair<String, Long>>?>(null, notice.value, storageBusy.value) {
+                do {
+                    value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { backend.storageBreakdown() }.getOrNull() }
+                    if (storageBusy.value) kotlinx.coroutines.delay(1_000)
+                } while (storageBusy.value)
+            }
+            SectionLabel("On this device")
+            SettingsRow(parts?.let { "Total: ${diskText(it.sumOf { p -> p.second })}" } ?: "Measuring...", icon = Icons.Rounded.Storage)
+            parts?.forEach { (name, bytes) ->
+                val icon = when (name) {
+                    "Songs" -> Icons.Rounded.MusicNote
+                    "Covers" -> Icons.Rounded.Image
+                    "Lyrics" -> Icons.Rounded.Notes
+                    "Song info" -> Icons.Rounded.Info
+                    "Telegram data" -> Icons.Rounded.Cloud
+                    else -> Icons.Rounded.Folder
+                }
+                SettingsRow(name, icon = icon) { Text(diskText(bytes), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            SectionLabel("Song cache")
+            SliderRow("Cache limit: ${bytesText(cacheLimits[idx])}", idx.toFloat(), 0f..(cacheLimits.size - 1f), { limit = cacheLimits[it.toInt()] }, steps = cacheLimits.size - 2,
+                hint = "Shared by the main bot, your account and each extra bot. Pinned songs are not counted",
                 onDone = { backend.setPref("cache_limit", "$limit") })
             NavRow("Cache manager", "Songs stored on this device, unpin and clear", Icons.Rounded.Storage) { stack.add("cache") }
             SettingsRow("Clear cache", icon = Icons.Rounded.CleaningServices, subtitle = "Deletes streamed songs stored on this device. They download again when played", onClick = { confirm = "clearcache" })
+            SectionLabel("Covers")
+            SettingsRow("Shrink covers", icon = Icons.Rounded.PhotoSizeSelectSmall, subtitle = "Saves covers larger than 600 px at 600 px. No cover is lost", onClick = { confirm = "shrinkcovers" })
+            SectionLabel("Backup")
             val backupBusy by backend.backupProgress.collectAsState()
             SettingsRow("Save backup", icon = Icons.Rounded.SaveAlt, subtitle = "Song info, covers, playlists, favorites and layout, as a .zip file",
                 enabled = backupBusy == null && BackupFiles.pickDestination != null, onClick = { confirm = "savebackup" })
@@ -621,7 +656,8 @@ internal fun SettingsPage(
             backend.services.scope.launch { notice.value = backend.saveBackup(pw, "paperplay-backup-${io.max.paperplay.core.app.dayOf(io.max.paperplay.ui.nowMoment().epochMs)}.zip") }
         }) { confirm = null }
         "restore" -> ConfirmDialog("Restore a backup?", "This replaces your library, playlists and favorites with the backup.", "Restore", onRestore) { confirm = null }
-        "clearcache" -> ConfirmDialog("Clear the cache?", "Streamed songs stored on this device are deleted. Stop playback first. They download again when played.", "Clear", { backend.clearCache { notice.value = it } }) { confirm = null }
+        "shrinkcovers" -> ConfirmDialog("Shrink covers?", "Covers larger than 600 px are saved again at 600 px. They look a little softer on large screens. This runs in the background.", "Shrink", { notice.value = "Shrinking covers..."; storageBusy.value = true; backend.shrinkCovers { notice.value = it; storageBusy.value = false } }) { confirm = null }
+        "clearcache" -> ConfirmDialog("Clear the cache?", "Streamed songs stored on this device are deleted. Stop playback first. They download again when played.", "Clear", { notice.value = "Clearing the cache..."; storageBusy.value = true; backend.clearCache { notice.value = it; storageBusy.value = false } }) { confirm = null }
         "accountout" -> ConfirmDialog("Log out of your account?", "Your index stays on this device. Chats and channels need a new login. The bot is not affected.", "Log out", { backend.logOutAccount(tell) }) { confirm = null }
         "clearlearned" -> ConfirmDialog("Clear what mixes have learned?", "Forgets play and skip counts and your \"doesn't fit this mix\" choices. Songs and playlists stay.", "Clear", backend::clearLearned) { confirm = null }
         "logout" -> ConfirmDialog("Log out?", "Your account is logged out (if there is one) and the main bot's API id, hash and token are forgotten, so the setup screen shows again. Songs, playlists, settings and extra bots stay.", "Log out", backend::logOutAll) { confirm = null }
