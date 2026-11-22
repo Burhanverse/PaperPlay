@@ -84,13 +84,18 @@ class LocalFolders(
         val chat = mainChat() ?: return -1
         val seen = seen().toMutableSet()
         var queued = 0
+        var changed = false
         for (f in list().filter { it.sync }) {
-            val fresh = songsIn(f.path).filter { keyOf(it) !in seen }
+            // A file changed in the last minute may still be copying; it is taken on a later round, at its full size.
+            val settled = System.currentTimeMillis() - 60_000L
+            val fresh = songsIn(f.path).filter { keyOf(it) !in seen && java.io.File(it).lastModified() < settled }
             if (fresh.isEmpty()) continue
             queued += uploader.enqueue(fresh, chat, mainTitle()).queued
             fresh.forEach { seen += keyOf(it) }
+            changed = true
         }
-        setPref(SEEN, JsonArray(seen.map { JsonPrimitive(it) }).toString())
+        // Written only when something was queued: this runs every 2 minutes and the list is large.
+        if (changed) setPref(SEEN, JsonArray(seen.map { JsonPrimitive(it) }).toString())
         return queued
     }
 

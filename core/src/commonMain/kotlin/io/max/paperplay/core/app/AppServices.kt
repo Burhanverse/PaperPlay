@@ -632,7 +632,11 @@ class AppServices(
                     moodScanner.start()
                     audioFeatures.startBackfill { library.cachedSongs().sortedByDescending { it.plays }.map { it.unique_id } }
                     downloadPins()
-                    runCatching { localFolders.syncNow() }
+                    // Songs added while the app runs are sent too: the folders are looked at again every 2 minutes (names only).
+                    while (true) {
+                        runCatching { localFolders.syncNow() }
+                        kotlinx.coroutines.delay(120_000L)
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
