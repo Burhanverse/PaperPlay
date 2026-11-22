@@ -121,7 +121,10 @@ def make_plan(tags, log_since, reachable, head_tags, channel, override, code) ->
     base = next_base(last, since_stable, override)
     now = vs(last or FIRST_VERSION)
     skip = Plan(False, f"{now}-dev", now, "", channel, "", code)  # still built, never published
-    if base is None or head_tags:  # nothing to release, or this commit already has its release
+    # A stable release is stopped only by a stable tag on this commit: when main and beta are pushed at the same commit,
+    # the beta run may tag it first, and the stable run must still release.
+    blocking = [t for t in head_tags if "-beta." not in t] if channel == "stable" else head_tags
+    if base is None or blocking:  # nothing to release, or this commit already has its release
         return skip
     if channel == "stable":
         if base in tags.stable:
