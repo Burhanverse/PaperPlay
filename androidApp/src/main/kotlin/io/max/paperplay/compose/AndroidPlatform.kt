@@ -55,4 +55,10 @@ class AndroidPlatform(private val context: Context) : Platform {
         val unmetered = !cm.isActiveNetworkMetered
         (MainActivity.foreground || charging) && unmetered
     }.getOrDefault(true)
+
+    // Measuring songs decodes each one in full: measured at about a third of a core while it ran beside playback.
+    override fun canRunHeavy(): Boolean = runCatching {
+        val battery = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        (battery?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+    }.getOrDefault(false)
 }
