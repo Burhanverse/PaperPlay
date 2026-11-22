@@ -56,8 +56,9 @@ impl SpscRingBuffer {
 
     #[inline]
     pub fn available_read(&self) -> usize {
+        // Load read_pos before write_pos so a concurrent write + clear cannot make r > w.
+        let r = self.read_pos.load(Ordering::Acquire);
         let w = self.write_pos.load(Ordering::Acquire);
-        let r = self.read_pos.load(Ordering::Relaxed);
         w.wrapping_sub(r)
     }
 
@@ -71,7 +72,18 @@ impl SpscRingBuffer {
     #[inline]
     pub fn clear(&self) {
         let w = self.write_pos.load(Ordering::Acquire);
-        self.read_pos.store(w, Ordering::Release);
+        let mut r = self.read_pos.load(Ordering::Acquire);
+        while r != w {
+            match self.read_pos.compare_exchange_weak(
+                r,
+                w,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(actual) => r = actual,
+            }
+        }
     }
 
     /// Producer: write bytes into the ring buffer. Zero locks, zero allocation.
@@ -124,8 +136,14 @@ impl SpscRingBuffer {
     /// Consumer: read up to `dst.len()` bytes into `dst`.
     /// Zero locks, zero allocation. Returns number of actual bytes read.
     pub fn read(&self, dst: &mut [u8]) -> usize {
+        self.read_inner(dst, || {})
+    }
+
+    #[inline(always)]
+    fn read_inner<F: FnOnce()>(&self, dst: &mut [u8], before_commit: F) -> usize {
+        // Load read_pos before write_pos so a concurrent write + clear cannot make r > w.
+        let r = self.read_pos.load(Ordering::Acquire);
         let w = self.write_pos.load(Ordering::Acquire);
-        let r = self.read_pos.load(Ordering::Relaxed);
         let available = w.wrapping_sub(r);
 
         let to_read = dst.len().min(available);
@@ -152,8 +170,19 @@ impl SpscRingBuffer {
             }
         }
 
-        self.read_pos.store(r.wrapping_add(to_read), Ordering::Release);
-        to_read
+        before_commit();
+        let next_r = r.wrapping_add(to_read);
+        if self
+            .read_pos
+            .compare_exchange(r, next_r, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            to_read
+        } else {
+            // clear() advanced read_pos concurrently: keep the cleared position and discard stale bytes.
+            dst[..to_read].fill(0);
+            0
+        }
     }
 
     /// Reset positions and counters.
@@ -226,5 +255,102 @@ mod tests {
         small.clear();
         assert_eq!(small.available_read(), 0);
         assert_eq!(small.capacity(), 64);
+    }
+
+    #[test]
+    fn clear_during_in_progress_read_does_not_move_read_pos_backwards() {
+        let rb = SpscRingBuffer::new(64);
+        assert_eq!(rb.write(&[0xAAu8; 48]), 48);
+
+        let mut mid = [0u8; 16];
+        let n = rb.read_inner(&mut mid, || {
+            rb.clear();
+        });
+
+        assert_eq!(n, 0, "interrupted read must not return stale pre-clear bytes");
+        assert_eq!(
+            rb.available_read(),
+            0,
+            "ring must remain empty after clear even if a read was in progress"
+        );
+        assert_eq!(
+            rb.available_write(),
+            64,
+            "full capacity must be available after clear"
+        );
+
+        assert_eq!(rb.write(&[0xBBu8; 24]), 24);
+        assert_eq!(rb.available_read(), 24);
+        let mut post = [0u8; 32];
+        let got = rb.read(&mut post);
+        assert_eq!(got, 24);
+        assert!(
+            post[..got].iter().all(|&b| b == 0xBB),
+            "subsequent reads must consume only post-flush data"
+        );
+    }
+
+    #[test]
+    fn clear_and_write_during_in_progress_read_does_not_make_ring_appear_full() {
+        let rb = SpscRingBuffer::new(64);
+        assert_eq!(rb.write(&[0xAAu8; 48]), 48);
+
+        let mut mid = [0u8; 16];
+        let n = rb.read_inner(&mut mid, || {
+            rb.clear();
+            assert_eq!(rb.write(&[0xBBu8; 48]), 48);
+        });
+
+        assert_eq!(n, 0);
+        assert_eq!(rb.available_read(), 48);
+        assert_eq!(
+            rb.available_write(),
+            16,
+            "ring must not appear full after clear + post-flush write"
+        );
+
+        let mut post = [0u8; 64];
+        let got = rb.read(&mut post);
+        assert_eq!(got, 48);
+        assert!(
+            post[..got].iter().all(|&b| b == 0xBB),
+            "only post-flush bytes may be readable"
+        );
+        assert_eq!(rb.available_read(), 0);
+    }
+
+    #[test]
+    fn concurrent_read_write_clear_preserves_ring_invariants() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        use std::thread;
+
+        let rb = Arc::new(SpscRingBuffer::new(256));
+        let done = Arc::new(AtomicBool::new(false));
+        let rb_cons = Arc::clone(&rb);
+        let done_cons = Arc::clone(&done);
+
+        let consumer = thread::spawn(move || {
+            let mut buf = [0u8; 32];
+            while !done_cons.load(Ordering::Acquire) {
+                let _ = rb_cons.read(&mut buf);
+                assert!(rb_cons.available_read() <= rb_cons.capacity());
+            }
+        });
+
+        let chunk = [0x5Au8; 48];
+        for i in 0..5000u32 {
+            let _ = rb.write(&chunk);
+            if i % 7 == 0 {
+                rb.clear();
+            }
+            assert!(rb.available_write() <= rb.capacity());
+        }
+        done.store(true, Ordering::Release);
+        consumer.join().expect("consumer thread completed");
+
+        rb.clear();
+        assert_eq!(rb.available_read(), 0);
+        assert_eq!(rb.available_write(), rb.capacity());
     }
 }
