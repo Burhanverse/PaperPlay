@@ -113,11 +113,11 @@ class PlaybackController(
         }
         scope.launch {
             while (true) {
-                delay(8_000)
+                delay(5_000)
                 if (engine.state.value == PlayerState.Playing) saveSession()
             }
         }
-        scope.launch { engine.state.collect { if (it == PlayerState.Paused) saveSession() } }
+        scope.launch { engine.state.collect { if (it == PlayerState.Paused || it == PlayerState.Ended) saveSession() } }
         scope.launch {
             engine.currentIndex.collect { idx ->
                 val song = meta.value.queue.getOrNull(idx)
@@ -135,6 +135,7 @@ class PlaybackController(
                     finishListening()
                     listening = song
                     markedFor = null
+                    saveSession()
                 }
                 prefetchedFor = null
                 val q = meta.value.queue
@@ -319,6 +320,7 @@ class PlaybackController(
 
     /** Pausing a playing song fades out over a fifth of a second, then pauses. */
     fun pause() {
+        saveSession()
         if (!engine.bypassSoftwareFade && engine.state.value == PlayerState.Playing && baseVolume > 0f) {
             fade(0f, baseVolume) { engine.pause(); engine.setVolume(baseVolume) }
         } else {
@@ -330,7 +332,10 @@ class PlaybackController(
         }
         scope.launch { runCatching { resolver.pauseAll() } }
     }
-    fun seek(positionMs: Long) = engine.seek(positionMs)
+    fun seek(positionMs: Long) {
+        engine.seek(positionMs)
+        saveSession(positionOverrideMs = positionMs)
+    }
     fun setVolume(volume: Float) { baseVolume = volume; if (fadeJob?.isActive != true) engine.setVolume(volume) }
     val outputInfo get() = engine.outputInfo
     val supportsBitPerfect: Boolean get() = engine.supportsBitPerfect
@@ -395,24 +400,37 @@ class PlaybackController(
         val songs = ids.mapNotNull { repo.songByUniqueId(it) }
         if (songs.isEmpty()) return@command
         val idx = (repo.pref(SESSION_INDEX)?.toIntOrNull() ?: 0).coerceIn(songs.indices)
-        val pos = repo.pref(SESSION_POS)?.toLongOrNull() ?: 0L
+        val song = songs[idx]
+        val rawPos = repo.pref(SESSION_POS)?.toLongOrNull() ?: 0L
+        val pos = clampSessionPosition(rawPos, song.duration_sec * 1000L)
         original = songs
         gate.withLock {
             resolver.retain(songs)
             meta.value = Meta(songs, false, Repeat.OFF, null)
             engine.restoreQueue(songs.map(resolver::resolve), idx, pos)
         }
-        val song = songs[idx]
         scope.launch { runCatching { resolver.warm(song) } }
     }
 
-    private fun saveSession() {
+    /** Persists the current queue index and clamped playback position immediately (e.g. on pause, track switch, or app backgrounding). */
+    fun saveSession(positionOverrideMs: Long? = null) {
         val q = meta.value.queue
         if (q.isEmpty()) return
+        val idx = engine.currentIndex.value.coerceIn(q.indices)
+        val song = q.getOrNull(idx)
+        val durMs = engine.durationMs.value.takeIf { it > 0L } ?: ((song?.duration_sec ?: 0L) * 1000L)
+        val rawPos = positionOverrideMs ?: engine.positionMs.value
+        val clampedPos = clampSessionPosition(rawPos, durMs)
         runCatching {
-            repo.setPref(SESSION_INDEX, engine.currentIndex.value.coerceAtLeast(0).toString())
-            repo.setPref(SESSION_POS, engine.positionMs.value.toString())
+            repo.setPref(SESSION_INDEX, idx.toString())
+            repo.setPref(SESSION_POS, clampedPos.toString())
         }
+    }
+
+    private fun clampSessionPosition(posMs: Long, durationMs: Long): Long {
+        val nonNeg = posMs.coerceAtLeast(0L)
+        if (durationMs <= 2_000L) return nonNeg
+        return if (nonNeg >= durationMs - 2_000L) 0L else nonNeg
     }
 
     @kotlin.concurrent.Volatile private var playIntent = false
@@ -530,8 +548,7 @@ class PlaybackController(
                 currentCoroutineContext().ensureActive()
                 resolver.retain(order)
                 meta.value = Meta(order, shuffle, meta.value.repeat, null)
-                engine.setQueue(order.map(resolver::resolve), index)
-                if (seekMs > 0) engine.seek(seekMs)
+                engine.setQueue(order.map(resolver::resolve), index, seekMs.coerceAtLeast(0L))
             }
             scope.launch { runCatching { resolver.fullyDownload(order.drop(index).take(3)) } }
             warm.await()?.let { err ->
@@ -545,6 +562,7 @@ class PlaybackController(
 
     /** Stops playback and releases the player. */
     suspend fun release() {
+        saveSession()
         finishListening()
         engine.release()
         resolver.retain(emptyList())

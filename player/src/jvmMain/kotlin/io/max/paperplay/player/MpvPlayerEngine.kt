@@ -205,6 +205,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             prematureRetries = 0; seekTarget = -1; resumeAtMs = 0
             _positionMs.value = 0; _durationMs.value = 0; lastPos = -1
             startedAt = System.currentTimeMillis()
+        } else if (resumeAtMs > 0L) {
+            _positionMs.value = resumeAtMs
         }
         _currentIndex.value = first
         loaded = false
@@ -215,7 +217,11 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         loaded = true
         _state.value = if (paused) PlayerState.Paused else PlayerState.Playing
         val resume = resumeAtMs
-        if (resume > 0) { resumeAtMs = 0; command("seek", "%.3f".format(java.util.Locale.ROOT, resume / 1000.0), "absolute+exact") }
+        if (resume > 0) {
+            resumeAtMs = 0
+            _positionMs.value = resume
+            command("seek", "%.3f".format(java.util.Locale.ROOT, resume / 1000.0), "absolute+exact")
+        }
         publishInfo()
         prepareNext()
         PlayLog.log("mpv", "playing after ${System.currentTimeMillis() - startedAt}ms ${_info.value?.let { "codec=${it.codec} rate=${it.sampleRateHz}Hz" } ?: ""}")
@@ -255,27 +261,58 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         return item.source?.let { http.value.register(item.uri, it) } ?: item.uri
     }
 
-    private fun start(index: Int, retry: Boolean = false) {
+    private fun start(index: Int, retry: Boolean = false, startPositionMs: Long = 0L, startPaused: Boolean = false) {
+        val safePos = startPositionMs.coerceAtLeast(0L)
         playlist.clear(); playlist.add(index)
-        if (!retry) { prematureRetries = 0; resumeAtMs = 0; seekTarget = -1 }
+        if (!retry) { prematureRetries = 0; resumeAtMs = safePos; seekTarget = if (safePos > 0L) safePos else -1L }
         _currentIndex.value = index
         startedAt = System.currentTimeMillis()
-        _state.value = PlayerState.Loading
+        _state.value = if (startPaused) PlayerState.Paused else PlayerState.Loading
         loaded = false
-        if (!retry) { _positionMs.value = 0; _durationMs.value = 0; lastPos = -1 }
-        if (exclusive) setProp("audio-exclusive", "yes")
-        setProp("pause", "no")
+        if (!retry) { _positionMs.value = safePos; _durationMs.value = 0; lastPos = if (safePos > 0L) safePos else -1L }
+        if (exclusive && !startPaused) setProp("audio-exclusive", "yes")
+        paused = startPaused
+        setProp("pause", if (startPaused) "yes" else "no")
         command("loadfile", mrlFor(index), "replace")
     }
 
-    override fun setQueue(items: List<QueueItem>, startIndex: Int) = cmd {
-        queue = items
-        if (items.isEmpty()) {
-            command("stop")
-            playlist.clear()
-            _currentIndex.value = -1
-            _state.value = PlayerState.Idle
-        } else start(startIndex.coerceIn(items.indices))
+    override fun setQueue(items: List<QueueItem>, startIndex: Int) = setQueue(items, startIndex, 0L)
+
+    override fun setQueue(items: List<QueueItem>, startIndex: Int, startPositionMs: Long) {
+        val safePos = startPositionMs.coerceAtLeast(0L)
+        if (items.isNotEmpty()) {
+            _currentIndex.value = startIndex.coerceIn(items.indices)
+            _positionMs.value = safePos
+        }
+        cmd {
+            queue = items
+            if (items.isEmpty()) {
+                command("stop")
+                playlist.clear()
+                _currentIndex.value = -1
+                _positionMs.value = 0L
+                _state.value = PlayerState.Idle
+            } else start(startIndex.coerceIn(items.indices), startPositionMs = safePos)
+        }
+    }
+
+    override fun restoreQueue(items: List<QueueItem>, startIndex: Int, positionMs: Long) {
+        val safePos = positionMs.coerceAtLeast(0L)
+        if (items.isNotEmpty()) {
+            _currentIndex.value = startIndex.coerceIn(items.indices)
+            _positionMs.value = safePos
+            _state.value = PlayerState.Paused
+        }
+        cmd {
+            queue = items
+            if (items.isEmpty()) {
+                command("stop")
+                playlist.clear()
+                _currentIndex.value = -1
+                _positionMs.value = 0L
+                _state.value = PlayerState.Idle
+            } else start(startIndex.coerceIn(items.indices), startPositionMs = safePos, startPaused = true)
+        }
     }
 
     // Exclusive output holds the sound device for this app alone, so it is given back while paused and taken again on play.

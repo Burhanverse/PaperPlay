@@ -545,6 +545,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         foreground = false
+        val s = services ?: shared
+        if (s != null && s.playbackStarted) {
+            runCatching { s.playback.saveSession() }
+        }
         super.onStop()
     }
 }

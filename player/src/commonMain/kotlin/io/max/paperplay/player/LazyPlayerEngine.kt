@@ -66,16 +66,17 @@ class LazyPlayerEngine(
     private var pendingNormalize: Boolean? = null
 
     override fun restoreQueue(items: List<QueueItem>, startIndex: Int, positionMs: Long) {
+        val safePos = positionMs.coerceAtLeast(0L)
         val r = real
         if (r != null) {
-            r.restoreQueue(items, startIndex, positionMs)
+            r.restoreQueue(items, startIndex, safePos)
             return
         }
         pendingQueue = items
         pendingIndex = startIndex
-        pendingSeekMs = positionMs
+        pendingSeekMs = safePos
         _currentIndex.value = startIndex
-        _positionMs.value = positionMs
+        _positionMs.value = safePos
         _state.value = PlayerState.Paused
     }
 
@@ -102,17 +103,25 @@ class LazyPlayerEngine(
 
             val q = pendingQueue
             val idx = pendingIndex
-            val seek = pendingSeekMs
+            val seek = pendingSeekMs.coerceAtLeast(0L)
             pendingQueue = null
             pendingSeekMs = 0L
 
             if (q != null && q.isNotEmpty()) {
-                engine.setQueue(q, idx)
-                if (seek > 0) engine.seek(seek)
+                engine.setQueue(q, idx, seek)
             }
 
             scope.launch { engine.state.collect { _state.value = it } }
-            scope.launch { engine.positionMs.collect { _positionMs.value = it } }
+            scope.launch {
+                engine.positionMs.collect { pos ->
+                    if (seek > 0L && pos == 0L && _positionMs.value == seek &&
+                        (engine.state.value == PlayerState.Idle || engine.state.value == PlayerState.Loading)
+                    ) {
+                        return@collect
+                    }
+                    _positionMs.value = pos
+                }
+            }
             scope.launch { engine.durationMs.collect { _durationMs.value = it } }
             scope.launch { engine.bufferedMs.collect { _bufferedMs.value = it } }
             scope.launch { engine.currentIndex.collect { _currentIndex.value = it } }
@@ -124,18 +133,25 @@ class LazyPlayerEngine(
         }
     }
 
-    override fun setQueue(items: List<QueueItem>, startIndex: Int) {
+    override fun setQueue(items: List<QueueItem>, startIndex: Int) = setQueue(items, startIndex, 0L)
+
+    override fun setQueue(items: List<QueueItem>, startIndex: Int, startPositionMs: Long) {
+        val safePos = startPositionMs.coerceAtLeast(0L)
         val r = real
         if (r == null) {
             if (items.isEmpty()) {
                 pendingQueue = null
+                pendingSeekMs = 0L
                 _currentIndex.value = -1
+                _positionMs.value = 0L
                 _state.value = PlayerState.Idle
                 return
             }
-            ensureReal().setQueue(items, startIndex)
+            pendingQueue = null
+            pendingSeekMs = 0L
+            ensureReal().setQueue(items, startIndex, safePos)
         } else {
-            r.setQueue(items, startIndex)
+            r.setQueue(items, startIndex, safePos)
         }
     }
 
@@ -163,16 +179,18 @@ class LazyPlayerEngine(
     override fun previous() = ensureReal().previous()
 
     override fun seek(positionMs: Long) {
+        val safePos = positionMs.coerceAtLeast(0L)
         val r = real
         if (r == null) {
             if (pendingQueue == null) return
-            pendingSeekMs = positionMs
-            val wasPaused = _state.value == PlayerState.Paused
-            val engine = ensureReal()
-            if (wasPaused) engine.pause()
-            engine.seek(positionMs)
+            pendingSeekMs = safePos
+            _positionMs.value = safePos
+            if (_state.value == PlayerState.Paused || _state.value == PlayerState.Idle) {
+                return
+            }
+            ensureReal().seek(safePos)
         } else {
-            r.seek(positionMs)
+            r.seek(safePos)
         }
     }
 

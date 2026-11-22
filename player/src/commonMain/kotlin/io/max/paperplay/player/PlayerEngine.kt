@@ -118,12 +118,16 @@ interface PlayerEngine {
     /** Index into the current queue, -1 when empty. */
     val currentIndex: StateFlow<Int>
 
+    /** Replaces the queue and starts playing at [startIndex] from [startPositionMs]. */
+    fun setQueue(items: List<QueueItem>, startIndex: Int = 0, startPositionMs: Long = 0L) {
+        setQueue(items, startIndex)
+        if (startPositionMs > 0L) seek(startPositionMs)
+    }
     /** Replaces the queue and starts playing at [startIndex]. */
     fun setQueue(items: List<QueueItem>, startIndex: Int = 0)
     /** Restores a previously saved queue in paused state without starting playback. */
     fun restoreQueue(items: List<QueueItem>, startIndex: Int = 0, positionMs: Long = 0L) {
-        setQueue(items, startIndex)
-        if (positionMs > 0) seek(positionMs)
+        setQueue(items, startIndex, positionMs.coerceAtLeast(0L))
         pause()
     }
     fun play()

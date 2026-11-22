@@ -101,26 +101,37 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
 
     private fun cmd(block: () -> Unit) { io.execute(block) }
 
-    private fun start(index: Int, retry: Boolean = false) {
+    private fun start(index: Int, retry: Boolean = false, startPositionMs: Long = 0L) {
         val item = queue[index]
-        if (!retry) { prematureRetries = 0; resumeAtMs = 0; seekTarget = -1 }
+        val safePos = startPositionMs.coerceAtLeast(0L)
+        if (!retry) { prematureRetries = 0; resumeAtMs = safePos; seekTarget = if (safePos > 0L) safePos else -1L }
         _currentIndex.value = index
         startedAt = System.currentTimeMillis(); firstTick = false
         _state.value = PlayerState.Loading
-        if (!retry) { _positionMs.value = 0; _durationMs.value = 0 }
+        if (!retry) { _positionMs.value = safePos; _durationMs.value = 0 }
         val mrl = item.source?.let { http.value.register(item.uri, it) } ?: item.uri
         // The stream is a loopback server fed from disk, so libvlc's default one second of network buffering only delays the first sound.
         val fast = arrayOf(":network-caching=150", ":file-caching=150")
         if (normalize) player.media().play(mrl, *fast, ":audio-filter=normvol", ":norm-max-level=1.0") else player.media().play(mrl, *fast)
     }
 
-    override fun setQueue(items: List<QueueItem>, startIndex: Int) = cmd {
-        queue = items
-        if (items.isEmpty()) {
-            player.controls().stop()
-            _currentIndex.value = -1
-            _state.value = PlayerState.Idle
-        } else start(startIndex.coerceIn(items.indices))
+    override fun setQueue(items: List<QueueItem>, startIndex: Int) = setQueue(items, startIndex, 0L)
+
+    override fun setQueue(items: List<QueueItem>, startIndex: Int, startPositionMs: Long) {
+        val safePos = startPositionMs.coerceAtLeast(0L)
+        if (items.isNotEmpty()) {
+            _currentIndex.value = startIndex.coerceIn(items.indices)
+            _positionMs.value = safePos
+        }
+        cmd {
+            queue = items
+            if (items.isEmpty()) {
+                player.controls().stop()
+                _currentIndex.value = -1
+                _positionMs.value = 0L
+                _state.value = PlayerState.Idle
+            } else start(startIndex.coerceIn(items.indices), startPositionMs = safePos)
+        }
     }
 
     override fun play() = cmd {

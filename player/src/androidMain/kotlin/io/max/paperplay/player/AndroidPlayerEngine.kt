@@ -779,8 +779,29 @@ class AndroidPlayerEngine : PlayerEngine {
         }
     }
 
-    override fun setQueue(items: List<QueueItem>, startIndex: Int) = withController { mc ->
-        setQueueNow(mc, items, startIndex)
+    override fun setQueue(items: List<QueueItem>, startIndex: Int) = setQueue(items, startIndex, 0L)
+
+    override fun setQueue(items: List<QueueItem>, startIndex: Int, startPositionMs: Long) {
+        val safePos = startPositionMs.coerceAtLeast(0L)
+        if (items.isNotEmpty()) {
+            _currentIndex.value = startIndex.coerceIn(items.indices)
+            _positionMs.value = safePos
+        }
+        withController { mc ->
+            setQueueNow(mc, items, startIndex, startPositionMs = safePos, playWhenReady = true)
+        }
+    }
+
+    override fun restoreQueue(items: List<QueueItem>, startIndex: Int, positionMs: Long) {
+        val safePos = positionMs.coerceAtLeast(0L)
+        if (items.isNotEmpty()) {
+            _currentIndex.value = startIndex.coerceIn(items.indices)
+            _positionMs.value = safePos
+            _state.value = PlayerState.Paused
+        }
+        withController { mc ->
+            setQueueNow(mc, items, startIndex, startPositionMs = safePos, playWhenReady = false)
+        }
     }
 
     private fun streamKey(item: QueueItem): String = "stream://${item.uri}"
@@ -855,7 +876,13 @@ class AndroidPlayerEngine : PlayerEngine {
         retainActiveWindowSources()
     }
 
-    private fun setQueueNow(mc: MediaController, items: List<QueueItem>, startIndex: Int) {
+    private fun setQueueNow(
+        mc: MediaController,
+        items: List<QueueItem>,
+        startIndex: Int,
+        startPositionMs: Long = 0L,
+        playWhenReady: Boolean = true,
+    ) {
         failed = false
         handler.removeCallbacks(slideRunnable)
         pendingSlideIndex = -1
@@ -871,14 +898,16 @@ class AndroidPlayerEngine : PlayerEngine {
         }
         fullQueue = items
         val target = startIndex.coerceIn(items.indices)
+        val safeStartPos = startPositionMs.coerceAtLeast(0L)
         windowStart = maxOf(0, target - 1)
         windowEnd = minOf(items.size, target + 2)
         registerRange(windowStart, windowEnd)
         retainActiveWindowSources()
         val mediaItems = (windowStart until windowEnd).map { toMediaItem(it, items[it]) }
-        mc.setMediaItems(mediaItems, target - windowStart, 0L)
+        mc.setMediaItems(mediaItems, target - windowStart, safeStartPos)
         mc.prepare()
-        mc.play()
+        if (playWhenReady) mc.play() else mc.pause()
+        sync()
     }
 
     override fun play() = withController { mc ->
