@@ -184,15 +184,6 @@ impl SpscRingBuffer {
             0
         }
     }
-
-    /// Reset positions and counters.
-    pub fn reset(&self) {
-        self.write_pos.store(0, Ordering::Release);
-        self.read_pos.store(0, Ordering::Release);
-        self.frames_consumed.store(0, Ordering::Release);
-        self.underruns.store(0, Ordering::Release);
-        self.urb_errors.store(0, Ordering::Release);
-    }
 }
 
 impl Drop for SpscRingBuffer {

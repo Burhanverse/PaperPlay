@@ -46,7 +46,6 @@ interface UsbEngineBridge {
     fun flush(handle: Long): Int
     fun write(handle: Long, buffer: ByteBuffer, offset: Int, length: Int): Int
     fun getStats(handle: Long, outStats: LongArray)
-    fun playDebugTest(handle: Long, testType: Int, durationMs: Int): Int
     fun setHardwareVolume(handle: Long, featureUnitId: Int, controlIface: Int, channel: Int, volumeRaw: Int): Int
     fun setHardwareMute(handle: Long, featureUnitId: Int, controlIface: Int, channel: Int, mute: Boolean): Int
     fun getCurrentRate(handle: Long): Int
@@ -388,8 +387,6 @@ class FakeUsbEngineBridge : UsbEngineBridge {
             outStats[8] = 0L      // isFlushing
         }
     }
-
-    override fun playDebugTest(handle: Long, testType: Int, durationMs: Int): Int = 0
 
     override fun setHardwareVolume(
         handle: Long,

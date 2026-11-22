@@ -147,7 +147,6 @@ internal object UsbEngineNative : UsbEngineBridge {
     override external fun flush(handle: Long): Int
     override external fun write(handle: Long, buffer: ByteBuffer, offset: Int, length: Int): Int
     override external fun getStats(handle: Long, outStats: LongArray)
-    override external fun playDebugTest(handle: Long, testType: Int, durationMs: Int): Int
     override external fun setHardwareVolume(
         handle: Long,
         featureUnitId: Int,
