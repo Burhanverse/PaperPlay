@@ -272,6 +272,10 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun removePost(chatId: Long, messageId: Long) = write { repo.removePost(chatId, messageId) }
     fun removeChat(chatId: Long): Int = write { repo.removeChat(chatId) }
     fun saveTopic(chatId: Long, topicId: Long, name: String) = write { misc.saveTopic(chatId, topicId, name) }
+    fun replaceTopics(chatId: Long, topics: List<Pair<Long, String>>) = write {
+        misc.deleteTopicsOfChat(chatId)
+        for ((topicId, name) in topics) misc.saveTopic(chatId, topicId, name)
+    }
     /** Forum topics known per chat. */
     fun topicCountsByChat(): Map<Long, Int> = misc.topics().executeAsList().groupingBy { it.chat_id }.eachCount()
     /** Posts copied into the main chat, by the chat they came from. */
