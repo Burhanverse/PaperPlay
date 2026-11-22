@@ -70,6 +70,15 @@ class Versions(unittest.TestCase):
         p = plan(since={r.FIRST_SINCE: [c("fix: a")]}, head=["v1.3.0-beta.1"])
         self.assertFalse(p.release)
 
+    def test_a_beta_tag_on_the_commit_does_not_stop_the_stable_release(self):
+        # main and beta pushed at the same commit: the beta run tags it first, the stable run must still release.
+        p = plan(["v1.11.0", "v1.12.0-beta.1"], {"v1.11.0": [c("feat: a")]}, head=["v1.12.0-beta.1"], channel="stable")
+        self.assertEqual((p.release, p.version), (True, "1.12.0"))
+
+    def test_a_stable_tag_on_the_commit_stops_the_stable_release(self):
+        p = plan(["v1.11.0", "v1.12.0"], {"v1.11.0": [c("feat: a")]}, head=["v1.12.0"], channel="stable")
+        self.assertFalse(p.release)
+
 
 class Betas(unittest.TestCase):
     def test_first_beta_of_a_version(self):
