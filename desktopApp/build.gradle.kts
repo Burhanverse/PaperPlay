@@ -153,9 +153,17 @@ compose.desktop {
     }
 }
 
-// sqlite-jdbc and JNA ship natives for every OS; the Windows image only needs win x64. Rewrite those jars in the image.
+// sqlite-jdbc and JNA ship natives for every OS; keep only the current host OS/arch natives in the packaged image.
 fun stripForeignNatives(jar: File) {
-    val drop = Regex("^(org/sqlite/native/(?!Windows/x86_64/).*|com/sun/jna/(?!win32-x86-64/)[a-z0-9-]+-[a-z0-9-]+/.*)$")
+    val os = System.getProperty("os.name").orEmpty().lowercase()
+    val arch = System.getProperty("os.arch").orEmpty().lowercase()
+    val (sqliteKeep, jnaKeep) = when {
+        os.startsWith("windows") -> "Windows/x86_64/" to "win32-x86-64/"
+        os.startsWith("linux") && (arch == "amd64" || arch == "x86_64") -> "Linux/x86_64/" to "linux-x86-64/"
+        os.startsWith("linux") && (arch == "aarch64" || arch == "arm64") -> "Linux/aarch64/" to "linux-aarch64/"
+        else -> return
+    }
+    val drop = Regex("^(org/sqlite/native/(?!${Regex.escape(sqliteKeep)}).*|com/sun/jna/(?!${Regex.escape(jnaKeep)})[a-z0-9-]+-[a-z0-9-]+/.*)$")
     val tmp = File(jar.path + ".tmp")
     ZipFile(jar).use { zf ->
         ZipOutputStream(tmp.outputStream().buffered()).use { out ->

@@ -127,6 +127,19 @@ private fun handleMediaKey(key: String) {
     }
 }
 
+private val shutdownTarget = java.util.concurrent.atomic.AtomicReference<AppServices?>(null)
+
+/** Stops TDLib, playback and SQLite once before the JVM exits, so native threads do not race C++ destructors. */
+private fun shutdownServices() {
+    val s = shutdownTarget.getAndSet(null) ?: return
+    liveServices = null
+    runCatching {
+        kotlinx.coroutines.runBlocking {
+            kotlinx.coroutines.withTimeoutOrNull(8_000) { s.shutdown() }
+        }
+    }
+}
+
 fun main() {
     // GitHub's asset host rotates addresses and one of them can be unreachable here; Java uses the first and caches it, so a retry hit the same dead one.
     java.security.Security.setProperty("networkaddress.cache.ttl", "0")
@@ -162,6 +175,7 @@ fun main() {
             while (true) runCatching { server.accept().use { it.getInputStream().read(); showMain.tryEmit(Unit) } }
         }.apply { isDaemon = true; name = "single-instance" }.start()
     }
+    Runtime.getRuntime().addShutdownHook(Thread(::shutdownServices, "paperplay-shutdown"))
     // Set jna.library.path for TDLib only. VlcLoader will append the VLC path
     // automatically when the first JvmPlayerEngine is created.
     tdlibDir()?.let { System.setProperty("jna.library.path", it) }
@@ -202,7 +216,7 @@ fun main() {
                 restore = { source, pw -> BackupRestorer().restore(source, target, RestoreOptions(password = pw)) },
             ),
             libraryExists = { File(dir, "library.sqlite").exists() },
-            createServices = { AppServices(DesktopPlatform(dir)).also { liveServices = it } },
+            createServices = { AppServices(DesktopPlatform(dir)).also { liveServices = it; shutdownTarget.set(it) } },
             mark = { mark(dir, it) },
             pickImage = { onPicked ->
                 val file = NativeDialogs.openFiles("Choose a picture", PICTURES).firstOrNull()
@@ -267,8 +281,8 @@ fun main() {
             if (!BorderlessFullscreen.supported) mainState.placement = if (fullscreen) androidx.compose.ui.window.WindowPlacement.Fullscreen else androidx.compose.ui.window.WindowPlacement.Floating
         }
         val quit = {
-            // libvlc writes its plugin cache (plugins.dat) only when released.
-            liveServices?.releasePlayback()
+            mainVisible = false
+            shutdownServices()
             exitApplication()
         }
         // The tray menu is the app's own themed window (TrayMenuContent) rather than the native Windows menu.

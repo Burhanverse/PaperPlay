@@ -495,15 +495,6 @@ class UsbAudioStreamer(
     }
 
     /**
-     * Standalone hardware verification: generates and queues a 440 Hz sine tone (1) or 24-bit/96kHz ramp (2).
-     */
-    fun playDebugTest(type: Int, durationMs: Int): Int {
-        val h = nativeHandle
-        if (h == 0L) return -1
-        return engineBridge.playDebugTest(h, type, durationMs)
-    }
-
-    /**
      * Teardown streaming and destroy native session, returning interface to alt 0 and releasing claims.
      */
     override fun stopAndRelease() = synchronized(globalStreamerLock) {

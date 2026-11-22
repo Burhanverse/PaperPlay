@@ -19,7 +19,7 @@ kotlin {
         commonMain.dependencies {
             implementation(compose.runtime)
             implementation(compose.foundation)
-            implementation(compose.material3)
+            implementation(libs.compose.material3)
             implementation(compose.components.resources)
             // @Preview for commonMain; Android Studio and IntelliJ render it for the Android and desktop targets.
             implementation(compose.components.uiToolingPreview)
@@ -31,6 +31,9 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
             implementation(compose.uiTooling)
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
         }
     }
 }

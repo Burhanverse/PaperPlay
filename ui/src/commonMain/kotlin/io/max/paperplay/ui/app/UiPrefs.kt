@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +45,10 @@ enum class SelectionLook(val label: String) { Fill("Fill"), Ring("Ring"), Soft("
 enum class IconSet(val label: String) {
     MaterialExpressive("Material 3 Expressive"),
     Tabler("Tabler"),
+}
+enum class ProgressBarStyle(val label: String) {
+    SQUIGGLY_WAVE("Squiggly Wave"),
+    AURORA_WAVE("Aurora Wave"),
 }
 enum class LookGroup(val label: String, val hint: String) {
     Nav("Navigation bar", "The bottom bar, or the sidebar on desktop"),
@@ -153,6 +157,10 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
         private set
     var iconSet by mutableStateOf(IconSet.entries.firstOrNull { it.name.lowercase() == read("icon_set") } ?: IconSet.MaterialExpressive)
         private set
+    var progressBarStyle by mutableStateOf(
+        ProgressBarStyle.entries.firstOrNull { it.name.equals(read("progress_bar_style"), ignoreCase = true) } ?: ProgressBarStyle.SQUIGGLY_WAVE
+    )
+        private set
 
     private val nav0 = runCatching { Json.parseToJsonElement(read("nav_style").orEmpty()).jsonObject }.getOrNull()
     var navLayout by mutableStateOf(NavLayout.entries.firstOrNull { it.name.lowercase() == nav0?.str("layout") } ?: NavLayout.Pill)
@@ -234,6 +242,7 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
     fun putProfileName(name: String) { profileName = name; write("profile_name", name) }
     fun putProfilePhoto(path: String?) { profilePhoto = path; write("profile_photo", path.orEmpty()) }
     fun putIconSet(set: IconSet) { iconSet = set; write("icon_set", set.name.lowercase()) }
+    fun putProgressBarStyle(style: ProgressBarStyle) { progressBarStyle = style; write("progress_bar_style", style.name.lowercase()) }
     fun putThemeMode(m: ThemeMode) { themeMode = m; write("theme_mode", m.name.lowercase()) }
     fun putAmoled(on: Boolean) { amoled = on; write("theme_amoled", "$on") }
     fun putAccent(id: String) { accent = id; write("theme_accent", id) }

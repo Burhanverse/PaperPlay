@@ -153,7 +153,43 @@ internal fun thumbFileOfMessage(message: JsonObject): JsonObject? {
     return thumb.obj("file")
 }
 
-private fun topicIdOf(message: JsonObject): Long? = message.obj("topic_id")?.long("forum_topic_id")
+private fun topicIdOf(message: JsonObject): Long? =
+    message.obj("topic_id")?.long("forum_topic_id")
+        ?: message.long("message_thread_id")?.takeIf { it != 0L }
+
+/**
+ * Older builds saved `messageForumTopicCreated` under the shifted TDLib `message.id` (`id << 20`)
+ * while songs in TDLib 1.8.60+ store the unshifted `forum_topic_id`. When a chat's songs use
+ * unshifted topic ids and `forum_topics` holds shifted multiples of [MESSAGE_ID_STEP], unshift them.
+ */
+fun repairShiftedForumTopics(
+    topics: List<io.max.paperplay.core.library.ForumTopic>,
+    songs: List<Song>,
+): Map<Long, List<Pair<Long, String>>> {
+    val out = LinkedHashMap<Long, List<Pair<Long, String>>>()
+    val songsByChat = songs.groupBy { it.chat_id }
+    for ((chatId, list) in topics.groupBy { it.chat_id }) {
+        val hasShifted = list.any { it.topic_id >= MESSAGE_ID_STEP && it.topic_id % MESSAGE_ID_STEP == 0L }
+        if (!hasShifted) continue
+        val songTopics = songsByChat[chatId].orEmpty().mapNotNull { it.topic_id }
+        val hasUnshiftedSongs = songTopics.any { it in 1L until MESSAGE_ID_STEP }
+        val hasShiftedSongs = songTopics.any { it >= MESSAGE_ID_STEP }
+        if (!hasUnshiftedSongs || hasShiftedSongs) continue
+        val merged = LinkedHashMap<Long, String>()
+        for (t in list) {
+            if (t.topic_id >= MESSAGE_ID_STEP && t.topic_id % MESSAGE_ID_STEP == 0L) {
+                merged[t.topic_id shr 20] = t.name
+            }
+        }
+        for (t in list) {
+            if (t.topic_id < MESSAGE_ID_STEP || t.topic_id % MESSAGE_ID_STEP != 0L) {
+                merged[t.topic_id] = t.name
+            }
+        }
+        out[chatId] = merged.entries.map { it.key to it.value }
+    }
+    return out
+}
 
 /** A song row for [message] (a TDLib `message` object), or null when it is not audio. */
 fun songFromMessage(message: JsonObject): Song? {
@@ -249,8 +285,11 @@ class Scanner(
     /** Why the last scan failed; null after a scan that worked. */
     val error: StateFlow<String?> = _error
 
+    @Volatile private var usesNewApi = true
+
     fun attach(client: TdClient) {
         td = client
+        scope.launch { usesNewApi = runCatching { client.newApi() }.getOrDefault(true) }
         listener?.cancel()
         listener = scope.launch {
             client.updates.collect { u ->
@@ -306,7 +345,10 @@ class Scanner(
         val created = content.type == "messageForumTopicCreated"
         if (!created && content.type != "messageForumTopicEdited") return
         val name = content.str("name")?.takeIf { it.isNotEmpty() } ?: return
-        val id = (if (created) message.long("id") else topicIdOf(message)) ?: return
+        // TDLib 1.8.60+ puts the unshifted forum_topic_id in topic_id; message.id is shifted left by 20 bits.
+        val id = topicIdOf(message)
+            ?: (if (created) message.long("id")?.let { if (usesNewApi && it >= MESSAGE_ID_STEP) it shr 20 else it } else null)
+            ?: return
         repo.saveTopic(message.long("chat_id") ?: return, id, name)
     }
 
@@ -445,6 +487,7 @@ class Scanner(
         var ticker: kotlinx.coroutines.Job? = null
         try {
             val meta = introduceChat(client, chat.id)
+            usesNewApi = runCatching { client.newApi() }.getOrDefault(true)
             if (meta.title != null && meta.title != chatTitle) {
                 chatTitle = meta.title
                 repo.renameChat(chat.id, chatTitle)

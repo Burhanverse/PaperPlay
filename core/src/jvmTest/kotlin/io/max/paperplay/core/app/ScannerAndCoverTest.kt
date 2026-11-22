@@ -523,4 +523,87 @@ class ScannerAndCoverTest {
         assertTrue(!oldUnused.exists(), "an old file no song uses is removed")
         assertEquals(1000L, freed)
     }
+
+    @Test
+    fun scannerSavesUnshiftedForumTopicIdForCreatedAndEditedTopics(): Unit = runBlocking {
+        val (db, repo) = newRepo()
+        val chatId = -1001234567890L
+        repo.addChat(chatId, "Music")
+        val native = FakeTdNative { _, req ->
+            val extra = req["@extra"]
+            val reply = when (req["@type"]?.jsonPrimitive?.content) {
+                "getOption" -> buildJsonObject { put("@type", "optionValueString"); extra?.let { put("@extra", it) }; put("value", "1.8.60") }
+                "getChat" -> buildJsonObject {
+                    put("@type", "chat"); extra?.let { put("@extra", it) }; put("id", chatId); put("title", "Music")
+                    put("last_message", buildJsonObject { put("id", 5L * MESSAGE_ID_STEP) })
+                }
+                "getMessages" -> {
+                    val wanted = req["message_ids"]!!.jsonArray.map { it.jsonPrimitive.long }.toSet()
+                    val msgs = buildList {
+                        // Topic created with topic_id.forum_topic_id (TDLib 1.8.60+ shape)
+                        if (2L * MESSAGE_ID_STEP in wanted) add(buildJsonObject {
+                            put("@type", "message"); put("chat_id", chatId); put("id", 2L * MESSAGE_ID_STEP)
+                            put("topic_id", buildJsonObject { put("@type", "messageTopicForum"); put("forum_topic_id", 2L) })
+                            put("content", buildJsonObject { put("@type", "messageForumTopicCreated"); put("name", "English") })
+                        })
+                        // Topic created without topic_id field (fallback to id shr 20 on new TDLib)
+                        if (3L * MESSAGE_ID_STEP in wanted) add(buildJsonObject {
+                            put("@type", "message"); put("chat_id", chatId); put("id", 3L * MESSAGE_ID_STEP)
+                            put("content", buildJsonObject { put("@type", "messageForumTopicCreated"); put("name", "Hindi") })
+                        })
+                        // Topic renamed
+                        if (4L * MESSAGE_ID_STEP in wanted) add(buildJsonObject {
+                            put("@type", "message"); put("chat_id", chatId); put("id", 4L * MESSAGE_ID_STEP)
+                            put("topic_id", buildJsonObject { put("@type", "messageTopicForum"); put("forum_topic_id", 2L) })
+                            put("content", buildJsonObject { put("@type", "messageForumTopicEdited"); put("name", "English Pop") })
+                        })
+                    }
+                    buildJsonObject { put("@type", "messages"); extra?.let { put("@extra", it) }; put("messages", buildJsonArray { msgs.forEach { add(it) } }) }
+                }
+                else -> buildJsonObject { put("@type", "ok"); extra?.let { put("@extra", it) } }
+            }
+            listOf(reply)
+        }
+        val runtime = TdRuntime(native, scope, Dispatchers.IO)
+        val client = TdClient(runtime, config).also { it.start() }
+        val scanner = Scanner(repo, scope, minPause = 1.milliseconds)
+        scanner.attach(client)
+        val chat = repo.chat(chatId)!!
+        scanner.scanChat(chat, full = true)
+
+        val saved = db.miscQueries.topics().executeAsList().associate { it.topic_id to it.name }
+        assertEquals(mapOf(2L to "English Pop", 3L to "Hindi"), saved)
+    }
+
+    @Test
+    fun repairShiftedForumTopicsUnshiftsLegacyRowsWhenSongsUseUnshiftedIds() {
+        val chatNew = -1004347476515L
+        val chatOld = -1009999999999L
+        val topics = listOf(
+            io.max.paperplay.core.library.ForumTopic(chatNew, 2L * MESSAGE_ID_STEP, "English"),
+            io.max.paperplay.core.library.ForumTopic(chatNew, 3L * MESSAGE_ID_STEP, "Hindi"),
+            io.max.paperplay.core.library.ForumTopic(chatNew, 229L * MESSAGE_ID_STEP, "Korean"),
+            io.max.paperplay.core.library.ForumTopic(chatOld, 2L * MESSAGE_ID_STEP, "Legacy"),
+        )
+        fun songAt(chat: Long, msg: Long, topic: Long) = Song(
+            chat_id = chat, message_id = msg * MESSAGE_ID_STEP, unique_id = "u$chat-$msg", remote_id = "r$msg",
+            title = "T", artist = "A", album = "", duration_sec = 180, size = 1000, mime = "audio/mpeg",
+            file_name = "a.mp3", date = 1, cover_path = null, release_id = null, cover_url = null, genre = null,
+            year = null, metadata_source = null, favorite = false, cover_hi_res = false, user_edited = false,
+            enrich_state = 0, lyrics = null, cached_bytes = 0, last_played_at = null, pinned = false,
+            tags_at = 0, favorite_at = 0, cover_at = 0, instrumental = false, mood_scanned_at = 0,
+            plays = 0, skips = 0, topic_id = topic, sample_rate = null, bit_depth = null, codec = null,
+        )
+        val songs = listOf(
+            songAt(chatNew, 10, 2L),
+            songAt(chatNew, 11, 3L),
+            songAt(chatOld, 10, 2L * MESSAGE_ID_STEP),
+        )
+        val repaired = repairShiftedForumTopics(topics, songs)
+        assertEquals(setOf(chatNew), repaired.keys, "only the chat with unshifted song topic_ids is repaired")
+        assertEquals(
+            mapOf(2L to "English", 3L to "Hindi", 229L to "Korean"),
+            repaired[chatNew]!!.toMap(),
+        )
+    }
 }

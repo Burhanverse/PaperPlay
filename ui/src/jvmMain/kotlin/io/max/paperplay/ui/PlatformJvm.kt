@@ -21,10 +21,17 @@ actual fun rememberAppForeground(): Boolean {
     return foreground
 }
 
+private val isLinuxDesktop by lazy {
+    System.getProperty("os.name", "").contains("linux", ignoreCase = true)
+}
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 actual fun androidx.compose.ui.Modifier.mouseBackButton(onBack: () -> Unit): androidx.compose.ui.Modifier =
     this.onPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, androidx.compose.ui.input.pointer.PointerEventPass.Initial) {
-        if (it.button == androidx.compose.ui.input.pointer.PointerButton.Back) onBack()
+        // On Linux X11, OpenJDK shifts buttons > 5 down by 2: horizontal scroll left (X11 button 6, e.g. touchpad drift)
+        // arrives as AWT button 4 (PointerButton.Back), while the physical mouse Back button (X11 button 8) is AWT button 6 (index 5).
+        val backButton = if (isLinuxDesktop) androidx.compose.ui.input.pointer.PointerButton(5) else androidx.compose.ui.input.pointer.PointerButton.Back
+        if (it.button == backButton) onBack()
     }
 
 private val thumbDir by lazy { File(System.getProperty("user.home"), ".paperplay/thumbs").apply { mkdirs() } }

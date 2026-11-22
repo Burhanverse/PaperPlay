@@ -231,6 +231,7 @@ internal fun SettingsPage(
             }
             SectionLabel("Display")
             BackgroundSettings(prefs)
+            ProgressBarStyleSettings(prefs, backend)
             SectionLabel("Corners")
             Text("Each part has its own corner size. The first slider sets them all, the sidebar and the player bar too; the sidebar and bar sliders are further down.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             SliderRow("All corners: ${prefs.cornerRadius.toInt()}%", prefs.cornerRadius, 0f..100f, { prefs.putCornerRadius(it) })
