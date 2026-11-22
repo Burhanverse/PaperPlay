@@ -52,10 +52,11 @@ internal class EngineAudioSink(
         PlaybackCore.engineActive = active
         PlaybackCore.engineIn = if (active) "${when (f.pcmEncoding) { C.ENCODING_PCM_16BIT -> "16-bit"; C.ENCODING_PCM_24BIT -> "24-bit"; C.ENCODING_PCM_32BIT -> "32-bit"; else -> "32-bit float" }} PCM, ${f.sampleRate} Hz" else null
         PlaybackCore.engineOut = if (active) "32-bit float, ${f.sampleRate} Hz, ${f.channelCount} ch" else null
-        if (!active) { super.configure(config); return }
+        // Set before the pass-through return too: the visualizer reads the audio on that path as well.
         enc = e
         channels = f.channelCount
         rate = f.sampleRate
+        if (!active) { super.configure(config); return }
         handle = EngineNative.create(f.sampleRate, f.channelCount)
         applied = null
         appliedBass = 0f
@@ -79,6 +80,11 @@ internal class EngineAudioSink(
 
     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
         if (!active || PlaybackCore.usbActive) {
+            // With the engine off (no DSP, bit-perfect) the visualizer still gets the audio; free unless one is on screen.
+            if (enc == C.ENCODING_PCM_16BIT || enc == C.ENCODING_PCM_24BIT || enc == C.ENCODING_PCM_32BIT || enc == C.ENCODING_PCM_FLOAT) {
+                val step = when (enc) { C.ENCODING_PCM_16BIT -> 2; C.ENCODING_PCM_24BIT -> 3; else -> 4 }
+                tap(buffer, buffer.remaining() / step)
+            }
             if (!PlaybackCore.usbActive && DelegateSinkDiag.isEnabled) {
                 val before = buffer.remaining()
                 val ok = super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
