@@ -12,26 +12,30 @@ sample-exact bit-perfect verification against reference source files.
 
 1. Connect your USB DAC to the Android phone and allow USB host permission.
 2. In PaperPlay, navigate to:
-   Settings > Audio > USB exclusive mode (or Settings > Audio > USB probe)
-3. Ensure "USB exclusive mode" is switched ON.
+   Settings > Listening > USB DAC (or Settings > Listening > USB probe when Developer options are unlocked)
+3. Ensure "Bit-perfect" is switched ON.
 4. Tap the "Dump USB PCM" button.
    The status will change to "Armed: waiting for USB playback".
 5. Play a track (e.g. one of the reference test files below).
    PaperPlay captures the exact integer bytes written to the USB ring buffer
-   for the first 30 seconds of playback and saves them to:
-   /sdcard/Android/data/io.max.paperplay/cache/dump_usb_30s_<rate>hz_<bits>bit.raw
-6. Once completed, the status shows "Finished: 30s captured successfully".
-   You can tap "Share PCM dump" to export or pull it via adb.
+   and saves them to app cache:
+   /data/user/0/io.max.paperplay.compose/cache/dump_usb_<sec>s_<rate>hz_<bits>bit_<subslot>b.raw
+6. Once completed, you can tap "Share PCM dump" or pull it via adb (`run-as io.max.paperplay.compose`).
 
 --------------------------------------------------------------------------------
-2. Pulling the Capture via ADB
+2. Pulling the Capture via ADB (or Automated Wireless Suite)
 --------------------------------------------------------------------------------
 
 Run from your computer:
 
-  adb pull /sdcard/Android/data/io.max.paperplay/cache/dump_usb_30s_44100hz_16bit.raw .
-  # Or for 24-bit / 96 kHz:
-  adb pull /sdcard/Android/data/io.max.paperplay/cache/dump_usb_30s_96000hz_24bit.raw .
+  adb exec-out run-as io.max.paperplay.compose cat cache/dump_usb_30s_44100hz_32bit_4b.raw > dump_44k.raw
+
+Or run the automated wireless verification suite (pushes test FLACs, captures
+unified-path dumps, and verifies sample-exactness, mixed-rate transitions,
+transport controls, speed bypass/return, runtime switch, 60 s OFF mode, and
+hardware volume sweep):
+
+  python3 scripts/run_device_bitperfect_verification.py --serial <adb-serial> --all
 
 --------------------------------------------------------------------------------
 3. Automated Verification Tool
@@ -106,9 +110,8 @@ When MediaCodec or ExoPlayer outputs 32-bit floating point PCM (`ENCODING_PCM_FL
    Max deviation = 0.
 
 3. Raw Integer Passthrough:
-   When MediaCodec outputs raw 16-bit or 24-bit PCM directly (or hound/claxon
-   decoders in the Rust engine), samples bypass floating point entirely and are
-   repacked directly into the USB transfer buffer:
+   When MediaCodec outputs raw 16-bit or 24-bit PCM directly, samples bypass
+   floating point entirely and are repacked directly into the USB transfer buffer:
    * 16-bit: directly copied as 2-byte little endian shorts (subslotSize = 2).
    * 24-bit: copied as 3 bytes (subslotSize = 3) or shifted left by 8 for
      MSB-alignment in 4-byte subslots (subslotSize = 4).

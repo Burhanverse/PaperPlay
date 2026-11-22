@@ -541,11 +541,20 @@ class AppServices(
         _error.value = null
         // Once: songs whose names were split badly ("Song - Lofi - Artist") get their title and artist right, and are looked up again.
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            if (library.pref("split_names_v4") == "done") return@launch
-            val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
-            if (fixed.isNotEmpty()) library.replaceSongs(fixed)
-            library.setPref("split_names_v4", "done")
-            activityLog("Library", "Fixed the title and artist of ${fixed.size} songs named like \"Song - Version - Artist\"")
+            if (library.pref("split_names_v4") != "done") {
+                val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
+                if (fixed.isNotEmpty()) library.replaceSongs(fixed)
+                library.setPref("split_names_v4", "done")
+                activityLog("Library", "Fixed the title and artist of ${fixed.size} songs named like \"Song - Version - Artist\"")
+            }
+            if (library.pref("forum_topics_id_fix_v1") != "done") {
+                val topics = library.repo.db.miscQueries.topics().executeAsList()
+                val songs = library.repo.db.songsQueries.allSongs().executeAsList()
+                val fixed = repairShiftedForumTopics(topics, songs)
+                for ((chatId, list) in fixed) library.replaceTopics(chatId, list)
+                library.setPref("forum_topics_id_fix_v1", "done")
+                if (fixed.isNotEmpty()) activityLog("Library", "Fixed shifted forum topic ids in ${fixed.size} chat(s)")
+            }
         }
         scope.launch {
             try {

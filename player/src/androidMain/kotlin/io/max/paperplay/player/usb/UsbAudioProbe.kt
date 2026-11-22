@@ -367,17 +367,19 @@ object UsbAudioProbe {
         val controlIntf = (0 until device.interfaceCount)
             .map { device.getInterface(it) }
             .firstOrNull { it.id == 0 }
-        val claimControlOk = if (controlIntf != null) connection.claimInterface(controlIntf, true) else true
-        val claimOk = connection.claimInterface(claimIntf, true)
-        sb.appendLine("Step 1: claimInterface(control=0) -> $claimControlOk, claimInterface(stream=${claimIntf.id}, force=true) -> $claimOk")
+        val controlIntfId = controlIntf?.id?.takeIf { it != claimIntf.id }
 
-        if (!claimOk) {
-            sb.appendLine("Aborting direct test because claimInterface was rejected by USB host subsystem.")
-            sb.appendLine()
-            return
-        }
-
-        try {
+        runSafeClaimLifecycle(
+            controlIntfId = controlIntfId,
+            streamIntfId = claimIntf.id,
+            claimControl = { connection.claimInterface(controlIntf!!, true) },
+            claimStream = { connection.claimInterface(claimIntf, true) },
+            releaseControl = { connection.releaseInterface(controlIntf!!) },
+            releaseStream = { connection.releaseInterface(claimIntf) },
+            reattachKernelDriver = { intfId ->
+                UsbEngineNative.reattachKernelDriver(connection.fileDescriptor, intfId)
+            },
+            onClaimed = {
             if (intfAlt0 != null) {
                 val setAlt0Ok = connection.setInterface(intfAlt0)
                 sb.appendLine("Step 2: setInterface(alt 0) -> ${if (setAlt0Ok) "SUCCESS (true)" else "FAILED (false)"}")
@@ -506,37 +508,79 @@ object UsbAudioProbe {
                 val restoreAlt0Ok = connection.setInterface(intfAlt0)
                 sb.appendLine("Step 7: restore setInterface(alt 0) -> ${if (restoreAlt0Ok) "SUCCESS (true)" else "FAILED (false)"}")
             }
+            },
+            onPostRelease = {
+                // Step 10: Verify system can use DAC again
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                val hasUsb = outputs.any {
+                    it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                }
+                sb.appendLine("Step 10: System Audio Availability Check -> System output device recognized: ${if (hasUsb) "YES (Audio HAL active)" else "NO"}")
+            },
+            sb = sb,
+        )
+    }
 
-        } finally {
-            // Step 8: Release interfaces
-            val releaseOk = connection.releaseInterface(claimIntf)
-            if (claimControlOk && controlIntf != null) {
-                connection.releaseInterface(controlIntf)
+    internal fun runSafeClaimLifecycle(
+        controlIntfId: Int?,
+        streamIntfId: Int,
+        claimControl: () -> Boolean,
+        claimStream: () -> Boolean,
+        releaseControl: () -> Boolean,
+        releaseStream: () -> Boolean,
+        reattachKernelDriver: (Int) -> Int,
+        onClaimed: () -> Unit,
+        onPostRelease: () -> Unit,
+        sb: StringBuilder,
+    ) {
+        var controlClaimed = false
+        var streamClaimed = false
+        try {
+            controlClaimed = if (controlIntfId != null) claimControl() else false
+            val claimControlLog = if (controlIntfId != null) controlClaimed else true
+            streamClaimed = claimStream()
+            sb.appendLine("Step 1: claimInterface(control=${controlIntfId ?: 0}) -> $claimControlLog, claimInterface(stream=$streamIntfId, force=true) -> $streamClaimed")
+
+            if (!streamClaimed) {
+                sb.appendLine("Aborting direct test because claimInterface was rejected by USB host subsystem.")
+                return
             }
-            sb.appendLine("Step 8: releaseInterface(interface=${claimIntf.id}) -> ${if (releaseOk) "SUCCESS (true)" else "FAILED (false)"}")
 
-            // Step 9: Reattach kernel driver (USBDEVFS_CONNECT via USBDEVFS_IOCTL) for both control and streaming interfaces
-            val reattachCtrlCode = if (claimControlOk && controlIntf != null) {
+            onClaimed()
+        } finally {
+            // Step 8: Release any claimed interfaces
+            if (streamClaimed) {
+                val releaseOk = releaseStream()
+                sb.appendLine("Step 8: releaseInterface(interface=$streamIntfId) -> ${if (releaseOk) "SUCCESS (true)" else "FAILED (false)"}")
+            }
+            if (controlClaimed && controlIntfId != null) {
+                val releaseCtrlOk = releaseControl()
+                if (!streamClaimed) {
+                    sb.appendLine("Step 8: releaseInterface(control=$controlIntfId) -> ${if (releaseCtrlOk) "SUCCESS (true)" else "FAILED (false)"}")
+                }
+            }
+
+            // Step 9: Reattach kernel driver (USBDEVFS_CONNECT via USBDEVFS_IOCTL) for any claimed interface
+            val reattachCtrlCode = if (controlClaimed && controlIntfId != null) {
                 try {
-                    UsbEngineNative.reattachKernelDriver(connection.fileDescriptor, controlIntf.id)
+                    reattachKernelDriver(controlIntfId)
                 } catch (_: Throwable) { -999 }
             } else 0
-            val reattachCode = try {
-                UsbEngineNative.reattachKernelDriver(connection.fileDescriptor, claimIntf.id)
-            } catch (e: Throwable) {
-                -999
+            val reattachCode = if (streamClaimed) {
+                try {
+                    reattachKernelDriver(streamIntfId)
+                } catch (_: Throwable) { -999 }
+            } else 0
+            if (streamClaimed || controlClaimed) {
+                sb.appendLine("Step 9: reattachKernelDriver (USBDEVFS_CONNECT) -> ctrl=$reattachCtrlCode, stream=$reattachCode ${if (reattachCode == 0 && reattachCtrlCode == 0) "(SUCCESS: snd-usb-audio rebound)" else ""}")
             }
-            sb.appendLine("Step 9: reattachKernelDriver (USBDEVFS_CONNECT) -> ctrl=$reattachCtrlCode, stream=$reattachCode ${if (reattachCode == 0 && reattachCtrlCode == 0) "(SUCCESS: snd-usb-audio rebound)" else ""}")
 
-            // Step 10: Verify system can use DAC again
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            val hasUsb = outputs.any {
-                it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+            if (streamClaimed) {
+                onPostRelease()
             }
-            sb.appendLine("Step 10: System Audio Availability Check -> System output device recognized: ${if (hasUsb) "YES (Audio HAL active)" else "NO"}")
+            sb.appendLine()
         }
-        sb.appendLine()
     }
 
     private fun appendConclusion(desc: UsbAudioDeviceDescription, sb: StringBuilder) {

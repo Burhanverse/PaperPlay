@@ -824,3 +824,7 @@ elease` must say Java 25 and the setup exe must start.
 - [ ] Try on the phone and PC: seek static, Play on / Move between PC and phone, autoplay at list end, recents after 30 s, private session, landscape standby sides (gravity x sign is a guess), lyrics Sync pill.
 - [ ] `JvmPlayerEngineTest.queuePlaysAdvancesSeeksAndStreamsViaRanges` (VLC) timed out once; not checked whether it fails without these changes.
 - [ ] PC visualizer (mpv/VLC have no `AudioTap` feed). Full-screen cover view and a scrolling now playing page (credits, artist, next in queue).
+
+### Main player wavy progress bar (22 Nov)
+- [~] Main player seek bar (`WavySeek` in `ui/.../components/WavySeek.kt`, used by `FullPlayer` -> `Progress`) updated to Material 3's `LinearWavyProgressIndicator` + `WavyProgressIndicatorDefaults` via `org.jetbrains.compose.material3:material3:1.12.0-alpha03` (both Android and Desktop compile, `:core:jvmTest` passes; pending on-device visual check).
+- [~] Progress Bar Style selector in Settings > Appearance (`ProgressBarStyle`: Squiggly Wave default, Aurora Wave One UI 9.0-inspired multi-ribbon `AuroraSeek` with album-art `auroraPalette` cross-fading and live settings preview, wired into `FullPlayer` and `NowPlayingView`; pending on-device visual check).

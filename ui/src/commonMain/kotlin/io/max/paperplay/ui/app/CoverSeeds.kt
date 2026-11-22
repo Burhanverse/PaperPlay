@@ -4,9 +4,13 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import io.max.paperplay.ui.decodeImageFile
+import io.max.paperplay.ui.theme.hsl
+import io.max.paperplay.ui.theme.hueSat
 import io.max.paperplay.ui.theme.schemeFromSeed
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +90,56 @@ object CoverSeeds {
 fun coverScheme(uri: String?, dark: Boolean = true): ColorScheme? {
     val seed = CoverSeeds.seed(uri) ?: return null
     return remember(seed, dark) { schemeFromSeed(seed, dark) }
+}
+
+/**
+ * Four luminous aurora shades derived from the track's cover art:
+ * [0] dominant vibrant accent, [1] secondary/complementary hue, [2] tertiary vivid hue,
+ * and [3] bright pastel highlight tint. Dark or muted covers are lifted in saturation and
+ * lightness so the ribbons glow cleanly; monochrome/missing covers use a cool-white/accent triad.
+ */
+@Composable
+fun auroraPalette(uri: String?, fallbackAccent: Color): List<Color> {
+    val raw = CoverSeeds.palette(uri)
+    val fallbackArgb = fallbackAccent.toArgb()
+    return remember(raw, fallbackArgb) { buildAuroraPalette(raw, fallbackArgb) }
+}
+
+internal fun buildAuroraPalette(raw: List<Int>, fallbackArgb: Int): List<Color> {
+    val chromatic = raw.map { argb -> argb to hueSat(argb) }.filter { (_, hs) -> hs.second >= 0.12f }
+    if (chromatic.isEmpty()) {
+        val (fh, fs) = hueSat(fallbackArgb)
+        val baseHue = if (fs >= 0.12f) fh else 215f
+        return listOf(
+            hsl(baseHue, 0.58f, 0.66f),
+            hsl((baseHue + 34f) % 360f, 0.54f, 0.70f),
+            hsl((baseHue + 145f) % 360f, 0.50f, 0.68f),
+            hsl((baseHue + 16f) % 360f, 0.28f, 0.92f),
+        )
+    }
+    val (h0, s0) = chromatic[0].second
+    // Keep saturation soft and luminous so waves feel blended and soothing rather than harsh neon.
+    val dominant = hsl(h0, s0.coerceIn(0.56f, 0.74f), 0.65f)
+    val warm = h0 < 75f || h0 > 300f
+
+    val secondary = if (chromatic.size >= 2) {
+        val (h1, s1) = chromatic[1].second
+        hsl(h1, s1.coerceIn(0.52f, 0.70f), 0.68f)
+    } else {
+        val h1 = if (warm) (h0 + 320f) % 360f else (h0 + 48f) % 360f
+        hsl(h1, 0.64f, 0.68f)
+    }
+
+    val tertiary = if (chromatic.size >= 3) {
+        val (h2, s2) = chromatic[2].second
+        hsl(h2, s2.coerceIn(0.48f, 0.68f), 0.67f)
+    } else {
+        val h2 = if (warm) (h0 + 265f) % 360f else (h0 + 82f) % 360f
+        hsl(h2, 0.60f, 0.68f)
+    }
+
+    val highlight = hsl((h0 + 12f) % 360f, 0.26f, 0.93f)
+    return listOf(dominant, secondary, tertiary, highlight)
 }
 
 /**

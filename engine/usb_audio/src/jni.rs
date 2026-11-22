@@ -8,8 +8,6 @@ use jni::objects::{JByteBuffer, JClass, JLongArray};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use jni::JNIEnv;
 
-#[cfg(feature = "dev")]
-use super::debug::generate_debug_buffer;
 use super::session::{EndpointFormatConfig, RealUsbControlTransport, UsbSessionInstance};
 use super::streamer::{StreamConfig, UsbStreamer};
 
@@ -398,44 +396,6 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_getStats
         };
         let _ = env.set_long_array_region(&out_stats, 0, &stats[..len]);
     });
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_playDebugTest(
-    _env: JNIEnv,
-    _c: JClass,
-    _handle: jlong,
-    _test_type: jint,
-    _duration_ms: jint,
-) -> jint {
-    #[cfg(feature = "dev")]
-    {
-        let result = catch_unwind(|| {
-            if _handle == 0 {
-                return -1;
-            }
-            let instance = unsafe { &mut *(_handle as *mut UsbNativeInstance) };
-            let dur = _duration_ms.max(10) as u32;
-
-            let debug_bytes = generate_debug_buffer(
-                _test_type,
-                instance.sample_rate,
-                instance.bit_depth,
-                instance.subslot_size,
-                instance.channels,
-                dur,
-            );
-
-            let ring = instance.streamer.ring_buffer();
-            let written = ring.write(&debug_bytes);
-            written as jint
-        });
-        result.unwrap_or(-1)
-    }
-    #[cfg(not(feature = "dev"))]
-    {
-        -38 // ENOSYS: debug signal generator is excluded from release builds
-    }
 }
 
 #[no_mangle]
