@@ -587,9 +587,31 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
-    fun cacheUsed(): Pair<Long, Long> {
-        val rows = repo.cachedSongs()
-        return rows.filter { it.pinned }.sumOf { it.cached_bytes } to rows.filter { !it.pinned }.sumOf { it.cached_bytes }
+    /**
+     * What the app keeps on this device, measured on disk, largest first: songs (every Telegram store's downloads), covers,
+     * lyrics and song info (their share of the library database), Telegram data (its databases) and the rest. Run off the main thread.
+     */
+    suspend fun storageBreakdown(): List<Pair<String, Long>> {
+        fun size(f: java.io.File): Long = if (f.isFile) f.length() else f.listFiles()?.sumOf { size(it) } ?: 0L
+        val root = java.io.File(services.platform.dataDir)
+        val top = root.listFiles().orEmpty()
+        val songs = top.filter { it.isDirectory && (it.name.endsWith("_files") || it.name.startsWith("td_extra_files_")) }.sumOf { size(it) }
+        val covers = size(java.io.File(root, "covers"))
+        val telegram = top.filter { it.isDirectory && (it.name == "td" || it.name == "user_td" || it.name.startsWith("td_extra_") && !it.name.startsWith("td_extra_files_")) }.sumOf { size(it) }
+        val db = top.filter { it.name.startsWith("library.sqlite") }.sumOf { size(it) }
+        val lyrics = repo.allSongs().first().sumOf { it.lyrics?.length?.toLong() ?: 0L }.coerceAtMost(db)
+        // The whole app data folder, as Android's App info counts it; `lib` only links to the installed app, counted as App size.
+        val total = root.parentFile?.listFiles().orEmpty().filter { it.name != "lib" }.sumOf { size(it) }
+        val other = (total - songs - covers - telegram - db).coerceAtLeast(0L)
+        return listOf("Songs" to songs, "Covers" to covers, "Lyrics" to lyrics, "Song info" to db - lyrics, "Telegram data" to telegram, "Other" to other)
+    }
+
+    /** Re-saves covers larger than 600 px at 600 px; nothing is lost. Reports what happened as text. */
+    fun shrinkCovers(done: (String) -> Unit) {
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val freed = runCatching { services.covers.shrinkCovers() }
+            done(freed.fold({ "Covers shrunk, ${it / (1L shl 20)} MB freed." }, { it.message ?: "The covers could not be shrunk." }))
+        }
     }
 
     /** Deletes streamed audio TDLib keeps on disk. Reports what happened as text. */

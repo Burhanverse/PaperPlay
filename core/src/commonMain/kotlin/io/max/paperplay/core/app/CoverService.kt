@@ -818,16 +818,23 @@ class CoverService(
      * one file. Each file is replaced only after its new copy is written and every song points at it, so a stop in the middle
      * leaves everything working. Returns how many bytes it freed.
      */
-    suspend fun packExistingCovers(): Long {
+    suspend fun packExistingCovers(): Long = repackCovers(COVER_MAX_EDGE, onlyLarger = false) { !it.substringAfterLast('/').startsWith("c_") }
+
+    /** Re-saves every cover larger than [maxEdge] px at that size, the same safe way as [packExistingCovers]. Returns the bytes freed. */
+    suspend fun shrinkCovers(maxEdge: Int = 600): Long = repackCovers(maxEdge, onlyLarger = true) { true }
+
+    private suspend fun repackCovers(maxEdge: Int, onlyLarger: Boolean, pick: (String) -> Boolean): Long {
         var freed = 0L
         for (old in runCatching { repo.distinctCoverPaths() }.getOrDefault(emptyList())) {
-            if (!Fs.exists(old) || old.substringAfterLast('/').startsWith("c_")) continue
+            if (!Fs.exists(old) || !pick(old)) continue
             kotlinx.coroutines.yield()
             val bytes = CoverImages.readFile(old) ?: continue
-            val data = CoverImages.shrink(bytes, COVER_MAX_EDGE, COVER_JPEG_QUALITY) ?: bytes
+            val data = CoverImages.shrink(bytes, maxEdge, COVER_JPEG_QUALITY) ?: if (onlyLarger) continue else bytes
             val path = "${coversDir()}/${coverContentName(data)}.jpg"
-            val ok = runCatching { if (!Fs.exists(path)) Fs.write(path, data); Fs.exists(path) }.getOrDefault(false)
-            if (!ok) continue
+            val existed = Fs.exists(path)
+            val ok = runCatching { if (!existed) Fs.write(path, data); Fs.exists(path) }.getOrDefault(false)
+            if (!ok || path == old) continue
+            if (!existed) freed -= data.size.toLong()
             runCatching { repo.retargetCover(old, path) }.onFailure { continue }
             if (runCatching { repo.coverPathUses(old) }.getOrDefault(1L) == 0L) {
                 runCatching { Fs.deleteRecursively(old) }
