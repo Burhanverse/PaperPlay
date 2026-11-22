@@ -600,8 +600,10 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val telegram = top.filter { it.isDirectory && (it.name == "td" || it.name == "user_td" || it.name.startsWith("td_extra_") && !it.name.startsWith("td_extra_files_")) }.sumOf { size(it) }
         val db = top.filter { it.name.startsWith("library.sqlite") }.sumOf { size(it) }
         val lyrics = repo.allSongs().first().sumOf { it.lyrics?.length?.toLong() ?: 0L }.coerceAtMost(db)
-        // The whole app data folder, as Android's App info counts it; `lib` only links to the installed app, counted as App size.
-        val total = root.parentFile?.listFiles().orEmpty().filter { it.name != "lib" }.sumOf { size(it) }
+        // Android: the whole app data folder (the parent of `files`), as App info counts it; `lib` only links to the installed app.
+        // Desktop: the data folder itself, since its parent is all of %APPDATA%.
+        val appDir = if (root.name == "files") root.parentFile else null
+        val total = appDir?.listFiles().orEmpty().filter { it.name != "lib" }.sumOf { size(it) }.takeIf { appDir != null } ?: size(root)
         val other = (total - songs - covers - telegram - db).coerceAtLeast(0L)
         return listOf("Songs" to songs, "Covers" to covers, "Lyrics" to lyrics, "Song info" to db - lyrics, "Telegram data" to telegram, "Other" to other)
     }
