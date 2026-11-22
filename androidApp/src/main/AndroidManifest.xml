@@ -31,6 +31,8 @@
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- Lets `adb shell simpleperf` profile the release build (shell only, nothing changes for users). -->
+        <profileable android:shell="true" />
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
