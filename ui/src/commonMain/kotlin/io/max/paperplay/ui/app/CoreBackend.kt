@@ -1593,10 +1593,24 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** Plays an indexed post on its own without adding it to the library; see [io.max.paperplay.core.app.IndexPreview]. */
     fun previewPost(post: io.max.paperplay.core.account.ChatPost) {
         scope.launch(Dispatchers.Default) {
-            val full = if (post.thumb == null) post.copy(thumb = services.chatIndex.thumb(post.chatId, post.messageId)) else post
+            val full = if (post.thumb == null) post.copy(thumb = postThumb(post.chatId, post.messageId)) else post
             val song = services.indexPreview.song(full)
             withPlayer { it.setQueue(listOf(song), 0) }
         }
+    }
+
+    private val liveThumbs = object : LinkedHashMap<Long, ByteArray?>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ByteArray?>?) = size > 150
+    }
+
+    /** A post's tiny cover: the saved index first, else asked from Telegram and kept in memory only (never saved). Call off the main thread. */
+    fun postThumb(chatId: Long, messageId: Long): ByteArray? {
+        chatIndex.thumb(chatId, messageId)?.let { return it }
+        val key = chatId * 1_000_003L + messageId
+        synchronized(liveThumbs) { if (liveThumbs.containsKey(key)) return liveThumbs[key] }
+        val bytes = kotlinx.coroutines.runBlocking { account.postThumb(chatId, messageId) }
+        synchronized(liveThumbs) { liveThumbs[key] = bytes }
+        return bytes
     }
 
     fun isPreview(id: String): Boolean = services.indexPreview.isPreview(id)

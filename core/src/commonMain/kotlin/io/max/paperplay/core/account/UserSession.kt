@@ -276,6 +276,18 @@ class UserSession(
         return runCatching { kotlin.io.encoding.Base64.decode(data) }.getOrNull()?.takeIf { it.isNotEmpty() }
     }
 
+    override suspend fun postThumb(chatId: Long, messageId: Long): ByteArray? = try {
+        if (!_loggedIn.value) null else {
+            val c = ready()
+            knowChat(c, chatId, loadList = false)
+            miniCover(call(c, request("getMessage") { put("chat_id", chatId); put("message_id", messageId) }))
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
     override suspend fun chatLinks(chatId: Long): ChatLinks? {
         if (!_loggedIn.value) return null
         val c = ready()

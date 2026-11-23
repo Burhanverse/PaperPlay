@@ -55,6 +55,9 @@ interface AccountApi {
     /** Which of [ids] this account can still see in [chatId]; null when Telegram could not be asked. */
     suspend fun existingPosts(chatId: Long, ids: List<Long>): Set<Long>? = null
 
+    /** The tiny cover inside one audio post, read from Telegram (no download), or null. For posts the saved index holds no cover for. */
+    suspend fun postThumb(chatId: Long, messageId: Long): ByteArray? = null
+
     /** A line about the last [songsIn] read: posts it skipped because they are not songs, and how many small songs it kept. Empty before a read. */
     val lastReadNotes: String get() = ""
 

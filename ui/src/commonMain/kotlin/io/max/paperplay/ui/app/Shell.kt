@@ -312,7 +312,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         IndexedChats(
             backend.chatIndex.chats, { c -> openChat(c.id, c.title, "") },
             search = { q, n -> backend.chatIndex.searchAll(q, n) },
-            thumb = { c, m -> backend.chatIndex.thumb(c, m) },
+            thumb = { c, m -> backend.postThumb(c, m) },
             play = { backend.previewPost(it) },
             isPreview = { backend.isPreview(it) },
             copyPreview = { backend.copyPreview(it) },
