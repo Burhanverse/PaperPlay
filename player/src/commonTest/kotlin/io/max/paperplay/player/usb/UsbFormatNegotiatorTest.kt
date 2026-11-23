@@ -77,5 +77,56 @@ class UsbFormatNegotiatorTest {
         assertIs<FormatSelectionResult.Failure>(res)
         assertTrue(res.reason.contains("No audio streaming"))
     }
+
+    @Test
+    fun supportsContinuousRateRangesAndPrefersDedicatedDiscreteAlt() {
+        val ep = UsbEndpointDescriptor(
+            address = 0x01,
+            isOut = true,
+            syncType = EndpointSyncType.ADAPTIVE,
+            usageType = EndpointUsageType.DATA,
+            maxPacketSize = 576,
+            interval = 1,
+            csBmAttributes = 0x01,
+        )
+        val altContinuous = UsbAudioAltSetting(
+            interfaceNumber = 1,
+            altSetting = 1,
+            terminalLink = 1,
+            formatTag = AudioFormatTag.PCM,
+            bmFormats = 1L,
+            channelCount = 2,
+            subslotSize = 3,
+            bitResolution = 24,
+            sampleRates = emptyList(),
+            continuousRateRange = Pair(8000, 96000),
+            dataEndpoint = ep,
+            isDsdRawCapable = false,
+            isDsdDoPCapable = false,
+        )
+        val altDedicated96k = altContinuous.copy(
+            altSetting = 2,
+            sampleRates = listOf(96000),
+            continuousRateRange = null,
+            dataEndpoint = ep.copy(csBmAttributes = 0x00),
+        )
+        val candidates = listOf(altContinuous, altDedicated96k)
+
+        // 96 kHz matches both; dedicated single discrete alt 2 is preferred over continuous alt 1
+        val pick96 = UsbFormatNegotiator.pickBestFormat(candidates, 96000, 24, 2)
+        assertIs<FormatSelectionResult.Success>(pick96)
+        assertEquals(2, pick96.candidate.altSetting)
+
+        // 88.2 kHz matches only continuous alt 1 (8000..96000 Hz)
+        val pick88 = UsbFormatNegotiator.pickBestFormat(candidates, 88200, 24, 2)
+        assertIs<FormatSelectionResult.Success>(pick88)
+        assertEquals(1, pick88.candidate.altSetting)
+
+        // 192 kHz exceeds both -> Failure message lists both discrete and continuous range
+        val pick192 = UsbFormatNegotiator.pickBestFormat(candidates, 192000, 24, 2)
+        assertIs<FormatSelectionResult.Failure>(pick192)
+        assertTrue(pick192.reason.contains("96000"))
+        assertTrue(pick192.reason.contains("8000..96000"))
+    }
 }
 

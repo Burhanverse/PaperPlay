@@ -40,6 +40,7 @@ class UsbAudioStreamer(
     subslotSize: Int,
     val isHighSpeed: Boolean,
     isDop: Boolean,
+    epAttributes: Int = 0x01,
     private val engineBridge: UsbEngineBridge = UsbEngineNative
 ) : UsbAudioSinkBridge {
     var targetAltInterface: UsbInterface = targetAltInterface
@@ -53,6 +54,8 @@ class UsbAudioStreamer(
     var subslotSize: Int = subslotSize
         private set
     var isDop: Boolean = isDop
+        private set
+    var epAttributes: Int = epAttributes
         private set
 
     @Volatile
@@ -130,7 +133,8 @@ class UsbAudioStreamer(
             subslotSize = subslotSize,
             isHighSpeed = isHighSpeed,
             isDop = isDop,
-            feedbackEp = fbEp
+            feedbackEp = fbEp,
+            epAttributes = epAttributes,
         )
 
         if (nativeHandle == 0L) {
@@ -292,7 +296,8 @@ class UsbAudioStreamer(
                 subslotSize = subslotSize,
                 isHighSpeed = isHighSpeed,
                 isDop = isDop,
-                feedbackEp = fbEp
+                feedbackEp = fbEp,
+                epAttributes = epAttributes,
             )
             if (reconfRes == 0) {
                 val readRate = engineBridge.getCurrentRate(nativeHandle)
@@ -381,6 +386,7 @@ class UsbAudioStreamer(
         val wasRunning = isRunning
         val fbEp = feedbackEndpoint?.address ?: 0
         val matchedIface = device.findInterface(altSetting.interfaceNumber, altSetting.altSetting) ?: targetAltInterface
+        val newEpAttr = altSetting.computeNativeEpAttributes(rate)
         var reusedInPlace = false
 
         // 1. Prefer in-place native reconfigure without releasing interfaces or reopening the device
@@ -396,7 +402,8 @@ class UsbAudioStreamer(
                 subslotSize = altSetting.subslotSize,
                 isHighSpeed = isHighSpeed,
                 isDop = isDop,
-                feedbackEp = fbEp
+                feedbackEp = fbEp,
+                epAttributes = newEpAttr,
             )
             if (reconfRes == 0) {
                 val readRate = engineBridge.getCurrentRate(nativeHandle)
@@ -439,7 +446,8 @@ class UsbAudioStreamer(
                 subslotSize = altSetting.subslotSize,
                 isHighSpeed = isHighSpeed,
                 isDop = isDop,
-                feedbackEp = fbEp
+                feedbackEp = fbEp,
+                epAttributes = newEpAttr,
             )
             if (nativeHandle == 0L) {
                 PlayLog.log("usb", "reconfigure: Failed to create native streamer instance")
@@ -479,6 +487,7 @@ class UsbAudioStreamer(
         this.channels = altSetting.channelCount
         this.subslotSize = altSetting.subslotSize
         this.isDop = isDop
+        this.epAttributes = newEpAttr
         this.targetAltInterface = matchedIface
 
         isPrepared = true

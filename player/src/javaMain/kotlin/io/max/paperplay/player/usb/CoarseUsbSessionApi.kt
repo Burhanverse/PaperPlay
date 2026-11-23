@@ -30,6 +30,23 @@ interface CoarseUsbSessionApi {
         isHighSpeed: Boolean,
         isDop: Boolean,
         feedbackEp: Int,
+        epAttributes: Int = 0x01,
+    ): Int = reconfigure(
+        handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp,
+    )
+
+    fun reconfigure(
+        handle: Long,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
+        feedbackEp: Int,
     ): Int
 
     fun applyVolume(

@@ -59,8 +59,12 @@ object UsbFormatNegotiator {
             }
         }
         if (rateCandidates.isEmpty()) {
-            val availableRates = channelCandidates.flatMap { it.sampleRates }.distinct().sorted()
-            val rateText = if (availableRates.isNotEmpty()) availableRates.joinToString() else "none listed"
+            val discreteRates = channelCandidates.flatMap { it.sampleRates }.distinct().sorted()
+            val continuousRanges = channelCandidates.mapNotNull { it.continuousRateRange }
+                .distinct()
+                .map { "${it.first}..${it.second}" }
+            val parts = discreteRates.map { it.toString() } + continuousRanges
+            val rateText = if (parts.isNotEmpty()) parts.joinToString() else "none listed"
             return FormatSelectionResult.Failure(
                 "No alternate setting supports sample rate $sourceRate Hz (available rates: $rateText)"
             )
@@ -95,7 +99,16 @@ object UsbFormatNegotiator {
                 // Priority 3: Tighter container size (e.g. 24-bit in 3-byte subslot preferred over 4-byte subslot)
                 (candidate.subslotSize * 8) - sourceBitDepth
             }.thenBy { candidate ->
-                // Priority 4: For async endpoints, prefer presence of explicit feedback endpoint
+                // Priority 4: Prefer single discrete rate match (dedicated alt setting for this exact rate)
+                // over multi-rate discrete alt setting over continuous range alt setting
+                when {
+                    candidate.continuousRateRange == null && candidate.sampleRates.size == 1 && candidate.sampleRates[0] == sourceRate -> 0
+                    candidate.sampleRates.isNotEmpty() -> 1
+                    candidate.continuousRateRange != null -> 2
+                    else -> 1
+                }
+            }.thenBy { candidate ->
+                // Priority 5: For async endpoints, prefer presence of explicit feedback endpoint
                 if (candidate.dataEndpoint?.syncType == EndpointSyncType.ASYNCHRONOUS && candidate.feedbackEndpoint != null) 0 else 1
             }
         )

@@ -170,6 +170,7 @@ class UsbCoarseSinkController internal constructor(
     private var lastSubslotSize: Int = 4
     private var lastHighSpeed: Boolean = true
     private var lastFeedbackEp: Int = 0
+    private var lastEpAttributes: Int = 0x01
     private var lastFuId: Int = 0
     private var lastControlIface: Int = 0
     private var lastVolumeChannels: List<Int> = listOf(0)
@@ -214,6 +215,7 @@ class UsbCoarseSinkController internal constructor(
         volumeRaw: Int,
         muted: Boolean,
         volumeChannels: List<Int> = listOf(0),
+        epAttributes: Int = 0x01,
     ): Boolean = synchronized(lifecycleLock) {
         closing = false
         eosSignaled = false
@@ -241,6 +243,7 @@ class UsbCoarseSinkController internal constructor(
             lastSubslotBytes = subslotSize
             lastHighSpeed = isHighSpeed
             lastFeedbackEp = feedbackEp
+            lastEpAttributes = epAttributes
             lastFuId = fuId
             lastControlIface = controlIface
             lastVolumeChannels = volumeChannels.ifEmpty { listOf(0) }
@@ -249,7 +252,7 @@ class UsbCoarseSinkController internal constructor(
 
             val rcReconf = api.reconfigure(
                 handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth,
-                channels, subslotSize, isHighSpeed, isDop, feedbackEp,
+                channels, subslotSize, isHighSpeed, isDop, feedbackEp, epAttributes,
             )
             if (rcReconf < 0) {
                 closeUnlocked()
@@ -405,7 +408,7 @@ class UsbCoarseSinkController internal constructor(
         realFaultReconfigures++
         val rc = api.reconfigure(
             h, lastEndpoint, lastStreamingIface, confirmedAlt, confirmedRateHz, confirmedBitDepth,
-            lastChannels, lastSubslotSize, lastHighSpeed, currentIsDop, lastFeedbackEp,
+            lastChannels, lastSubslotSize, lastHighSpeed, currentIsDop, lastFeedbackEp, lastEpAttributes,
         )
         var volOk = true
         if (rc == 0 && lastFuId > 0) {

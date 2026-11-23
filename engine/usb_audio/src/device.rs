@@ -9,12 +9,30 @@ use rusb::{Context, DeviceHandle, UsbContext};
 
 use crate::log::{
     GLOBAL_NATIVE_LOG, TAG_CLAIM_INTERFACE, TAG_CLOCK_GET_CUR, TAG_CLOCK_GET_RANGE,
-    TAG_CLOCK_SET_CUR, TAG_DETACH_DRIVER, TAG_OPEN_DEVICE, TAG_REATTACH_DRIVER,
-    TAG_RELEASE_INTERFACE, TAG_SET_ALT_SETTING,
+    TAG_CLOCK_SET_CUR, TAG_DETACH_DRIVER, TAG_OPEN_DEVICE, TAG_RATE_CTRL_FALLBACK,
+    TAG_RATE_CTRL_SKIP, TAG_RATE_READBACK_WARN, TAG_REATTACH_DRIVER, TAG_RELEASE_INTERFACE,
+    TAG_SET_ALT_SETTING,
 };
 
 pub const FU_MUTE_SELECTOR: u16 = 0x01;
 pub const FU_VOLUME_SELECTOR: u16 = 0x02;
+
+/// UAC 1.0 Class-Specific AS Isochronous Audio Data Endpoint Descriptor `bmAttributes` bit 0:
+/// Sampling Frequency control (`SAMPLING_FREQ_CONTROL` = 0x01) is supported.
+pub const UAC_EP_CS_ATTR_SAMPLE_RATE: u8 = 0x01;
+/// Internal flag bit packed in `ep_attributes`: chosen alternate setting advertises
+/// a single discrete sampling rate equal to the target rate (fallback allowed on STALL).
+pub const UAC1_ALT_SINGLE_DISCRETE_RATE: u8 = 0x80;
+
+#[inline]
+pub const fn uac1_ep_supports_sample_rate_control(ep_attributes: u8) -> bool {
+    (ep_attributes & UAC_EP_CS_ATTR_SAMPLE_RATE) != 0
+}
+
+#[inline]
+pub const fn uac1_alt_has_single_discrete_rate(ep_attributes: u8) -> bool {
+    (ep_attributes & UAC1_ALT_SINGLE_DISCRETE_RATE) != 0
+}
 
 #[inline]
 pub fn fu_mute_w_value(channel: u8) -> u16 {
@@ -77,6 +95,7 @@ pub(crate) fn program_sample_rate(
     streaming_iface: u8,
     endpoint: u8,
     sample_rate: u32,
+    ep_attributes: u8,
 ) -> Result<Option<u32>, i32> {
     if is_uac2 {
         let w_value = 0x0100u16; // CS_SAM_FREQ_CONTROL in high byte
@@ -173,42 +192,83 @@ pub(crate) fn program_sample_rate(
             }
         }
     } else {
-        // UAC 1.0 endpoint sampling frequency control
+        // UAC 1.0 endpoint sampling frequency control (Linux sound/usb/clock.c: set_sample_rate_v1)
+        if !uac1_ep_supports_sample_rate_control(ep_attributes) {
+            GLOBAL_NATIVE_LOG.record3(
+                TAG_RATE_CTRL_SKIP,
+                endpoint as i32,
+                sample_rate as i64,
+                ep_attributes as i64,
+            );
+            return Ok(Some(sample_rate));
+        }
+
         let rate_data = [
             (sample_rate & 0xFF) as u8,
             ((sample_rate >> 8) & 0xFF) as u8,
             ((sample_rate >> 16) & 0xFF) as u8,
         ];
-        let w_value = 0x0100u16;
+        let w_value = 0x0100u16; // SAMPLING_FREQ_CONTROL << 8
         let candidates = [
             endpoint as u16,
             (endpoint as u16) | ((streaming_iface as u16) << 8),
             streaming_iface as u16,
         ];
         let mut success_index = None;
-        for &idx in &candidates {
-            let res = handle.write_control(
-                0x22,
-                0x01,
-                w_value,
-                idx,
-                &rate_data,
-                Duration::from_millis(1000),
-            );
-            if res.is_ok() {
-                success_index = Some(idx);
+        let mut last_err_code = -32; // EPIPE (STALL) default
+
+        // Retry once if the control is supported but SET_CUR stalls
+        for attempt in 0..2 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            for &idx in &candidates {
+                match handle.write_control(
+                    0x22, // Class | Endpoint | Out
+                    0x01, // SET_CUR
+                    w_value,
+                    idx,
+                    &rate_data,
+                    Duration::from_millis(1000),
+                ) {
+                    Ok(_) => {
+                        success_index = Some(idx);
+                        break;
+                    }
+                    Err(e) => {
+                        last_err_code = match e {
+                            rusb::Error::Pipe => -32,
+                            rusb::Error::Timeout => -110,
+                            rusb::Error::NoDevice => -19,
+                            rusb::Error::Busy => -16,
+                            _ => -71, // EPROTO
+                        };
+                    }
+                }
+            }
+            if success_index.is_some() {
                 break;
             }
         }
+
         let idx = match success_index {
             Some(i) => i,
             None => {
                 GLOBAL_NATIVE_LOG.record(
                     TAG_CLOCK_SET_CUR,
                     endpoint as i32,
-                    (-1i64 << 32) | (sample_rate as i64),
+                    ((last_err_code as i64) << 32) | (sample_rate as i64),
                 );
-                return Err(-1);
+                if uac1_alt_has_single_discrete_rate(ep_attributes) {
+                    GLOBAL_NATIVE_LOG.record3(
+                        TAG_RATE_CTRL_FALLBACK,
+                        endpoint as i32,
+                        sample_rate as i64,
+                        last_err_code as i64,
+                    );
+                    return Ok(Some(sample_rate));
+                }
+                return Err(last_err_code);
             }
         };
         GLOBAL_NATIVE_LOG.record(TAG_CLOCK_SET_CUR, endpoint as i32, sample_rate as i64);
@@ -216,21 +276,55 @@ pub(crate) fn program_sample_rate(
         std::thread::sleep(Duration::from_millis(20));
 
         let mut readback = [0u8; 3];
-        if let Ok(read_len) = handle.read_control(
-            0xA2,
-            0x81,
+        match handle.read_control(
+            0xA2, // Class | Endpoint | In
+            0x81, // GET_CUR (UAC 1.0)
             w_value,
             idx,
             &mut readback,
             Duration::from_millis(1000),
         ) {
-            if read_len >= 3 {
-                let read_rate = (readback[0] as u32) | ((readback[1] as u32) << 8) | ((readback[2] as u32) << 16);
+            Ok(read_len) if read_len >= 3 => {
+                let read_rate = (readback[0] as u32)
+                    | ((readback[1] as u32) << 8)
+                    | ((readback[2] as u32) << 16);
                 GLOBAL_NATIVE_LOG.record(TAG_CLOCK_GET_CUR, endpoint as i32, read_rate as i64);
-                return Ok(Some(read_rate));
+                if read_rate != sample_rate {
+                    // Linux set_sample_rate_v1: many UAC 1.0 devices return garbage on GET_CUR;
+                    // log a warning and do not fail when the alt setting advertises the target rate.
+                    GLOBAL_NATIVE_LOG.record3(
+                        TAG_RATE_READBACK_WARN,
+                        endpoint as i32,
+                        ((read_rate as i64) << 32) | (sample_rate as i64),
+                        0,
+                    );
+                }
+                Ok(Some(sample_rate))
+            }
+            Ok(_) => {
+                GLOBAL_NATIVE_LOG.record3(
+                    TAG_RATE_READBACK_WARN,
+                    endpoint as i32,
+                    sample_rate as i64,
+                    -1,
+                );
+                Ok(Some(sample_rate))
+            }
+            Err(e) => {
+                let err_code = match e {
+                    rusb::Error::Pipe => -32,
+                    rusb::Error::Timeout => -110,
+                    _ => -1,
+                };
+                GLOBAL_NATIVE_LOG.record3(
+                    TAG_RATE_READBACK_WARN,
+                    endpoint as i32,
+                    sample_rate as i64,
+                    err_code as i64,
+                );
+                Ok(Some(sample_rate))
             }
         }
-        Ok(None)
     }
 }
 
@@ -254,6 +348,7 @@ pub struct UsbDeviceSession {
     pub clock_source_id: u8,
     pub control_iface: u8,
     pub endpoint: AtomicU8,
+    pub ep_attributes: AtomicU8,
     pub feature_units: Vec<(u8, u8)>, // (feature_unit_id, ac_interface_number)
     pub saved_volumes: Vec<(u8, u8, u8, i16)>, // (fu_id, ac_iface, channel, volume_raw)
     pub saved_mutes: Vec<(u8, u8, u8, bool)>, // (fu_id, ac_iface, channel, is_muted)
@@ -358,23 +453,20 @@ impl UsbDeviceSession {
             }
         };
 
-        let mut audio_interfaces = Vec::new();
+        // Composite device safety: claim the AudioControl interface, the active playback streaming interface,
+        // and any other AudioStreaming (class 1, subclass 2) interfaces so Linux snd-usb-audio releases the card,
+        // while NEVER touching HID (class 3) or unrelated composite interfaces (hardware EQ/mode buttons keep working).
+        let mut audio_interfaces = vec![control_iface, streaming_iface];
         let active_config = handle.device().active_config_descriptor().ok();
         if let Some(ref config) = active_config {
             for iface in config.interfaces() {
-                if iface.descriptors().any(|desc| desc.class_code() == 1) {
-                    audio_interfaces.push(iface.number());
+                if iface.descriptors().any(|desc| desc.class_code() == 1 && desc.sub_class_code() <= 2) {
+                    let num = iface.number();
+                    if !audio_interfaces.contains(&num) {
+                        audio_interfaces.push(num);
+                    }
                 }
             }
-        }
-        if audio_interfaces.is_empty() {
-            audio_interfaces = vec![control_iface, streaming_iface];
-        }
-        if !audio_interfaces.contains(&control_iface) {
-            audio_interfaces.push(control_iface);
-        }
-        if !audio_interfaces.contains(&streaming_iface) {
-            audio_interfaces.push(streaming_iface);
         }
         audio_interfaces.sort();
         audio_interfaces.dedup();
@@ -426,7 +518,7 @@ impl UsbDeviceSession {
                 }
             }
 
-            if !claimed && (iface == control_iface || iface == streaming_iface) {
+            if !claimed && iface == streaming_iface {
                 release_and_reattach_interfaces(&handle, &claimed_interfaces);
                 return Err(-16);
             }
@@ -525,6 +617,7 @@ impl UsbDeviceSession {
             clock_source_id,
             control_iface,
             endpoint: AtomicU8::new(0),
+            ep_attributes: AtomicU8::new(UAC_EP_CS_ATTR_SAMPLE_RATE),
             feature_units: feature_units_list,
             saved_volumes: saved_volumes_list,
             saved_mutes: saved_mutes_list,
@@ -541,9 +634,10 @@ impl UsbDeviceSession {
         control_iface: u8,
         sample_rate: u32,
         endpoint: u8,
+        ep_attributes: u8,
     ) -> Result<Self, i32> {
         let session = Self::open_claimed(fd, streaming_iface, is_uac2, clock_source_id, control_iface, 0)?;
-        session.reconfigure_format(streaming_iface, target_alt, sample_rate, endpoint)?;
+        session.reconfigure_format(streaming_iface, target_alt, sample_rate, endpoint, ep_attributes)?;
         Ok(session)
     }
 
@@ -555,7 +649,14 @@ impl UsbDeviceSession {
         target_alt: u8,
         sample_rate: u32,
         endpoint: u8,
+        ep_attributes: u8,
     ) -> Result<(), i32> {
+        // Ensure target streaming interface is claimed if switching across streaming interfaces
+        if !self.claimed_interfaces.contains(&streaming_iface) {
+            let _ = self.handle.detach_kernel_driver(streaming_iface);
+            let _ = self.handle.claim_interface(streaming_iface);
+        }
+
         let prev_iface = self.streaming_iface.load(Ordering::Acquire);
         let _ = self.handle.set_alternate_setting(prev_iface, 0);
         GLOBAL_NATIVE_LOG.record(TAG_SET_ALT_SETTING, prev_iface as i32, 0);
@@ -564,47 +665,102 @@ impl UsbDeviceSession {
             GLOBAL_NATIVE_LOG.record(TAG_SET_ALT_SETTING, streaming_iface as i32, 0);
         }
 
-        let read_rate = program_sample_rate(
-            &self.handle,
-            self.is_uac2,
-            self.clock_source_id,
-            self.control_iface,
-            streaming_iface,
-            endpoint,
-            sample_rate,
-        )?;
-        if let Some(actual_rate) = read_rate {
-            if actual_rate != sample_rate {
-                return Err(-22); // EINVAL: clock rate mismatch -> caller recreates session
+        if self.is_uac2 {
+            // UAC 2.0: program Clock Source entity while streaming interface is in alt 0, then select target_alt.
+            let read_rate = program_sample_rate(
+                &self.handle,
+                true,
+                self.clock_source_id,
+                self.control_iface,
+                streaming_iface,
+                endpoint,
+                sample_rate,
+                ep_attributes,
+            )?;
+            if let Some(actual_rate) = read_rate {
+                if actual_rate != sample_rate {
+                    return Err(-22); // EINVAL: clock rate mismatch -> caller recreates session
+                }
             }
-        }
 
-        match self.handle.set_alternate_setting(streaming_iface, target_alt) {
-            Ok(_) => {
-                GLOBAL_NATIVE_LOG.record(
-                    TAG_SET_ALT_SETTING,
-                    streaming_iface as i32,
-                    (target_alt as i64) & 0xFF,
-                );
+            match self.handle.set_alternate_setting(streaming_iface, target_alt) {
+                Ok(_) => {
+                    GLOBAL_NATIVE_LOG.record(
+                        TAG_SET_ALT_SETTING,
+                        streaming_iface as i32,
+                        (target_alt as i64) & 0xFF,
+                    );
+                }
+                Err(e) => {
+                    let err_code = match e {
+                        rusb::Error::Busy => -16,
+                        rusb::Error::NoDevice => -19,
+                        _ => -1,
+                    };
+                    GLOBAL_NATIVE_LOG.record(
+                        TAG_SET_ALT_SETTING,
+                        streaming_iface as i32,
+                        ((err_code as i64) << 8) | ((target_alt as i64) & 0xFF),
+                    );
+                    return Err(err_code);
+                }
             }
-            Err(e) => {
-                let err_code = match e {
-                    rusb::Error::Busy => -16,
-                    rusb::Error::NoDevice => -19,
-                    _ => -1,
-                };
-                GLOBAL_NATIVE_LOG.record(
-                    TAG_SET_ALT_SETTING,
-                    streaming_iface as i32,
-                    ((err_code as i64) << 8) | ((target_alt as i64) & 0xFF),
-                );
-                return Err(err_code);
+        } else {
+            // UAC 1.0: primary path programs endpoint sample rate at alt 0 (verified on KZ C04 / 31b2:0313),
+            // then selects target_alt. If the alt-0 rate request stalls (strict devices where endpoint only
+            // exists in target_alt), select target_alt first and retry program_sample_rate as a fallback.
+            let rate_at_alt0 = program_sample_rate(
+                &self.handle,
+                false,
+                self.clock_source_id,
+                self.control_iface,
+                streaming_iface,
+                endpoint,
+                sample_rate,
+                ep_attributes,
+            );
+
+            match self.handle.set_alternate_setting(streaming_iface, target_alt) {
+                Ok(_) => {
+                    GLOBAL_NATIVE_LOG.record(
+                        TAG_SET_ALT_SETTING,
+                        streaming_iface as i32,
+                        (target_alt as i64) & 0xFF,
+                    );
+                }
+                Err(e) => {
+                    let err_code = match e {
+                        rusb::Error::Busy => -16,
+                        rusb::Error::NoDevice => -19,
+                        _ => -1,
+                    };
+                    GLOBAL_NATIVE_LOG.record(
+                        TAG_SET_ALT_SETTING,
+                        streaming_iface as i32,
+                        ((err_code as i64) << 8) | ((target_alt as i64) & 0xFF),
+                    );
+                    return Err(err_code);
+                }
+            }
+
+            if rate_at_alt0.is_err() {
+                program_sample_rate(
+                    &self.handle,
+                    false,
+                    self.clock_source_id,
+                    self.control_iface,
+                    streaming_iface,
+                    endpoint,
+                    sample_rate,
+                    ep_attributes,
+                )?;
             }
         }
 
         self.streaming_iface.store(streaming_iface, Ordering::Release);
         self.target_alt.store(target_alt, Ordering::Release);
         self.endpoint.store(endpoint, Ordering::Release);
+        self.ep_attributes.store(ep_attributes, Ordering::Release);
 
         if let Ok(active_alt) = self.read_active_alt() {
             if active_alt != target_alt {
@@ -707,12 +863,24 @@ impl UsbDeviceSession {
                 );
                 Ok(read_val)
             }
-            Ok(_) => Err(-1),
-            Err(e) => Err(match e {
-                rusb::Error::Pipe => -32,
-                rusb::Error::Timeout => -110,
-                _ => -1,
-            }),
+            Ok(_) => {
+                if !self.is_uac2 {
+                    Ok(volume_raw)
+                } else {
+                    Err(-1)
+                }
+            }
+            Err(e) => {
+                if !self.is_uac2 {
+                    Ok(volume_raw)
+                } else {
+                    Err(match e {
+                        rusb::Error::Pipe => -32,
+                        rusb::Error::Timeout => -110,
+                        _ => -1,
+                    })
+                }
+            }
         }
     }
 
@@ -771,7 +939,13 @@ impl UsbDeviceSession {
                 );
                 Ok(is_muted)
             }
-            _ => Err(-1),
+            _ => {
+                if !self.is_uac2 {
+                    Ok(mute)
+                } else {
+                    Err(-1)
+                }
+            }
         }
     }
 
@@ -861,6 +1035,10 @@ impl UsbDeviceSession {
                 _ => Err(-1),
             }
         } else {
+            let ep_attr = self.ep_attributes.load(Ordering::Acquire);
+            if !uac1_ep_supports_sample_rate_control(ep_attr) {
+                return Err(-1);
+            }
             let mut readback = [0u8; 3];
             match self.handle.read_control(
                 0xA2, // Endpoint | Class | In

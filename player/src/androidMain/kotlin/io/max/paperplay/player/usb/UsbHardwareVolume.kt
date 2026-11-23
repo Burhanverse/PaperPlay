@@ -59,6 +59,25 @@ class UsbHardwareVolume(
         invalidateVolumeCache()
     }
 
+    private fun volumeTargetChannels(): List<Int> {
+        if (featureUnit.hasMasterVolume) return listOf(0)
+        val chs = featureUnit.bmaControls.drop(1).mapIndexedNotNull { idx, mask ->
+            val volBit = if (uacVersion == UacVersion.UAC_2_0) 0x0CL else 0x02L
+            if ((mask and volBit) != 0L) idx + 1 else null
+        }
+        return chs.ifEmpty { listOf(1, 2) }
+    }
+
+    private fun muteTargetChannels(): List<Int> {
+        if (featureUnit.hasMasterMute) return listOf(0)
+        if (!featureUnit.hasChannelMute) return emptyList()
+        val chs = featureUnit.bmaControls.drop(1).mapIndexedNotNull { idx, mask ->
+            val muteBit = if (uacVersion == UacVersion.UAC_2_0) 0x03L else 0x01L
+            if ((mask and muteBit) != 0L) idx + 1 else null
+        }
+        return chs.ifEmpty { listOf(1, 2) }
+    }
+
     init {
         val hasFuVol = featureUnit.hasMasterVolume || featureUnit.hasChannelVolume
         if (caps != null && caps.hasVolume) {
@@ -99,7 +118,7 @@ class UsbHardwareVolume(
         val span = (effectiveMaxRaw - minRaw).toInt()
         val step = resRaw.toInt().coerceAtLeast(1)
 
-        val channels = if (featureUnit.hasMasterVolume) listOf(0) else listOf(1, 2)
+        val channels = volumeTargetChannels()
         val handle = nativeHandleProvider?.invoke() ?: 0L
         val reason = if (isUser) "user" else "auto"
 
@@ -218,7 +237,7 @@ class UsbHardwareVolume(
         if (!isSupported) return false
         if (maxIndex <= 0) return false
 
-        val channels = if (featureUnit.hasMasterVolume) listOf(0) else listOf(1, 2)
+        val channels = volumeTargetChannels()
         val handle = nativeHandleProvider?.invoke() ?: 0L
         val effectiveMaxRaw = maxRaw.toInt().coerceAtMost(0).toShort()
         val step = resRaw.toInt().coerceAtLeast(1)
@@ -363,8 +382,11 @@ class UsbHardwareVolume(
      * Sets hardware mute on the DAC and verifies with GET_CUR readback.
      */
     fun setMute(mute: Boolean): Boolean {
-        if (!featureUnit.hasMasterMute && !isSupported) return false
-        val channels = if (featureUnit.hasMasterMute) listOf(0) else listOf(1, 2)
+        val channels = muteTargetChannels()
+        if (channels.isEmpty()) {
+            isMuted = mute
+            return true
+        }
         var allOk = true
         val handle = nativeHandleProvider?.invoke() ?: 0L
 
@@ -408,7 +430,7 @@ class UsbHardwareVolume(
     fun restoreDefaultVolumeAndUnmute(): Boolean {
         if (!isSupported) return false
         val handle = nativeHandleProvider?.invoke() ?: 0L
-        val channels = if (featureUnit.hasMasterVolume) listOf(0) else listOf(1, 2)
+        val channels = volumeTargetChannels()
         var allOk = true
 
         if (handle != 0L) {

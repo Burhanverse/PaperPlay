@@ -360,6 +360,7 @@ pub struct StreamConfig {
     pub is_high_speed: bool,
     pub is_dop: bool,
     pub feedback_ep: u8,
+    pub ep_attributes: u8,
 }
 
 pub struct UsbStreamer {
@@ -537,6 +538,7 @@ impl UsbStreamer {
             target_alt,
             new_config.sample_rate,
             new_config.endpoint,
+            new_config.ep_attributes,
         )?;
         self.config = new_config;
         Ok(())
@@ -1343,6 +1345,31 @@ mod tests {
         process_feedback_report(&wild_raw.to_le_bytes(), true, 44100, &mut target);
         assert!(target <= 44100.0 * 1.02 + 0.01);
         assert!(target > 44100.0);
+    }
+
+    #[test]
+    fn uac1_full_speed_10_14_feedback_report_parsing() {
+        // UAC 1.0 10.14 format in 3 bytes: 96.0 samples/frame = 96 << 14 = 1_572_864 = 0x180000
+        let mut target = 96000.0;
+        let raw_96k: u32 = 96 << 14;
+        let fb_3bytes = [
+            (raw_96k & 0xFF) as u8,
+            ((raw_96k >> 8) & 0xFF) as u8,
+            ((raw_96k >> 16) & 0xFF) as u8,
+        ];
+        process_feedback_report(&fb_3bytes, false, 96000, &mut target);
+        assert!((target - 96000.0).abs() < 1e-6, "expected 96000.0 Hz, got {target}");
+
+        // 44.1 kHz in 10.14 format: 44.1 * 16384 = 722_534.4 -> 722_534 -> 44099.9755859375 Hz
+        let mut target_44k = 44100.0;
+        let raw_44k: u32 = 722_534;
+        let fb_44k = [
+            (raw_44k & 0xFF) as u8,
+            ((raw_44k >> 8) & 0xFF) as u8,
+            ((raw_44k >> 16) & 0xFF) as u8,
+        ];
+        process_feedback_report(&fb_44k, false, 44100, &mut target_44k);
+        assert!((target_44k - 44100.0).abs() < 0.1, "expected ~44100.0 Hz, got {target_44k}");
     }
 
     #[test]

@@ -108,6 +108,26 @@ internal object UsbEngineNative : UsbEngineBridge {
         }.getOrNull()
     }
 
+    override fun create(
+        fd: Int,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        isUac2: Boolean,
+        clockSourceId: Int,
+        controlIface: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
+        feedbackEp: Int,
+    ): Long = create(
+        fd, endpoint, streamingIface, targetAlt, isUac2, clockSourceId, controlIface,
+        sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp, 0x01,
+    )
+
     override external fun create(
         fd: Int,
         endpoint: Int,
@@ -122,8 +142,25 @@ internal object UsbEngineNative : UsbEngineBridge {
         subslotSize: Int,
         isHighSpeed: Boolean,
         isDop: Boolean,
-        feedbackEp: Int
+        feedbackEp: Int,
+        epAttributes: Int,
     ): Long
+
+    override fun reconfigure(
+        handle: Long,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
+        feedbackEp: Int,
+    ): Int = reconfigure(
+        handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp, 0x01,
+    )
 
     override external fun reconfigure(
         handle: Long,
@@ -136,7 +173,8 @@ internal object UsbEngineNative : UsbEngineBridge {
         subslotSize: Int,
         isHighSpeed: Boolean,
         isDop: Boolean,
-        feedbackEp: Int
+        feedbackEp: Int,
+        epAttributes: Int,
     ): Int
 
     override external fun destroy(handle: Long)
@@ -175,6 +213,22 @@ internal object UsbEngineNative : UsbEngineBridge {
         featureUnitId: Int,
     ): Long
 
+    fun sessionReconfigure(
+        handle: Long,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
+        feedbackEp: Int,
+    ): Int = sessionReconfigure(
+        handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp, 0x01,
+    )
+
     external fun sessionReconfigure(
         handle: Long,
         endpoint: Int,
@@ -187,6 +241,7 @@ internal object UsbEngineNative : UsbEngineBridge {
         isHighSpeed: Boolean,
         isDop: Boolean,
         feedbackEp: Int,
+        epAttributes: Int,
     ): Int
 
     external fun sessionApplyVolume(

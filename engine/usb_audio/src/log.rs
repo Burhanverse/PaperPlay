@@ -35,6 +35,9 @@ pub const TAG_JITTER_STATS: u8 = 26;
 pub const TAG_THREAD_SCHED: u8 = 27;
 pub const TAG_CUSHION_ESCALATE: u8 = 28;
 pub const TAG_CTRL_CMD: u8 = 29;
+pub const TAG_RATE_CTRL_SKIP: u8 = 30;
+pub const TAG_RATE_CTRL_FALLBACK: u8 = 31;
+pub const TAG_RATE_READBACK_WARN: u8 = 32;
 
 pub struct NativeLogEntry {
     pub timestamp_ms: AtomicU64,
@@ -231,6 +234,18 @@ impl NativeRingLog {
                 TAG_GET_CUR_MUTE => format!("GET_CUR_MUTE: bmReq=0x{:02x} bReq=0x{:02x} iface={} fu={} ch={} read_mute={}", (a1 >> 8) as u8, a1 as u8, (a2 >> 32) as u8, (a2 >> 40) as u8, (a2 >> 16) as u8, (a2 & 0xFF) != 0),
                 TAG_RELEASE_INTERFACE => format!("RELEASE_INTERFACE: iface={} res={}", a1, a2),
                 TAG_REATTACH_DRIVER => format!("REATTACH_DRIVER: iface={} res={}", a1, a2),
+                TAG_RATE_CTRL_SKIP => format!(
+                    "RATE_CTRL_SKIP: ep=0x{:02x} target_rate={} ep_attr=0x{:02x} (SAMPLING_FREQ_CONTROL unsupported)",
+                    a1 as u8, a2 as u32, a3 as u8
+                ),
+                TAG_RATE_CTRL_FALLBACK => format!(
+                    "RATE_CTRL_FALLBACK: ep=0x{:02x} target_rate={} err={} single_discrete=true",
+                    a1 as u8, a2 as u32, a3 as i32
+                ),
+                TAG_RATE_READBACK_WARN => format!(
+                    "RATE_READBACK_WARN: ep=0x{:02x} target_rate={} read_rate={} err={}",
+                    a1 as u8, a2 as u32, (a2 >> 32) as u32, a3 as i32
+                ),
                 _ => format!("UNKNOWN_TAG({}): arg1={} arg2={} arg3={}", tag, a1, a2, a3),
             };
             lines.push(format!("[native] @{}ms {}", ts, desc));

@@ -74,7 +74,14 @@ data class UsbEndpointDescriptor(
     val interval: Int,
     val refresh: Int = 0,
     val synchAddress: Int = 0,
-)
+    val csBmAttributes: Int = 0x01,
+) {
+    /**
+     * UAC 1.0 Class-Specific AS Isochronous Audio Data Endpoint Descriptor `bmAttributes` bit 0:
+     * Sampling Frequency control (`SAMPLING_FREQ_CONTROL` = 0x01) is supported.
+     */
+    val supportsSampleRateControl: Boolean get() = (csBmAttributes and 0x01) != 0
+}
 
 data class UsbClockSource(
     val id: Int,
@@ -125,6 +132,17 @@ data class UsbFeatureUnit(
     val hasMasterMute: Boolean,
     val hasMasterVolume: Boolean,
     val hasChannelVolume: Boolean,
+    val hasChannelMute: Boolean = false,
+)
+
+data class UsbSelectorUnit(
+    val id: Int,
+    val sourceIds: List<Int>,
+)
+
+data class UsbMixerUnit(
+    val id: Int,
+    val sourceIds: List<Int>,
 )
 
 data class UsbAudioAltSetting(
@@ -144,6 +162,18 @@ data class UsbAudioAltSetting(
     val isDsdDoPCapable: Boolean,
 ) {
     val isOut: Boolean get() = dataEndpoint?.isOut == true
+
+    /**
+     * Computes the native `ep_attributes` byte passed to Rust `program_sample_rate` / `UsbSessionCore`:
+     * - Bits 0..6: Class-specific AS endpoint `bmAttributes` (bit 0 = `UAC_EP_CS_ATTR_SAMPLE_RATE`).
+     * - Bit 7 (`0x80`): set when this alternate setting advertises a single discrete rate equal to [targetRate]
+     *   (allowing safe continuation if `SET_CUR` stalls on a fixed-rate alt setting).
+     */
+    fun computeNativeEpAttributes(targetRate: Int): Int {
+        val rawAttr = (dataEndpoint?.csBmAttributes ?: 0x01) and 0x7F
+        val isSingleDiscrete = continuousRateRange == null && sampleRates.size == 1 && sampleRates[0] == targetRate
+        return if (isSingleDiscrete) (rawAttr or 0x80) else rawAttr
+    }
 }
 
 data class UsbAudioDeviceDescription(
@@ -157,6 +187,8 @@ data class UsbAudioDeviceDescription(
     val inputTerminals: List<UsbInputTerminal> = emptyList(),
     val outputTerminals: List<UsbOutputTerminal> = emptyList(),
     val featureUnits: List<UsbFeatureUnit> = emptyList(),
+    val selectorUnits: List<UsbSelectorUnit> = emptyList(),
+    val mixerUnits: List<UsbMixerUnit> = emptyList(),
     val altSettings: List<UsbAudioAltSetting> = emptyList(),
     val hasHardwareVolume: Boolean = false,
     val rawDsdCapable: Boolean = false,

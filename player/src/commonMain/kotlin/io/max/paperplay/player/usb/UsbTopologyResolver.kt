@@ -23,21 +23,29 @@ fun UsbAudioDeviceDescription.resolveClockEntityId(
 }
 
 private fun UsbAudioDeviceDescription.isCaptureEntity(fu: UsbFeatureUnit): Boolean {
-    // Walk upstream from FU.sourceId toward an InputTerminal; if it originates from a non-USB input (mic/line), it's capture.
-    var cur = fu.sourceId
+    // Walk upstream from FU.sourceId through FeatureUnits, SelectorUnits, and MixerUnits toward an InputTerminal;
+    // if it originates from a non-USB input (mic/line), it's capture.
+    val queue = ArrayDeque<Int>()
     val seen = mutableSetOf<Int>()
-    while (cur > 0 && seen.add(cur)) {
+    queue.addLast(fu.sourceId)
+    while (queue.isNotEmpty()) {
+        val cur = queue.removeFirst()
+        if (cur <= 0 || !seen.add(cur)) continue
         val it = inputTerminals.firstOrNull { it.id == cur }
-        if (it != null) return !it.isUsbStreaming
-        val prevFu = featureUnits.firstOrNull { it.id == cur }
-        if (prevFu != null) {
-            cur = prevFu.sourceId
+        if (it != null) {
+            if (!it.isUsbStreaming) return true
             continue
         }
-        break
+        featureUnits.firstOrNull { it.id == cur }?.let { queue.addLast(it.sourceId) }
+        selectorUnits.firstOrNull { it.id == cur }?.let { su -> su.sourceIds.forEach { queue.addLast(it) } }
+        mixerUnits.firstOrNull { it.id == cur }?.let { mu -> mu.sourceIds.forEach { queue.addLast(it) } }
     }
-    // Also check if an OutputTerminal fed by this FU is a USB Streaming output (0x0101 = capture to host).
-    return outputTerminals.any { it.sourceId == fu.id && !it.isPhysicalOutput }
+    // Also check if an OutputTerminal fed (directly or via Selector/Mixer) by this FU is a USB Streaming output (0x0101 = capture to host).
+    return outputTerminals.any { ot ->
+        !ot.isPhysicalOutput && (ot.sourceId == fu.id ||
+            selectorUnits.any { su -> su.id == ot.sourceId && fu.id in su.sourceIds } ||
+            mixerUnits.any { mu -> mu.id == ot.sourceId && fu.id in mu.sourceIds })
+    }
 }
 
 private fun UsbAudioDeviceDescription.findDownstreamOutputTerminal(startEntityId: Int): UsbOutputTerminal? {
@@ -51,6 +59,12 @@ private fun UsbAudioDeviceDescription.findDownstreamOutputTerminal(startEntityId
         outputTerminals.firstOrNull { it.sourceId == id && it.isPhysicalOutput }?.let { return it }
         for (fu in featureUnits) {
             if (fu.sourceId == id) queue.addLast(fu.id)
+        }
+        for (su in selectorUnits) {
+            if (id in su.sourceIds) queue.addLast(su.id)
+        }
+        for (mu in mixerUnits) {
+            if (id in mu.sourceIds) queue.addLast(mu.id)
         }
     }
     return null
