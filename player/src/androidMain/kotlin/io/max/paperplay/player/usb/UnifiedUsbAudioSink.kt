@@ -48,8 +48,25 @@ internal object NativeCoarseUsbSessionApi : CoarseUsbSessionApi {
         isHighSpeed: Boolean,
         isDop: Boolean,
         feedbackEp: Int,
+        epAttributes: Int,
     ): Int = UsbEngineNative.sessionReconfigure(
-        handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp,
+        handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp, epAttributes,
+    )
+
+    override fun reconfigure(
+        handle: Long,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
+        feedbackEp: Int,
+    ): Int = UsbEngineNative.sessionReconfigure(
+        handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp, 0x01,
     )
 
     override fun applyVolume(
@@ -328,6 +345,17 @@ class UnifiedUsbAudioSink internal constructor(
 
         val usbManager = UsbAudioManager.instance
         if (PlaybackCore.usbExclusiveMode && usbManager != null) {
+            if (usbManager.state.value !is UsbAudioState.Connected) {
+                val mgr = UnifiedUsbDacManager.instance
+                if (mgr != null) {
+                    mgr.reopenActiveDeviceIfPermitted()
+                } else {
+                    val dev = usbManager.enumerateAudioDevices().firstOrNull()
+                    if (dev != null) {
+                        usbManager.openDevice(dev, triggerReconfigure = false)
+                    }
+                }
+            }
             usbManager.ensureNativeCapabilitiesProbed()
         }
         val connected = usbManager?.state?.value as? UsbAudioState.Connected
@@ -405,11 +433,12 @@ class UnifiedUsbAudioSink internal constructor(
         val volChannels = when {
             fu == null -> listOf(0)
             fu.hasMasterVolume -> listOf(0)
-            fu.hasChannelVolume -> listOf(1, 2)
+            fu.hasChannelVolume -> (1..alt.channelCount.coerceAtLeast(1)).toList()
             else -> listOf(0)
         }
         val hasHwVol = desc.hasHardwareVolume && fu != null && (fu.hasMasterVolume || fu.hasChannelVolume)
         val wireDepth = alt.bitResolution
+        val epAttr = alt.computeNativeEpAttributes(f.sampleRate)
 
         val ok = coarseController.openAndConfigure(
             fd = connected.connection.fileDescriptor,
@@ -431,8 +460,21 @@ class UnifiedUsbAudioSink internal constructor(
             volumeRaw = initialVolRaw,
             muted = initialMuted,
             volumeChannels = volChannels,
+            epAttributes = epAttr,
         )
         if (!ok) {
+            PlayLog.log(
+                "usb",
+                "UnifiedUsbAudioSink configure FAILED: uac=${desc.uacVersion} rate=${f.sampleRate} alt=${alt.interfaceNumber}:${alt.altSetting} ep=0x${(alt.dataEndpoint?.address ?: 1).toString(16)} epAttr=0x${epAttr.toString(16)} rateCtrl=${alt.dataEndpoint?.supportsSampleRateControl} reason=${coarseController.lastFailureReason}"
+            )
+            UsbRingLog.record(
+                "UnifiedUsbAudioSink",
+                "CONFIGURE_STEP_RESULT: status=FAILED uac=${desc.uacVersion} if=${alt.interfaceNumber}:alt=${alt.altSetting} rate=${f.sampleRate} ch=${alt.channelCount} bits=$wireDepth/${alt.subslotSize}B ep=0x${(alt.dataEndpoint?.address ?: 1).toString(16)} epAttr=0x${epAttr.toString(16)} rateCtrl=${alt.dataEndpoint?.supportsSampleRateControl} reason=${coarseController.lastFailureReason}",
+                UsbRingLog.CODE_ERROR,
+            )
+            context?.let { ctx ->
+                UsbAudioProbe.exportFallbackLog(ctx, coarseController.lastFailureReason ?: "UnifiedUsbAudioSink configure failed")
+            }
             if (isDoP || coarseController.isHardStopped) {
                 throw AudioSink.ConfigurationException(coarseController.lastFailureReason ?: "DoP configure failed", f)
             }
@@ -450,7 +492,14 @@ class UnifiedUsbAudioSink internal constructor(
         PlaybackCore.usbStatus = "USB: configured (${f.sampleRate} Hz, alt ${alt.altSetting})"
         PlayLog.log(
             "usb",
-            "UnifiedUsbAudioSink configured: rate=${f.sampleRate} Hz, srcBits=$depth, wireBits=$wireDepth, subslot=${alt.subslotSize}, alt=${alt.altSetting}, ch=${alt.channelCount}, inPlace=${coarseController.lastConfigureWasInPlace}, handle=${coarseController.handle}, volRaw=$initialVolRaw (${initialVolRaw / 256.0f} dB), volReadbackRaw=${coarseController.lastVolumeReadbackRaw} (${coarseController.lastVolumeReadbackRaw / 256.0f} dB), muted=$initialMuted"
+            "UnifiedUsbAudioSink configured: uac=${desc.uacVersion}, rate=${f.sampleRate} Hz, srcBits=$depth, wireBits=$wireDepth, subslot=${alt.subslotSize}, alt=${alt.altSetting}, ch=${alt.channelCount}, epAttr=0x${epAttr.toString(16)}, rateCtrl=${alt.dataEndpoint?.supportsSampleRateControl}, inPlace=${coarseController.lastConfigureWasInPlace}, handle=${coarseController.handle}, volRaw=$initialVolRaw (${initialVolRaw / 256.0f} dB), volReadbackRaw=${coarseController.lastVolumeReadbackRaw} (${coarseController.lastVolumeReadbackRaw / 256.0f} dB), muted=$initialMuted"
+        )
+        UsbRingLog.record(
+            "UnifiedUsbAudioSink",
+            "CONFIGURE_STEP_RESULT: status=OK uac=${desc.uacVersion} if=${alt.interfaceNumber}:alt=${alt.altSetting} rate=${f.sampleRate} confirmedRate=${coarseController.confirmedRateHz} confirmedAlt=${coarseController.confirmedAlt} ch=${alt.channelCount} bits=$wireDepth/${alt.subslotSize}B ep=0x${(alt.dataEndpoint?.address ?: 1).toString(16)} epAttr=0x${epAttr.toString(16)} rateCtrl=${alt.dataEndpoint?.supportsSampleRateControl} inPlace=${coarseController.lastConfigureWasInPlace} volRaw=$initialVolRaw volReadback=${coarseController.lastVolumeReadbackRaw}",
+            UsbRingLog.CODE_SINK_CONFIGURE,
+            f.sampleRate.toLong(),
+            alt.altSetting.toLong(),
         )
         val cacheDir = context?.cacheDir
         if (UsbPcmDumper.isEnabled && cacheDir != null) {

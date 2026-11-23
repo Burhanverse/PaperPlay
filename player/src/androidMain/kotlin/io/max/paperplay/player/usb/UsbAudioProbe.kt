@@ -202,13 +202,19 @@ object UsbAudioProbe {
         sb.appendLine("\nAudioStreaming Interface Alternate Settings (${desc.altSettings.size} total):")
         for (alt in desc.altSettings) {
             val dir = if (alt.dataEndpoint?.isOut == true) "OUT (Playback)" else "IN (Capture)"
-            val ratesStr = if (alt.sampleRates.isNotEmpty()) alt.sampleRates.joinToString(", ") { "$it Hz" } else "queried via Clock Source"
+            val ratesStr = when {
+                alt.sampleRates.isNotEmpty() -> alt.sampleRates.joinToString(", ") { "$it Hz" }
+                alt.continuousRateRange != null -> "${alt.continuousRateRange.first} .. ${alt.continuousRateRange.second} Hz (continuous)"
+                else -> "queried via Clock Source"
+            }
             val syncStr = alt.dataEndpoint?.syncType?.name ?: "Unknown"
+            val csAttr = alt.dataEndpoint?.csBmAttributes ?: 0
+            val rateCtrlSupported = alt.dataEndpoint?.supportsSampleRateControl == true
             val fbStr = alt.feedbackEndpoint?.address?.let { "0x" + it.toString(16) } ?: "None"
             sb.appendLine("  [${alt.interfaceNumber}:${alt.altSetting}] $dir:")
             sb.appendLine("    * Format: ${alt.formatTag} (${alt.bitResolution}-bit resolution, ${alt.subslotSize}-byte subslot, ${alt.channelCount} ch)")
             sb.appendLine("    * Sample Rates: $ratesStr")
-            sb.appendLine("    * Data Endpoint: 0x${alt.dataEndpoint?.address?.toString(16)?.padStart(2, '0')} ($syncStr Isochronous, maxPacket=${alt.dataEndpoint?.maxPacketSize})")
+            sb.appendLine("    * Data Endpoint: 0x${alt.dataEndpoint?.address?.toString(16)?.padStart(2, '0')} ($syncStr Isochronous, maxPacket=${alt.dataEndpoint?.maxPacketSize}, csBmAttributes=0x${csAttr.toString(16).padStart(2, '0')}, rateControlSupported=$rateCtrlSupported)")
             sb.appendLine("    * Feedback Endpoint: $fbStr")
         }
 
@@ -347,6 +353,13 @@ object UsbAudioProbe {
             return
         }
 
+        val fu = description.resolvePlaybackFeatureUnit(playbackAlt)
+        if (fu != null) {
+            sb.appendLine("Resolved Playback Feature Unit: ID ${fu.id} (src=${fu.sourceId}, masterMute=${fu.hasMasterMute}, masterVol=${fu.hasMasterVolume}, chVol=${fu.hasChannelVolume})")
+        } else {
+            sb.appendLine("Resolved Playback Feature Unit: None")
+        }
+
         var intfAlt0: UsbInterface? = null
         var intfTarget: UsbInterface? = null
         for (i in 0 until device.interfaceCount) {
@@ -458,49 +471,84 @@ object UsbAudioProbe {
                 val matched = readbackRate == 96000L
                 sb.appendLine("Step 5: GET_CUR readback on Clock Source $clockSourceId -> rate = $readbackRate Hz ${if (matched) "(VERIFIED: MATCHES 96000 Hz!)" else "(MISMATCH)"}")
 
+                // Step 6: Set streaming alternate setting
+                if (intfTarget != null) {
+                    val setStreamOk = connection.setInterface(intfTarget)
+                    sb.appendLine("Step 6: setInterface(streaming alt ${intfTarget.alternateSetting}) -> ${if (setStreamOk) "SUCCESS (true)" else "FAILED (false)"}")
+                }
+
             } else {
                 val epAddr = playbackAlt.dataEndpoint?.address ?: 0x01
-                sb.appendLine("UAC 1.0 Endpoint Address: 0x${epAddr.toString(16)}")
+                val csAttr = playbackAlt.dataEndpoint?.csBmAttributes ?: 0x01
+                val rateCtrlSupported = playbackAlt.dataEndpoint?.supportsSampleRateControl ?: true
+                val targetRate = playbackAlt.sampleRates.firstOrNull()
+                    ?: playbackAlt.continuousRateRange?.second
+                    ?: 96000
+                sb.appendLine("UAC 1.0 Endpoint Address: 0x${epAddr.toString(16)} (csBmAttributes=0x${csAttr.toString(16).padStart(2, '0')}, rateControlSupported=$rateCtrlSupported)")
 
-                val targetRate = 96000
-                val rateBuf = byteArrayOf(
-                    (targetRate and 0xFF).toByte(),
-                    ((targetRate shr 8) and 0xFF).toByte(),
-                    ((targetRate shr 16) and 0xFF).toByte()
-                )
-                val setCurBytes = connection.controlTransfer(
-                    0x22, // bmRequestType: OUT, CLASS, ENDPOINT
-                    0x01, // bRequest: SET_CUR
-                    0x0100, // wValue: SAMPLING_FREQ_CONTROL
-                    epAddr,
-                    rateBuf,
-                    3,
-                    2000
-                )
-                sb.appendLine("Step 4: SET_CUR on Endpoint 0x${epAddr.toString(16)} to 96000 Hz -> bytes sent = $setCurBytes")
+                var setCurAtAlt0Succeeded = false
+                if (!rateCtrlSupported) {
+                    sb.appendLine("Step 4: SET_CUR on Endpoint 0x${epAddr.toString(16)} -> SKIPPED (SAMPLING_FREQ_CONTROL bit 0 not set in CS_ENDPOINT bmAttributes)")
+                    sb.appendLine("Step 5: GET_CUR readback on Endpoint 0x${epAddr.toString(16)} -> SKIPPED (fixed/implicit rate $targetRate Hz)")
+                } else {
+                    val rateBuf = byteArrayOf(
+                        (targetRate and 0xFF).toByte(),
+                        ((targetRate shr 8) and 0xFF).toByte(),
+                        ((targetRate shr 16) and 0xFF).toByte()
+                    )
+                    val setCurBytes = connection.controlTransfer(
+                        0x22, // bmRequestType: OUT, CLASS, ENDPOINT
+                        0x01, // bRequest: SET_CUR
+                        0x0100, // wValue: SAMPLING_FREQ_CONTROL
+                        epAddr,
+                        rateBuf,
+                        3,
+                        2000
+                    )
+                    setCurAtAlt0Succeeded = (setCurBytes == 3)
+                    sb.appendLine("Step 4: SET_CUR on Endpoint 0x${epAddr.toString(16)} to $targetRate Hz (at alt 0) -> bytes sent = $setCurBytes ${if (setCurAtAlt0Succeeded) "(SUCCESS)" else "(STALLED at alt 0, will retry after setting target alt)"}")
 
-                val curBuf = ByteArray(3)
-                val getCurBytes = connection.controlTransfer(
-                    0xA2, // bmRequestType: IN, CLASS, ENDPOINT
-                    0x81, // bRequest: GET_CUR
-                    0x0100,
-                    epAddr,
-                    curBuf,
-                    3,
-                    2000
-                )
-                val readbackRate = if (getCurBytes >= 3) {
-                    (curBuf[0].toLong() and 0xFF) or
-                    ((curBuf[1].toLong() and 0xFF) shl 8) or
-                    ((curBuf[2].toLong() and 0xFF) shl 16)
-                } else -1L
-                sb.appendLine("Step 5: GET_CUR readback on Endpoint 0x${epAddr.toString(16)} -> rate = $readbackRate Hz")
-            }
+                    if (setCurAtAlt0Succeeded) {
+                        val curBuf = ByteArray(3)
+                        val getCurBytes = connection.controlTransfer(
+                            0xA2, // bmRequestType: IN, CLASS, ENDPOINT
+                            0x81, // bRequest: GET_CUR
+                            0x0100,
+                            epAddr,
+                            curBuf,
+                            3,
+                            2000
+                        )
+                        val readbackRate = if (getCurBytes >= 3) {
+                            (curBuf[0].toLong() and 0xFF) or
+                            ((curBuf[1].toLong() and 0xFF) shl 8) or
+                            ((curBuf[2].toLong() and 0xFF) shl 16)
+                        } else -1L
+                        val readStatus = when {
+                            readbackRate == targetRate.toLong() -> "(VERIFIED)"
+                            readbackRate < 0 -> "(WARNING: GET_CUR unsupported/stalled, non-fatal on UAC 1.0)"
+                            else -> "(WARNING: readback mismatch $readbackRate Hz vs $targetRate Hz, non-fatal on UAC 1.0)"
+                        }
+                        sb.appendLine("Step 5: GET_CUR readback on Endpoint 0x${epAddr.toString(16)} -> rate = $readbackRate Hz $readStatus")
+                    }
+                }
 
-            // Step 6: Set streaming alternate setting
-            if (intfTarget != null) {
-                val setStreamOk = connection.setInterface(intfTarget)
-                sb.appendLine("Step 6: setInterface(streaming alt ${intfTarget.alternateSetting}) -> ${if (setStreamOk) "SUCCESS (true)" else "FAILED (false)"}")
+                // Step 6: Set streaming alternate setting
+                if (intfTarget != null) {
+                    val setStreamOk = connection.setInterface(intfTarget)
+                    sb.appendLine("Step 6: setInterface(streaming alt ${intfTarget.alternateSetting}) -> ${if (setStreamOk) "SUCCESS (true)" else "FAILED (false)"}")
+                }
+
+                // Fallback: if SET_CUR at alt 0 stalled, retry now that streaming alt is active
+                if (rateCtrlSupported && !setCurAtAlt0Succeeded) {
+                    val rateBuf = byteArrayOf(
+                        (targetRate and 0xFF).toByte(),
+                        ((targetRate shr 8) and 0xFF).toByte(),
+                        ((targetRate shr 16) and 0xFF).toByte()
+                    )
+                    val retryBytes = connection.controlTransfer(0x22, 0x01, 0x0100, epAddr, rateBuf, 3, 2000)
+                    sb.appendLine("Step 6b: Fallback SET_CUR on Endpoint 0x${epAddr.toString(16)} to $targetRate Hz (at alt ${intfTarget?.alternateSetting}) -> bytes sent = $retryBytes")
+                }
             }
 
             // Step 7: Restore alt 0
@@ -690,6 +738,11 @@ object UsbAudioProbe {
         }
         val usbState = UsbAudioManager.instance?.state?.value
         sb.appendLine("UsbAudioManager state: $usbState")
+        if (usbState is UsbAudioState.Connected) {
+            sb.appendLine()
+            appendHardwareIdentification(usbState.device, usbState.description, sb)
+            appendDescriptorSummary(usbState.connection, usbState.description, sb)
+        }
         sb.appendLine()
 
         sb.appendLine("--------------------------------------------------------------------------------")

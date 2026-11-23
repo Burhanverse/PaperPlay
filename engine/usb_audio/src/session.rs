@@ -40,6 +40,8 @@ pub struct EndpointFormatConfig {
     pub is_high_speed: bool,
     pub is_dop: bool,
     pub feedback_ep: u8,
+    pub is_uac2: bool,
+    pub ep_attributes: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,35 +168,82 @@ impl<T: UsbControlTransport> UsbSessionCore<T> {
             self.state = SessionState::Faulted;
             return Err(e);
         }
-        if let Err(e) = self.transport.set_clock_rate(cfg.sample_rate, cfg.endpoint) {
-            self.state = SessionState::Faulted;
-            return Err(e);
-        }
-        match self.transport.get_clock_rate(cfg.endpoint) {
-            Ok(Some(actual_rate)) if actual_rate != cfg.sample_rate => {
-                self.state = SessionState::Faulted;
-                return Err(-22);
-            }
-            Err(e) => {
+        if cfg.is_uac2 {
+            // UAC 2.0: program Clock Source entity at alt 0, verify GET_CUR, then select target_alt.
+            if let Err(e) = self.transport.set_clock_rate(cfg.sample_rate, cfg.endpoint) {
                 self.state = SessionState::Faulted;
                 return Err(e);
             }
-            _ => {}
-        }
-        if let Err(e) = self.transport.set_alt(cfg.streaming_iface, cfg.target_alt) {
-            self.state = SessionState::Faulted;
-            return Err(e);
-        }
-        match self.transport.get_alt(cfg.streaming_iface) {
-            Ok(actual_alt) if actual_alt != cfg.target_alt => {
-                self.state = SessionState::Faulted;
-                return Err(-22);
+            match self.transport.get_clock_rate(cfg.endpoint) {
+                Ok(Some(actual_rate)) if actual_rate != cfg.sample_rate => {
+                    self.state = SessionState::Faulted;
+                    return Err(-22);
+                }
+                Err(e) => {
+                    self.state = SessionState::Faulted;
+                    return Err(e);
+                }
+                _ => {}
             }
-            Err(e) => {
+            if let Err(e) = self.transport.set_alt(cfg.streaming_iface, cfg.target_alt) {
                 self.state = SessionState::Faulted;
                 return Err(e);
             }
-            _ => {}
+            match self.transport.get_alt(cfg.streaming_iface) {
+                Ok(actual_alt) if actual_alt != cfg.target_alt => {
+                    self.state = SessionState::Faulted;
+                    return Err(-22);
+                }
+                Err(e) => {
+                    self.state = SessionState::Faulted;
+                    return Err(e);
+                }
+                _ => {}
+            }
+        } else {
+            // UAC 1.0: primary path programs endpoint sample rate at alt 0 (verified on KZ C04 / 31b2:0313),
+            // then selects target_alt. If the alt-0 rate request stalls (strict devices where endpoint only
+            // exists in target_alt), select target_alt first and retry set_clock_rate as a fallback.
+            let supports_rate_ctrl = crate::device::uac1_ep_supports_sample_rate_control(cfg.ep_attributes);
+            let mut rate_programmed = !supports_rate_ctrl;
+
+            if supports_rate_ctrl && self.transport.set_clock_rate(cfg.sample_rate, cfg.endpoint).is_ok() {
+                rate_programmed = true;
+                // Readback on UAC 1.0 is advisory (warning only when alt advertises the rate)
+                let _ = self.transport.get_clock_rate(cfg.endpoint);
+            }
+
+            if let Err(e) = self.transport.set_alt(cfg.streaming_iface, cfg.target_alt) {
+                self.state = SessionState::Faulted;
+                return Err(e);
+            }
+            match self.transport.get_alt(cfg.streaming_iface) {
+                Ok(actual_alt) if actual_alt != cfg.target_alt => {
+                    self.state = SessionState::Faulted;
+                    return Err(-22);
+                }
+                Err(e) => {
+                    self.state = SessionState::Faulted;
+                    return Err(e);
+                }
+                _ => {}
+            }
+
+            if !rate_programmed {
+                let mut set_res = self.transport.set_clock_rate(cfg.sample_rate, cfg.endpoint);
+                if set_res.is_err() {
+                    // Retry once at target_alt on stall / protocol failure
+                    set_res = self.transport.set_clock_rate(cfg.sample_rate, cfg.endpoint);
+                }
+                if let Err(e) = set_res {
+                    if !crate::device::uac1_alt_has_single_discrete_rate(cfg.ep_attributes) {
+                        self.state = SessionState::Faulted;
+                        return Err(e);
+                    }
+                } else {
+                    let _ = self.transport.get_clock_rate(cfg.endpoint);
+                }
+            }
         }
 
         // Reconfigure invalidates previous volume verification; never overwrites pre-session baseline.
@@ -238,10 +287,18 @@ impl<T: UsbControlTransport> UsbSessionCore<T> {
         // write volume before unmuting when unmuting.
         let (read_vol, read_mute) = if mute {
             let rm = self.write_mute_with_master_fallback(fu_id, control_iface, channel, true)?;
-            let rv = self.transport.write_fu_volume(fu_id, control_iface, channel, volume_raw)?;
+            let rv = match self.transport.write_fu_volume(fu_id, control_iface, channel, volume_raw) {
+                Ok(v) => v,
+                Err(_) if channel != 0 => self.transport.write_fu_volume(fu_id, control_iface, 0, volume_raw)?,
+                Err(e) => return Err(e),
+            };
             (rv, rm)
         } else {
-            let rv = self.transport.write_fu_volume(fu_id, control_iface, channel, volume_raw)?;
+            let rv = match self.transport.write_fu_volume(fu_id, control_iface, channel, volume_raw) {
+                Ok(v) => v,
+                Err(_) if channel != 0 => self.transport.write_fu_volume(fu_id, control_iface, 0, volume_raw)?,
+                Err(e) => return Err(e),
+            };
             let rm = self.write_mute_with_master_fallback(fu_id, control_iface, channel, false)?;
             (rv, rm)
         };
@@ -540,6 +597,15 @@ impl RealUsbControlTransport {
             resync_requested,
         })
     }
+    pub fn is_uac2(&self) -> bool {
+        self.session.as_ref().map(|s| s.is_uac2).unwrap_or(true)
+    }
+
+    pub fn set_ep_attributes(&self, ep_attributes: u8) {
+        if let Some(ref s) = self.session {
+            s.ep_attributes.store(ep_attributes, Ordering::Release);
+        }
+    }
 }
 
 /// Top-level coarse JNI handle combining lifecycle state machine with lock-free ring/atomic flags.
@@ -575,7 +641,31 @@ impl UsbControlTransport for RealUsbControlTransport {
 
     fn set_alt(&mut self, iface: u8, alt: u8) -> Result<(), i32> {
         let s = self.session.as_ref().ok_or(-19)?;
-        s.set_alt_setting(iface, alt)
+        if !s.claimed_interfaces.contains(&iface) {
+            let _ = s.handle.detach_kernel_driver(iface);
+            let _ = s.handle.claim_interface(iface);
+        }
+        let res = s.set_alt_setting(iface, alt);
+        match res {
+            Ok(()) => {
+                s.streaming_iface.store(iface, Ordering::Release);
+                s.target_alt.store(alt, Ordering::Release);
+                crate::log::GLOBAL_NATIVE_LOG.record(
+                    crate::log::TAG_SET_ALT_SETTING,
+                    iface as i32,
+                    (alt as i64) & 0xFF,
+                );
+                Ok(())
+            }
+            Err(e) => {
+                crate::log::GLOBAL_NATIVE_LOG.record(
+                    crate::log::TAG_SET_ALT_SETTING,
+                    iface as i32,
+                    ((e as i64) << 8) | ((alt as i64) & 0xFF),
+                );
+                Err(e)
+            }
+        }
     }
 
     fn get_alt(&mut self, iface: u8) -> Result<u8, i32> {
@@ -587,7 +677,9 @@ impl UsbControlTransport for RealUsbControlTransport {
     fn set_clock_rate(&mut self, sample_rate: u32, endpoint: u8) -> Result<(), i32> {
         let s = self.session.as_ref().ok_or(-19)?;
         let streaming_iface = s.streaming_iface.load(Ordering::Acquire);
-        crate::device::program_sample_rate(
+        let ep_attr = s.ep_attributes.load(Ordering::Acquire);
+        s.endpoint.store(endpoint, Ordering::Release);
+        let read_rate = crate::device::program_sample_rate(
             &s.handle,
             s.is_uac2,
             s.clock_source_id,
@@ -595,13 +687,25 @@ impl UsbControlTransport for RealUsbControlTransport {
             streaming_iface,
             endpoint,
             sample_rate,
+            ep_attr,
         )?;
+        if s.is_uac2 {
+            if let Some(actual_rate) = read_rate {
+                if actual_rate != sample_rate {
+                    return Err(-22);
+                }
+            }
+        }
         self.sample_rate.store(sample_rate, Ordering::Release);
         Ok(())
     }
 
     fn get_clock_rate(&mut self, _endpoint: u8) -> Result<Option<u32>, i32> {
         let s = self.session.as_ref().ok_or(-19)?;
+        if !s.is_uac2 {
+            let cur = self.sample_rate.load(Ordering::Acquire);
+            return Ok(if cur > 0 { Some(cur) } else { None });
+        }
         match s.read_clock_rate() {
             Ok(rate) => Ok(Some(rate)),
             Err(_) => Ok(None),
@@ -690,6 +794,7 @@ impl UsbControlTransport for RealUsbControlTransport {
             is_high_speed: cfg.is_high_speed,
             is_dop: cfg.is_dop,
             feedback_ep: cfg.feedback_ep,
+            ep_attributes: cfg.ep_attributes,
         };
         if let Some(ref mut streamer) = self.streamer {
             streamer.update_config(stream_cfg);
@@ -768,6 +873,9 @@ mod tests {
         streaming_active: bool,
         fail_per_channel_mute: bool,
         fail_master_vol: bool,
+        stall_clock_at_alt0: bool,
+        stall_clock_attempts_remaining: u32,
+        fail_clock_readback: bool,
     }
 
     impl MockUsbTransport {
@@ -787,6 +895,9 @@ mod tests {
                 streaming_active: false,
                 fail_per_channel_mute: false,
                 fail_master_vol: false,
+                stall_clock_at_alt0: false,
+                stall_clock_attempts_remaining: 0,
+                fail_clock_readback: false,
             }
         }
     }
@@ -806,10 +917,20 @@ mod tests {
         }
         fn set_clock_rate(&mut self, sample_rate: u32, _endpoint: u8) -> Result<(), i32> {
             self.calls.push(MockCall::SetClock(sample_rate));
+            if self.stall_clock_at_alt0 && *self.active_alt.get(&1).unwrap_or(&0) == 0 {
+                return Err(-32); // EPIPE: strict UAC 1.0 device stalls endpoint rate control when at alt 0
+            }
+            if self.stall_clock_attempts_remaining > 0 {
+                self.stall_clock_attempts_remaining -= 1;
+                return Err(-32); // EPIPE
+            }
             self.clock_rate = sample_rate;
             Ok(())
         }
         fn get_clock_rate(&mut self, _endpoint: u8) -> Result<Option<u32>, i32> {
+            if self.fail_clock_readback {
+                return Err(-32);
+            }
             Ok(Some(self.readback_clock_override.unwrap_or(self.clock_rate)))
         }
         fn read_fu_mute(&mut self, fu_id: u8, _ci: u8, ch: u8) -> Result<bool, i32> {
@@ -874,6 +995,25 @@ mod tests {
             is_high_speed: true,
             is_dop: false,
             feedback_ep: 0x81,
+            is_uac2: true,
+            ep_attributes: 0x01,
+        }
+    }
+
+    fn cfg_uac1_96k(ep_attributes: u8) -> EndpointFormatConfig {
+        EndpointFormatConfig {
+            streaming_iface: 1,
+            target_alt: 2,
+            endpoint: 0x01,
+            sample_rate: 96000,
+            bit_depth: 24,
+            channels: 2,
+            subslot_size: 3,
+            is_high_speed: false,
+            is_dop: false,
+            feedback_ep: 0,
+            is_uac2: false,
+            ep_attributes,
         }
     }
 
@@ -1129,5 +1269,210 @@ mod tests {
         let att = s.transport.calls.iter().position(|c| matches!(c, MockCall::AttachKernelDriver(_))).unwrap();
         assert!(v1 < m0 && v2 < m0);
         assert!(m0 < alt0 && alt0 < rel && rel < att);
+    }
+
+    #[test]
+    fn uac1_reconfigure_programs_rate_at_alt0_first_and_falls_back_to_target_alt_on_stall() {
+        // Case 1 (Real KZ Acoustics C04, 31b2:0313): SET_CUR at alt 0 succeeds, then target_alt is selected.
+        let mock_kz = MockUsbTransport::new(0, false);
+        let mut s_kz = UsbSessionCore::open(mock_kz, vec![0, 1, 2], vec![], false).unwrap();
+        s_kz.transport.calls.clear();
+
+        let mut cfg_kz = cfg_uac1_96k(crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE);
+        cfg_kz.streaming_iface = 2;
+        cfg_kz.endpoint = 0x04;
+        assert_eq!(s_kz.reconfigure(cfg_kz), Ok(()));
+        assert_eq!(s_kz.state(), SessionState::Configured);
+        assert_eq!(
+            s_kz.transport.calls,
+            vec![
+                MockCall::SetAlt(2, 0),
+                MockCall::SetClock(96000),
+                MockCall::SetAlt(2, 2),
+            ],
+            "Primary UAC 1.0 path must set rate at alt 0 before selecting target_alt"
+        );
+
+        // Case 2 (Strict device that stalls SET_CUR at alt 0): falls back to selecting target_alt first, then retries SET_CUR.
+        let mut mock_strict = MockUsbTransport::new(0, false);
+        mock_strict.stall_clock_at_alt0 = true;
+        let mut s_strict = UsbSessionCore::open(mock_strict, vec![0, 1], vec![], false).unwrap();
+        s_strict.transport.calls.clear();
+
+        let cfg = cfg_uac1_96k(crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE);
+        assert_eq!(s_strict.reconfigure(cfg), Ok(()));
+        assert_eq!(s_strict.state(), SessionState::Configured);
+        assert_eq!(
+            s_strict.transport.calls,
+            vec![
+                MockCall::SetAlt(1, 0),
+                MockCall::SetClock(96000), // stalled at alt 0
+                MockCall::SetAlt(1, 2),
+                MockCall::SetClock(96000), // succeeded at alt 2
+            ],
+            "When alt-0 rate control stalls, UAC 1.0 must select target_alt and retry rate setup"
+        );
+    }
+
+    #[test]
+    fn kz_c04_uac1_session_open_and_configure_matrix_44k16_48k24_96k16_96k24() {
+        // Real KZ Acoustics C04 (31b2:0313) topology:
+        // - AC interface 0, Mic AS interface 1, Playback AS interface 2 (OUT EP 0x04, no feedback EP)
+        // - Alt 1: 16-bit / 2-byte subslot, discrete [44100, 48000, 88200, 96000]
+        // - Alt 2: 24-bit / 3-byte subslot, discrete [44100, 88200, 48000, 96000]
+        // - Feature Unit 7 (playback, src=5): master mute (ch 0), per-channel volume (ch 1, 2)
+        let mut mock = MockUsbTransport::new(0, false);
+        mock.fail_master_vol = true; // FU 7 has masterVol=false, chVol=true
+        mock.fail_per_channel_mute = true; // FU 7 has masterMute=true, chMute=false
+        mock.fu_vol.remove(&(7, 0));
+        mock.fu_mute.insert((7, 0), false);
+        mock.fu_vol.insert((7, 1), -1024);
+        mock.fu_vol.insert((7, 2), -1024);
+
+        let fus = vec![FeatureUnitTarget {
+            fu_id: 7,
+            control_iface: 0,
+            channels: vec![0, 1, 2],
+        }];
+        let mut session = UsbSessionCore::open(mock, vec![0, 1, 2], fus, true).unwrap();
+
+        let matrix = [
+            (44100u32, 16u32, 1u8, 2u32), // 44.1/16 -> iface 2, alt 1, subslot 2
+            (48000u32, 24u32, 2u8, 3u32), // 48/24   -> iface 2, alt 2, subslot 3
+            (96000u32, 16u32, 1u8, 2u32), // 96/16   -> iface 2, alt 1, subslot 2
+            (96000u32, 24u32, 2u8, 3u32), // 96/24   -> iface 2, alt 2, subslot 3
+        ];
+
+        for (rate, bits, expected_alt, subslot) in matrix {
+            let cfg = EndpointFormatConfig {
+                streaming_iface: 2,
+                target_alt: expected_alt,
+                endpoint: 0x04,
+                sample_rate: rate,
+                bit_depth: bits,
+                channels: 2,
+                subslot_size: subslot,
+                is_high_speed: false,
+                is_dop: false,
+                feedback_ep: 0,
+                is_uac2: false,
+                ep_attributes: crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE,
+            };
+            assert_eq!(session.reconfigure(cfg), Ok(()), "reconfigure failed for {rate}/{bits}");
+            assert_eq!(session.active_config().unwrap().streaming_iface, 2);
+            assert_eq!(session.active_config().unwrap().target_alt, expected_alt);
+            assert_eq!(session.active_config().unwrap().endpoint, 0x04);
+            assert_eq!(session.active_config().unwrap().sample_rate, rate);
+
+            // Apply per-channel volume on FU 7 (ch 1 and ch 2; mute falls back to master ch 0)
+            assert_eq!(session.apply_volume(7, 0, 1, -2048, false), Ok((-2048, false)));
+            assert_eq!(session.apply_volume(7, 0, 2, -2048, false), Ok((-2048, false)));
+            assert!(session.is_volume_verified());
+            assert_eq!(session.start(), Ok(()));
+        }
+
+        session.close();
+        assert_eq!(session.state(), SessionState::Closed);
+    }
+
+    #[test]
+    fn uac2_reconfigure_regression_keeps_clock_before_target_alt() {
+        // UAC 2.0 Clock Source programming MUST keep: SetAlt(1, 0) -> SetClock(48000) -> SetAlt(1, target_alt=1)
+        let mock = MockUsbTransport::new(0, false);
+        let mut s = UsbSessionCore::open(mock, vec![0, 1], vec![], false).unwrap();
+        s.transport.calls.clear();
+
+        assert_eq!(s.reconfigure(cfg_48k()), Ok(()));
+        assert_eq!(
+            s.transport.calls,
+            vec![
+                MockCall::SetAlt(1, 0),
+                MockCall::SetClock(48000),
+                MockCall::SetAlt(1, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn uac1_skips_rate_control_when_ep_attribute_bit0_is_clear() {
+        let mut mock = MockUsbTransport::new(0, false);
+        mock.stall_clock_attempts_remaining = 99; // Would fail if SetClock were called
+        let mut s = UsbSessionCore::open(mock, vec![0, 1], vec![], false).unwrap();
+        s.transport.calls.clear();
+
+        // ep_attributes = 0x00 (SAMPLING_FREQ_CONTROL unsupported)
+        let cfg = cfg_uac1_96k(0x00);
+        assert_eq!(s.reconfigure(cfg), Ok(()));
+        assert_eq!(
+            s.transport.calls,
+            vec![MockCall::SetAlt(1, 0), MockCall::SetAlt(1, 2)],
+            "SET_CUR must be skipped when bmAttributes bit 0 is not set"
+        );
+    }
+
+    #[test]
+    fn uac1_stalled_rate_request_retries_once_and_falls_back_on_single_discrete_rate() {
+        // Case A: First SET_CUR at alt 0 stalls, fallback after SetAlt(1, 2) succeeds.
+        let mut mock_retry = MockUsbTransport::new(0, false);
+        mock_retry.stall_clock_attempts_remaining = 1;
+        let mut s1 = UsbSessionCore::open(mock_retry, vec![0, 1], vec![], false).unwrap();
+        s1.transport.calls.clear();
+        assert_eq!(
+            s1.reconfigure(cfg_uac1_96k(crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE)),
+            Ok(())
+        );
+        let clock_calls1 = s1.transport.calls.iter().filter(|c| matches!(c, MockCall::SetClock(96000))).count();
+        assert_eq!(clock_calls1, 2, "must retry at target_alt after initial alt-0 stall");
+
+        // Case A2: First SET_CUR at alt 0 stalls AND first SET_CUR at target_alt stalls, second retry at target_alt succeeds.
+        let mut mock_retry2 = MockUsbTransport::new(0, false);
+        mock_retry2.stall_clock_attempts_remaining = 2;
+        let mut s1b = UsbSessionCore::open(mock_retry2, vec![0, 1], vec![], false).unwrap();
+        s1b.transport.calls.clear();
+        assert_eq!(
+            s1b.reconfigure(cfg_uac1_96k(crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE)),
+            Ok(())
+        );
+        let clock_calls1b = s1b.transport.calls.iter().filter(|c| matches!(c, MockCall::SetClock(96000))).count();
+        assert_eq!(clock_calls1b, 3, "must retry once at target_alt when target_alt SET_CUR also stalls");
+
+        // Case B: Both attempts stall, but alt setting has a single discrete rate equal to target (bit 7 set) -> continue without failing.
+        let mut mock_single = MockUsbTransport::new(0, false);
+        mock_single.stall_clock_attempts_remaining = 10;
+        let mut s2 = UsbSessionCore::open(mock_single, vec![0, 1], vec![], false).unwrap();
+        let attr_single = crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE | crate::device::UAC1_ALT_SINGLE_DISCRETE_RATE;
+        assert_eq!(s2.reconfigure(cfg_uac1_96k(attr_single)), Ok(()));
+        assert_eq!(s2.state(), SessionState::Configured);
+
+        // Case C: Both attempts stall, and alt setting has multiple/continuous rates (bit 7 clear) -> fails with error code (-32 EPIPE).
+        let mut mock_multi = MockUsbTransport::new(0, false);
+        mock_multi.stall_clock_attempts_remaining = 10;
+        let mut s3 = UsbSessionCore::open(mock_multi, vec![0, 1], vec![], false).unwrap();
+        assert_eq!(
+            s3.reconfigure(cfg_uac1_96k(crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE)),
+            Err(-32)
+        );
+        assert_eq!(s3.state(), SessionState::Faulted);
+    }
+
+    #[test]
+    fn uac1_garbage_or_failed_rate_readback_is_non_fatal() {
+        // Garbage readback (e.g. 44100 when 96000 was programmed) must not abort UAC 1.0 reconfigure
+        let mut mock_garbage = MockUsbTransport::new(0, false);
+        mock_garbage.readback_clock_override = Some(44100);
+        let mut s1 = UsbSessionCore::open(mock_garbage, vec![0, 1], vec![], false).unwrap();
+        assert_eq!(
+            s1.reconfigure(cfg_uac1_96k(crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE)),
+            Ok(())
+        );
+
+        // Stalled GET_CUR readback must also be non-fatal on UAC 1.0
+        let mut mock_fail_rb = MockUsbTransport::new(0, false);
+        mock_fail_rb.fail_clock_readback = true;
+        let mut s2 = UsbSessionCore::open(mock_fail_rb, vec![0, 1], vec![], false).unwrap();
+        assert_eq!(
+            s2.reconfigure(cfg_uac1_96k(crate::device::UAC_EP_CS_ATTR_SAMPLE_RATE)),
+            Ok(())
+        );
     }
 }

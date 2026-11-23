@@ -34,6 +34,7 @@ androidApp/src/main/jniLibs/arm64-v8a/libusb_audio.so
 androidApp/src/main/jniLibs/arm64-v8a/libusb-1.0.so
 .kotlin/
 dac-dump.txt
+uac1-dump.txt
 usb_debug_log_*.txt
 *.raw
 scripts/test_audio/

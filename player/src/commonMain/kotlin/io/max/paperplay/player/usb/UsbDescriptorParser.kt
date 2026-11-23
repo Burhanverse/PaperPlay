@@ -186,6 +186,8 @@ object UsbDescriptorParser {
         val inputTerminals = mutableListOf<UsbInputTerminal>()
         val outputTerminals = mutableListOf<UsbOutputTerminal>()
         val featureUnits = mutableListOf<UsbFeatureUnit>()
+        val selectorUnits = mutableListOf<UsbSelectorUnit>()
+        val mixerUnits = mutableListOf<UsbMixerUnit>()
 
         // 2. Parse AudioControl Interface structures
         var acInterfaceNumber = 0
@@ -227,6 +229,32 @@ object UsbDescriptorParser {
                         val cSource = if (detectedVersion == UacVersion.UAC_2_0 && desc.length >= 12) desc.byte(8) else 0
                         outputTerminals.add(UsbOutputTerminal(id, type, assoc, src, cSource))
                     }
+                    UAC_MIXER_UNIT -> {
+                        if (desc.length >= 6) {
+                            val id = desc.byte(3)
+                            val nrInPins = desc.byte(4)
+                            val srcIds = mutableListOf<Int>()
+                            for (p in 0 until nrInPins) {
+                                if (5 + p < desc.length) {
+                                    srcIds.add(desc.byte(5 + p))
+                                }
+                            }
+                            mixerUnits.add(UsbMixerUnit(id, srcIds))
+                        }
+                    }
+                    UAC_SELECTOR_UNIT -> {
+                        if (desc.length >= 6) {
+                            val id = desc.byte(3)
+                            val nrInPins = desc.byte(4)
+                            val srcIds = mutableListOf<Int>()
+                            for (p in 0 until nrInPins) {
+                                if (5 + p < desc.length) {
+                                    srcIds.add(desc.byte(5 + p))
+                                }
+                            }
+                            selectorUnits.add(UsbSelectorUnit(id, srcIds))
+                        }
+                    }
                     UAC_FEATURE_UNIT -> {
                         val id = desc.byte(3)
                         val src = desc.byte(4)
@@ -242,13 +270,17 @@ object UsbDescriptorParser {
                             val hasMute = (master and 0x03L) != 0L
                             val hasVol = (master and 0x0CL) != 0L
                             val hasChVol = controls.drop(1).any { (it and 0x0CL) != 0L }
-                            featureUnits.add(UsbFeatureUnit(id, src, 4, controls, hasMute, hasVol, hasChVol))
+                            val hasChMute = controls.drop(1).any { (it and 0x03L) != 0L }
+                            featureUnits.add(UsbFeatureUnit(id, src, 4, controls, hasMute, hasVol, hasChVol, hasChMute))
                         } else if (desc.length >= 7) {
                             val ctrlSize = desc.byte(5)
                             val controls = mutableListOf<Long>()
                             if (ctrlSize in 1..4) {
                                 var o = 6
-                                while (o + ctrlSize <= desc.length) {
+                                // Per USB Audio Class 1.0 spec Table 4-7 (Feature Unit Descriptor):
+                                // bLength = 7 + (ch + 1) * n, where the last byte (offset bLength - 1) is always iFeature.
+                                val endLimit = (desc.length - 1).coerceAtLeast(6)
+                                while (o + ctrlSize <= endLimit) {
                                     var v = 0L
                                     for (b in 0 until ctrlSize) {
                                         v = v or ((desc.byte(o + b).toLong() and 0xFF) shl (b * 8))
@@ -261,7 +293,8 @@ object UsbDescriptorParser {
                             val hasMute = (master and 0x01L) != 0L
                             val hasVol = (master and 0x02L) != 0L
                             val hasChVol = controls.drop(1).any { (it and 0x02L) != 0L }
-                            featureUnits.add(UsbFeatureUnit(id, src, ctrlSize, controls, hasMute, hasVol, hasChVol))
+                            val hasChMute = controls.drop(1).any { (it and 0x01L) != 0L }
+                            featureUnits.add(UsbFeatureUnit(id, src, ctrlSize, controls, hasMute, hasVol, hasChVol, hasChMute))
                         }
                     }
                     UAC2_CLOCK_SOURCE -> {
@@ -317,9 +350,13 @@ object UsbDescriptorParser {
         var currentContinuousRange: Pair<Int, Int>? = null
         var currentDataEndpoint: UsbEndpointDescriptor? = null
         var currentFeedbackEndpoint: UsbEndpointDescriptor? = null
+        var pendingCsEpAttributes: Int? = null
 
         fun flushAltSetting() {
             if (currentAsInterfaceNumber >= 0 && currentAltSetting > 0 && currentDataEndpoint != null) {
+                val finalDataEp = pendingCsEpAttributes?.let { attr ->
+                    currentDataEndpoint!!.copy(csBmAttributes = attr)
+                } ?: currentDataEndpoint!!
                 val isDsdRaw = (currentBmFormats and 0x80000000L) != 0L || currentFormatTag == AudioFormatTag.RAW_DATA
                 val isDoP = currentSubslotSize >= 3 && currentBitResolution >= 24 &&
                         (detectedVersion == UacVersion.UAC_2_0 || currentSampleRates.any { it >= 176400 } || (currentContinuousRange?.second ?: 0) >= 176400)
@@ -336,7 +373,7 @@ object UsbDescriptorParser {
                         bitResolution = currentBitResolution,
                         sampleRates = currentSampleRates.toList(),
                         continuousRateRange = currentContinuousRange,
-                        dataEndpoint = currentDataEndpoint,
+                        dataEndpoint = finalDataEp,
                         feedbackEndpoint = currentFeedbackEndpoint,
                         isDsdRawCapable = isDsdRaw,
                         isDsdDoPCapable = isDoP,
@@ -353,6 +390,7 @@ object UsbDescriptorParser {
             currentContinuousRange = null
             currentDataEndpoint = null
             currentFeedbackEndpoint = null
+            pendingCsEpAttributes = null
         }
 
         for (desc in descriptors) {
@@ -447,7 +485,18 @@ object UsbDescriptorParser {
                         ) {
                             currentFeedbackEndpoint = ep
                         } else {
-                            currentDataEndpoint = ep
+                            currentDataEndpoint = pendingCsEpAttributes?.let { ep.copy(csBmAttributes = it) } ?: ep
+                        }
+                    }
+                } else if (desc.type == CS_ENDPOINT && desc.length >= 4) {
+                    val subtype = desc.byte(2) // EP_GENERAL = 0x01
+                    if (subtype == 0x01) {
+                        val csAttr = desc.byte(3) // bmAttributes: bit 0 = Sampling Frequency, bit 1 = Pitch, bit 7 = MaxPacketsOnly
+                        if (currentDataEndpoint != null) {
+                            currentDataEndpoint = currentDataEndpoint!!.copy(csBmAttributes = csAttr)
+                            pendingCsEpAttributes = null
+                        } else {
+                            pendingCsEpAttributes = csAttr
                         }
                     }
                 }
@@ -470,6 +519,8 @@ object UsbDescriptorParser {
             inputTerminals = inputTerminals,
             outputTerminals = outputTerminals,
             featureUnits = featureUnits,
+            selectorUnits = selectorUnits,
+            mixerUnits = mixerUnits,
             altSettings = altSettings,
             hasHardwareVolume = hasHwVolume,
             rawDsdCapable = rawDsd,

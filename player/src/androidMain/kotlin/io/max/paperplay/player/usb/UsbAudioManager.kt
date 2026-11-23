@@ -349,10 +349,26 @@ class UsbAudioManager(private val context: Context) {
             val finalDescription = cachedDesc ?: description
             val probedCaps: DacCapabilities? = cachedCap
 
-            PlayLog.log("usb", "Opened USB DAC using Kotlin raw descriptors (uac=${finalDescription.uacVersion}, alts=${finalDescription.altSettings.size}, cachedNativeCaps=${cachedCap != null})")
+            val altDiag = finalDescription.altSettings.joinToString("; ") { alt ->
+                val dir = if (alt.isOut) "OUT" else "IN"
+                val rates = when {
+                    alt.sampleRates.isNotEmpty() -> alt.sampleRates.joinToString(",")
+                    alt.continuousRateRange != null -> "${alt.continuousRateRange.first}..${alt.continuousRateRange.second}"
+                    else -> "clock"
+                }
+                val ep = alt.dataEndpoint
+                val epStr = if (ep != null) {
+                    "ep=0x%02x(%s,maxPkt=%d,csAttr=0x%02x,rateCtrl=%s)".format(
+                        ep.address, ep.syncType.name, ep.maxPacketSize, ep.csBmAttributes, ep.supportsSampleRateControl
+                    )
+                } else "ep=none"
+                "if=${alt.interfaceNumber}:alt=${alt.altSetting}[$dir,${alt.channelCount}ch,${alt.bitResolution}b/${alt.subslotSize}B,rates=[$rates],$epStr]"
+            }
+            val rawHex = rawDescriptors.joinToString("") { "%02x".format(it) }
+            PlayLog.log("usb", "Opened USB DAC using Kotlin raw descriptors (uac=${finalDescription.uacVersion}, alts=${finalDescription.altSettings.size}, cachedNativeCaps=${cachedCap != null}): $altDiag")
             UsbRingLog.record(
                 "UsbAudioManager",
-                "Kotlin descriptor probe: uac=${finalDescription.uacVersion} alts=${finalDescription.altSettings.size} cachedNative=${cachedCap != null}",
+                "DESCRIPTOR_SUMMARY: uac=${finalDescription.uacVersion} acIf=${finalDescription.acInterfaceNumber} alts=${finalDescription.altSettings.size} [$altDiag] rawHex(${rawDescriptors.size}B)=$rawHex",
                 UsbRingLog.CODE_GENERIC
             )
 
@@ -528,7 +544,8 @@ class UsbAudioManager(private val context: Context) {
             channels = altSetting.channelCount,
             subslotSize = altSetting.subslotSize,
             isHighSpeed = isUac2 || outEp.maxPacketSize > 1023,
-            isDop = isDop
+            isDop = isDop,
+            epAttributes = altSetting.computeNativeEpAttributes(targetRate),
         )
 
         activeStreamer = streamer

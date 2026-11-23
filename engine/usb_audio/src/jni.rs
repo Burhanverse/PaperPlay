@@ -158,6 +158,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_create(
     is_high_speed: jboolean,
     is_dop: jboolean,
     feedback_ep: jint,
+    ep_attributes: jint,
 ) -> jlong {
     let result = catch_unwind(|| {
         ensure_no_device_discovery();
@@ -165,6 +166,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_create(
             return 0;
         }
 
+        let ep_attr = (ep_attributes & 0xFF) as u8;
         let session = match super::device::UsbDeviceSession::open_and_configure(
             fd,
             streaming_iface as u8,
@@ -174,6 +176,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_create(
             control_iface as u8,
             sample_rate as u32,
             (endpoint & 0xFF) as u8,
+            ep_attr,
         ) {
             Ok(s) => std::sync::Arc::new(s),
             Err(_) => return 0,
@@ -188,6 +191,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_create(
             is_high_speed: is_high_speed != 0,
             is_dop: is_dop != 0,
             feedback_ep: (feedback_ep & 0xFF) as u8,
+            ep_attributes: ep_attr,
         };
 
         super::device::set_active_session(Some(std::sync::Arc::clone(&session)));
@@ -221,6 +225,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_reconfig
     is_high_speed: jboolean,
     is_dop: jboolean,
     feedback_ep: jint,
+    ep_attributes: jint,
 ) -> jint {
     let result = catch_unwind(|| {
         if handle == 0 || sample_rate <= 0 || channels <= 0 || subslot_size <= 0 {
@@ -236,6 +241,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_reconfig
             is_high_speed: is_high_speed != 0,
             is_dop: is_dop != 0,
             feedback_ep: (feedback_ep & 0xFF) as u8,
+            ep_attributes: (ep_attributes & 0xFF) as u8,
         };
         match instance.streamer.reconfigure(
             streaming_iface as u8,
@@ -656,6 +662,10 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_getCurre
             return -1;
         }
         let instance = unsafe { &*(handle as *const UsbNativeInstance) };
+        if !instance.streamer.session.is_uac2 {
+            // Many UAC 1.0 devices return garbage or stall on GET_CUR; report the configured rate.
+            return instance.sample_rate as jint;
+        }
         match instance.streamer.session.read_clock_rate() {
             Ok(rate) => rate as jint,
             Err(_) => instance.sample_rate as jint,
@@ -908,6 +918,7 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionR
     is_high_speed: jboolean,
     is_dop: jboolean,
     feedback_ep: jint,
+    ep_attributes: jint,
 ) -> jint {
     let result = catch_unwind(|| {
         if sample_rate <= 0 || channels <= 0 || subslot_size <= 0 {
@@ -919,6 +930,9 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionR
         let Ok(mut core) = instance.core.lock() else {
             return -1;
         };
+        let ep_attr = (ep_attributes & 0xFF) as u8;
+        core.transport.set_ep_attributes(ep_attr);
+        let is_uac2 = core.transport.is_uac2();
         let cfg = EndpointFormatConfig {
             streaming_iface: streaming_iface.max(0) as u8,
             target_alt: target_alt.max(0) as u8,
@@ -930,6 +944,8 @@ pub extern "system" fn Java_io_max_paperplay_player_usb_UsbEngineNative_sessionR
             is_high_speed: is_high_speed != 0,
             is_dop: is_dop != 0,
             feedback_ep: (feedback_ep & 0xFF) as u8,
+            is_uac2,
+            ep_attributes: ep_attr,
         };
         match core.reconfigure(cfg) {
             Ok(()) => 0,

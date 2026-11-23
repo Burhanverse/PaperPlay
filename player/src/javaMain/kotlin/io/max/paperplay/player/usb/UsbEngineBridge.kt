@@ -21,8 +21,46 @@ interface UsbEngineBridge {
         subslotSize: Int,
         isHighSpeed: Boolean,
         isDop: Boolean,
+        feedbackEp: Int,
+        epAttributes: Int = 0x01,
+    ): Long = create(
+        fd, endpoint, streamingIface, targetAlt, isUac2, clockSourceId, controlIface,
+        sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp,
+    )
+
+    fun create(
+        fd: Int,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        isUac2: Boolean,
+        clockSourceId: Int,
+        controlIface: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
         feedbackEp: Int
     ): Long
+
+    fun reconfigure(
+        handle: Long,
+        endpoint: Int,
+        streamingIface: Int,
+        targetAlt: Int,
+        sampleRate: Int,
+        bitDepth: Int,
+        channels: Int,
+        subslotSize: Int,
+        isHighSpeed: Boolean,
+        isDop: Boolean,
+        feedbackEp: Int,
+        epAttributes: Int = 0x01,
+    ): Int = reconfigure(
+        handle, endpoint, streamingIface, targetAlt, sampleRate, bitDepth, channels, subslotSize, isHighSpeed, isDop, feedbackEp,
+    )
 
     fun reconfigure(
         handle: Long,
