@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
@@ -94,8 +95,58 @@ class AppServices(
                     }
                 }
             },
+            // Library rows and the chat index go between the devices too, so both hold the same database.
+            data = io.max.paperplay.core.sync.LibraryDataSync(
+                driver, library, { indexStore },
+                pauseState = { realIndex.pauseState() },
+                takePause = { p, at -> realIndex.takePause(p, at) },
+                onIndexChanged = { realIndex.syncedIn() },
+            ),
         ),
-    ).also { lanSync = it; bindLan(it) }
+    ).also { lanSync = it; bindLan(it); bindIndexToLan(it, isDesktop) }
+
+    /**
+     * The chat index across linked devices: the PC does the reading while a phone is linked to it (the phone asks it and receives the
+     * posts), pause and resume on either device hold on both, and new posts reach the other device within seconds.
+     */
+    private fun bindIndexToLan(lan: io.max.paperplay.core.sync.LanSync, isDesktop: Boolean) {
+        fun leader(): String? = if (isDesktop) null else lan.connected.value.firstOrNull { it.desktop && it.paired }?.id
+        realIndex.delegate = { action, chat ->
+            val to = leader()
+            to != null && lan.sendMessage(to, kotlinx.serialization.json.buildJsonObject {
+                put("t", "indexctl"); put("action", action)
+                if (chat != null) { put("chat", chat.id); put("title", chat.title); put("channel", chat.isChannel) }
+            })
+        }
+        realIndex.onPausedChanged = { paused ->
+            val at = realIndex.pauseState().second
+            scope.launch { lan.sendMessage(null, kotlinx.serialization.json.buildJsonObject { put("t", "indexctl"); put("paused", paused); put("at", at) }) }
+        }
+        // New posts are announced at most every 5 s; the other device then pulls them.
+        val nudge = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        realIndex.onPostsSaved = { nudge.tryEmit(Unit) }
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        scope.launch {
+            nudge.sample(5_000).collect { lan.sendMessage(null, kotlinx.serialization.json.buildJsonObject { put("t", "indexnudge") }) }
+        }
+        scope.launch {
+            lan.messages.collect { m ->
+                if (m.type != "indexctl" && m.type != "indexnudge") return@collect
+                val o = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(m.body) as kotlinx.serialization.json.JsonObject }.getOrNull() ?: return@collect
+                fun str(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                when {
+                    m.type == "indexnudge" -> launch { runCatching { lan.syncNow(m.deviceId) } }
+                    str("paused") != null -> realIndex.takePause(str("paused") == "true", str("at")?.toLongOrNull() ?: clockMs())
+                    str("action") == "refresh" -> launch { runCatching { realIndex.setPaused(false); realIndex.refresh() } }
+                    str("action") == "index" -> {
+                        val id = str("chat")?.toLongOrNull() ?: return@collect
+                        val chat = io.max.paperplay.core.account.ChatInfo(id, str("title").orEmpty(), str("channel") == "true")
+                        launch { runCatching { realIndex.indexChat(chat, false) } }
+                    }
+                }
+            }
+        }
+    }
 
     /** The device this one controls from its player: null is none (this device plays), else a paired device's id. */
     private val _activeOutput = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
@@ -306,10 +357,15 @@ class AppServices(
         )
     }
 
+    /** The saved chat index tables (posts of the account's chats), shared by the index and device sync. */
+    val indexStore: io.max.paperplay.core.account.IndexStore by lazy { io.max.paperplay.core.account.IndexStore(driver) }
+
+    private val realIndex get() = chatIndex as io.max.paperplay.core.account.ChatIndex
+
     /** The saved index of the account's chats. The real one replaces the stand-in. */
     val chatIndex: io.max.paperplay.core.account.ChatIndexApi by lazy {
         io.max.paperplay.core.account.ChatIndex(
-            account, io.max.paperplay.core.account.IndexStore(driver), library,
+            account, indexStore, library,
             { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) }, clock,
         ).also { index ->
             index.onRunFinished = { runCatching { indexCloud.save() } }

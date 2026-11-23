@@ -107,13 +107,29 @@ class ChatIndex(
     /** Called with the new pause state, so a linked device can follow it. */
     var onPausedChanged: ((Boolean) -> Unit)? = null
 
-    override fun setPaused(paused: Boolean) {
+    override fun setPaused(paused: Boolean) = takePause(paused, clock())
+
+    /** The pause state and when it was decided, so two linked devices keep the later decision. */
+    fun pauseState(): Pair<Boolean, Long> = _paused.value to (library.pref("index_paused_at")?.toLongOrNull() ?: 0L)
+
+    /** Sets the pause state decided at [at] (here or on a linked device). */
+    fun takePause(paused: Boolean, at: Long) {
         if (paused) stopRun()
         if (_paused.value == paused) return
         _paused.value = paused
         library.setPref(IndexPrefs.PAUSED, "$paused")
+        library.setPref("index_paused_at", "$at")
         onPausedChanged?.invoke(paused)
     }
+
+    /**
+     * When set and it returns true, the reading is done by a linked device instead ("refresh", or "index" with the chat): this one only
+     * receives the posts. Used so a phone hands the work to the PC while they are linked.
+     */
+    var delegate: (suspend (action: String, chat: ChatInfo?) -> Boolean)? = null
+
+    /** Called after posts or chats arrived from a linked device. */
+    fun syncedIn() = chatsChanged()
 
     private fun chatsChanged() {
         val rows = store.chats()
@@ -128,6 +144,7 @@ class ChatIndex(
     override val progress: StateFlow<IndexProgress?> = _progress
 
     override suspend fun indexChat(chat: ChatInfo, full: Boolean) {
+        if (delegate?.invoke("index", chat) == true) { store.saveChat(chat.id, chat.title, clock()); chatsChanged(); setPaused(false); return }
         runLock.withLock {
             // Starting a read by hand is also a resume.
             setPaused(false)
@@ -149,7 +166,9 @@ class ChatIndex(
     override fun stopRun() { stopGen++ }
 
     override suspend fun refresh() {
-        if (!account.loggedIn.value || _paused.value) return
+        if (_paused.value) return
+        if (delegate?.invoke("refresh", null) == true) return
+        if (!account.loggedIn.value) return
         runLock.withLock {
             val gen = stopGen
             for (c in store.chats()) {

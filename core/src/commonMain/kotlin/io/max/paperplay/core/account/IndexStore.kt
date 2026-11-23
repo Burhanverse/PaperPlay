@@ -68,6 +68,8 @@ class IndexStore(private val driver: SqlDriver) {
             "index_posts",
             "album TEXT NOT NULL DEFAULT ''", "thumb BLOB", "loose_key TEXT NOT NULL DEFAULT ''", "in_library INTEGER NOT NULL DEFAULT 0",
             "better TEXT", "wanted INTEGER NOT NULL DEFAULT 0", "updated_at INTEGER NOT NULL DEFAULT 0",
+            // The linked device a post came from, so it is never sent back there.
+            "src TEXT NOT NULL DEFAULT ''",
         )
         exec("CREATE INDEX IF NOT EXISTS index_posts_unique ON index_posts (unique_id)")
         exec("CREATE INDEX IF NOT EXISTS index_posts_key ON index_posts (loose_key)")
@@ -172,7 +174,7 @@ class IndexStore(private val driver: SqlDriver) {
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_id, message_id) DO UPDATE SET " +
                         "unique_id = excluded.unique_id, title = excluded.title, artist = excluded.artist, duration_sec = excluded.duration_sec, size = excluded.size, " +
                         "mime = excluded.mime, file_name = excluded.file_name, date = excluded.date, album = CASE WHEN excluded.album = '' THEN album ELSE excluded.album END, " +
-                        "thumb = COALESCE(excluded.thumb, thumb), loose_key = excluded.loose_key, updated_at = excluded.updated_at " +
+                        "thumb = COALESCE(excluded.thumb, thumb), loose_key = excluded.loose_key, updated_at = excluded.updated_at, src = '' " +
                         "WHERE unique_id IS NOT excluded.unique_id OR title IS NOT excluded.title OR artist IS NOT excluded.artist OR size IS NOT excluded.size " +
                         "OR (excluded.album <> '' AND album IS NOT excluded.album) OR (thumb IS NULL AND excluded.thumb IS NOT NULL)", 14,
                 ) {
@@ -222,6 +224,43 @@ class IndexStore(private val driver: SqlDriver) {
             lastChat = page.last().chatId
             lastMsg = page.last().messageId
         }
+    }
+
+    /**
+     * Posts changed after the cursor ([at], [chat], [msg]) in change order, for a linked device; posts that came from [exclude] are
+     * left out. Each comes with its change time, which is the next cursor.
+     */
+    fun changedAfter(at: Long, chat: Long, msg: Long, exclude: String, limit: Int): List<Pair<ChatPost, Long>> = query(
+        "SELECT $postColumns, updated_at FROM index_posts WHERE (updated_at > ?1 OR (updated_at = ?1 AND (chat_id > ?2 OR (chat_id = ?2 AND message_id > ?3)))) " +
+            "AND src <> ?4 ORDER BY updated_at, chat_id, message_id LIMIT $limit", 4,
+        { bindLong(0, at); bindLong(1, chat); bindLong(2, msg); bindString(3, exclude) },
+    ) { post(it) to it.getLong(11)!! }
+
+    /** Saves posts from a linked device with their own change times; a post changed here later than there is kept. */
+    fun upsertSynced(posts: List<Pair<ChatPost, Long>>, src: String): Int {
+        if (posts.isEmpty()) return 0
+        var changed = 0
+        db.transaction {
+            for ((p, at) in posts) {
+                exec(
+                    "INSERT INTO index_posts (chat_id, message_id, unique_id, title, artist, duration_sec, size, mime, file_name, date, album, loose_key, updated_at, src) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_id, message_id) DO UPDATE SET " +
+                        "unique_id = excluded.unique_id, title = excluded.title, artist = excluded.artist, duration_sec = excluded.duration_sec, size = excluded.size, " +
+                        "mime = excluded.mime, file_name = excluded.file_name, date = excluded.date, album = CASE WHEN excluded.album = '' THEN album ELSE excluded.album END, " +
+                        "loose_key = excluded.loose_key, updated_at = excluded.updated_at, src = excluded.src " +
+                        "WHERE excluded.updated_at > updated_at AND (unique_id IS NOT excluded.unique_id OR title IS NOT excluded.title OR artist IS NOT excluded.artist " +
+                        "OR size IS NOT excluded.size OR (excluded.album <> '' AND album IS NOT excluded.album))", 14,
+                ) {
+                    bindLong(0, p.chatId); bindLong(1, p.messageId); bindString(2, p.uniqueId); bindString(3, p.title); bindString(4, p.artist)
+                    bindLong(5, p.durationSec.toLong()); bindLong(6, p.size); bindString(7, p.mime); bindString(8, p.fileName); bindLong(9, p.date)
+                    bindString(10, p.album); bindString(11, looseTitleKey(p.title, p.artist).ifEmpty { "-" }); bindLong(12, at); bindString(13, src)
+                }
+                changed += query("SELECT changes()") { it.getLong(0)!!.toInt() }.first()
+            }
+            for (chat in posts.map { it.first.chatId }.toSet()) recount(chat)
+        }
+        if (changed > 0) touch()
+        return changed
     }
 
     /** The cover picture Telegram keeps inside the post (a tiny JPEG), if the file had one. */

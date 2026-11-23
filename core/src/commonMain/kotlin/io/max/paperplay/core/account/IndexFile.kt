@@ -66,27 +66,7 @@ object IndexFile {
         val root = runCatching { Json.parseToJsonElement(text) as? JsonObject }.getOrNull()
             ?: throw IllegalArgumentException("This is not a PaperPlay index file.")
         if (root["posts"] !is JsonArray && root["chats"] !is JsonArray) throw IllegalArgumentException("This is not a PaperPlay index file.")
-        fun JsonObject.l(k: String) = (this[k] as? JsonPrimitive)?.longOrNull
-        fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull
-        fun JsonObject.b(k: String) = (this[k] as? JsonPrimitive)?.let { it.booleanOrNull ?: (it.contentOrNull == "true") } == true
-        val mine = store.chats().associateBy { it.id }
-        var newChats = 0
-        var notJoined = 0
-        for (e in root["chats"] as? JsonArray ?: JsonArray(emptyList())) {
-            val o = e as? JsonObject ?: continue
-            val id = o.l("id") ?: continue
-            val title = o.s("title") ?: continue
-            val had = mine[id]
-            store.saveChat(id, title, now)
-            val link = o.s("link").orEmpty()
-            val username = o.s("username").orEmpty().ifEmpty { link.removePrefix("https://t.me/").takeIf { link.startsWith("https://t.me/") && '/' !in it && '+' !in it }.orEmpty() }
-            val invite = if (link.isNotEmpty() && username.isEmpty()) link else ""
-            val joined = had?.joined ?: own
-            if (had == null) { newChats++; newChatIds?.add(id); if (!joined) notJoined++ }
-            store.setChatInfo(id, username, invite, o["channel"]?.let { o.b("channel") } ?: true, joined, now)
-            if (!joined) store.setJoined(id, false)
-            store.setState(id, maxOf(o.l("newest") ?: 0L, had?.newestMessageId ?: 0L), maxOf(o.l("refreshed") ?: 0L, had?.lastRefreshAt ?: 0L), o.b("complete") || had?.complete == true)
-        }
+        val (newChats, notJoined) = mergeChats(root["chats"] as? JsonArray ?: JsonArray(emptyList()), store, now, own, newChatIds)
         var posts = 0
         val batch = ArrayList<ChatPost>(2000)
         fun flush() { if (batch.isNotEmpty()) { posts += store.upsertPosts(batch, now); batch.clear() } }
@@ -108,5 +88,34 @@ object IndexFile {
             }
         }
         return IndexImport(newChats, posts, notJoined)
+    }
+
+    /**
+     * Merges chat entries (the "chats" of a file) into [store]: new chats are added, known ones keep the further read, the finished
+     * state and any link either side knows. Returns (new chats, new chats not joined).
+     */
+    fun mergeChats(chats: JsonArray, store: IndexStore, now: Long, own: Boolean, newChatIds: MutableList<Long>? = null): Pair<Int, Int> {
+        fun JsonObject.l(k: String) = (this[k] as? JsonPrimitive)?.longOrNull
+        fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull
+        fun JsonObject.b(k: String) = (this[k] as? JsonPrimitive)?.let { it.booleanOrNull ?: (it.contentOrNull == "true") } == true
+        val mine = store.chats().associateBy { it.id }
+        var newChats = 0
+        var notJoined = 0
+        for (e in chats) {
+            val o = e as? JsonObject ?: continue
+            val id = o.l("id") ?: continue
+            val title = o.s("title") ?: continue
+            val had = mine[id]
+            store.saveChat(id, title, now)
+            val link = o.s("link").orEmpty()
+            val username = o.s("username").orEmpty().ifEmpty { link.removePrefix("https://t.me/").takeIf { link.startsWith("https://t.me/") && '/' !in it && '+' !in it }.orEmpty() }
+            val invite = if (link.isNotEmpty() && username.isEmpty()) link else ""
+            val joined = had?.joined ?: own
+            if (had == null) { newChats++; newChatIds?.add(id); if (!joined) notJoined++ }
+            store.setChatInfo(id, username, invite, o["channel"]?.let { o.b("channel") } ?: true, joined, now)
+            if (!joined) store.setJoined(id, false)
+            store.setState(id, maxOf(o.l("newest") ?: 0L, had?.newestMessageId ?: 0L), maxOf(o.l("refreshed") ?: 0L, had?.lastRefreshAt ?: 0L), o.b("complete") || had?.complete == true)
+        }
+        return newChats to notJoined
     }
 }
