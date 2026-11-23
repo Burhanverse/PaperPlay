@@ -39,7 +39,7 @@ object IndexPrefs {
     const val PAUSED = "index_paused"
     fun auto(library: LibraryRepository) = library.pref(AUTO) == "true"
     /** On unless turned off: songs a Spotify playlist waits for are fetched from the index as soon as they are found. */
-    fun autoCopy(library: LibraryRepository) = library.pref(AUTO_COPY) != "false"
+    fun autoCopy(library: LibraryRepository) = library.pref(AUTO_COPY) == "true"
 
     /** Per channel: "true" lets automatic copying take songs from this added channel into the main chat. Default off. */
     fun channelKey(chatId: Long) = "channel_copy:$chatId"
