@@ -26,6 +26,10 @@ data class ChatPost(
     val mime: String,
     val fileName: String,
     val date: Long,
+    /** The album from the file's own tags, as Telegram read it; empty when it has none. */
+    val album: String = "",
+    /** The tiny cover picture Telegram keeps in the post itself (JPEG), when the file has a cover. Costs no download. */
+    val thumb: ByteArray? = null,
 )
 
 /** Where the login is. [Qr] carries the tg://login link to show as a code. */
@@ -84,6 +88,18 @@ interface AccountApi {
     /** Like [songsIn], but a full read starts where [checkpoint] says and keeps it current, so a stopped read can go on instead of starting over. */
     fun songsIn(chatId: Long, afterMessageId: Long, checkpoint: ReadCheckpoint?): Flow<List<ChatPost>> = songsIn(chatId, afterMessageId)
 
+    /**
+     * How someone else can join [chatId]: its public name (no "@") and an invite link the account may see (empty when none). Null when
+     * Telegram could not be asked. Costs one request per chat.
+     */
+    suspend fun chatLinks(chatId: Long): ChatLinks? = null
+
+    /** Joins a chat by a t.me link (public name or invite); returns its id, or null when it could not be joined. */
+    suspend fun joinChat(link: String): Long? = null
+
+    /** Whether the account can see [chatId] (is a member, or it is public and can be opened). */
+    suspend fun canSee(chatId: Long): Boolean = true
+
     /** Copies one post into [toChat] without a "forwarded" label. */
     suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long)
 
@@ -117,6 +133,12 @@ data class IndexProgress(val chatId: Long, val chatTitle: String, val found: Int
 /** The saved index of the account's chats. Persisted, so it survives restarts and logouts. */
 /** What [ChatIndexApi.addPostsNotInLibrary] found: posts the account saw in the main chat, how many it added, and how many repeat posts of a file the library keeps as copies (the Duplicates page lists them). */
 data class MainChatAdd(val seen: Int, val added: Int, val repeats: Int = 0)
+
+/** How a chat can be found: public [username] (no "@"), an [inviteLink], and whether it is a channel. */
+data class ChatLinks(val username: String, val inviteLink: String, val isChannel: Boolean)
+
+/** What an index file import brought: chats and posts new to this device, and chats still to be joined. */
+data class IndexImport(val chats: Int, val posts: Int, val notJoined: Int)
 
 /** Where a read of a chat's history has got to: the search [filter] (0 audio, 1 documents) and the page cursor [from] inside it. */
 class ReadCheckpoint(var filter: Int = 0, var from: Long = 0L)
@@ -193,6 +215,45 @@ interface ChatIndexApi {
 
     /** Indexed posts of the main chat that the library lacks: what the bot cannot read. */
     suspend fun missingFromMainChat(): List<ChatPost> = emptyList()
+
+    /** Indexed chats with their counts and links, kept current. */
+    val chats: StateFlow<List<IndexedChat>> get() = kotlinx.coroutines.flow.MutableStateFlow(emptyList())
+
+    /** Counts every change of the index, for pages that re-read. */
+    val changes: StateFlow<Long> get() = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** True while indexing is paused by the owner (on this device or a linked one); nothing is read until resumed. */
+    val paused: StateFlow<Boolean> get() = kotlinx.coroutines.flow.MutableStateFlow(false)
+    fun setPaused(paused: Boolean) {}
+
+    /** One page of a chat, newest first; [query] matches title, artist, album or file name. */
+    fun page(chatId: Long, filter: IndexFilter, query: String, offset: Int, limit: Int): List<IndexedSong> = emptyList()
+
+    /** Posts per [IndexFilter], for the chips. */
+    fun counts(chatId: Long, query: String): List<Int> = List(IndexFilter.entries.size) { 0 }
+
+    /** Every post a filter and search select. */
+    fun select(chatId: Long, filter: IndexFilter, query: String): List<ChatPost> = emptyList()
+
+    fun postsByIds(chatId: Long, ids: Collection<Long>): List<ChatPost> = emptyList()
+
+    /** The cover Telegram keeps inside the post, when the file has one. */
+    fun thumb(chatId: Long, messageId: Long): ByteArray? = null
+
+    /** Posts of every indexed chat matching [query], for search. */
+    fun searchAll(query: String, limit: Int): List<ChatPost> = emptyList()
+
+    /** Works the library flags out again when the library or the index changed since the last time. Cheap when nothing did. */
+    suspend fun updateFlags() {}
+
+    /** Writes an index file (chats with their links, and posts) of [chatIds], or of every chat when null. */
+    suspend fun exportTo(out: Appendable, chatIds: Set<Long>? = null) { out.append(export()) }
+
+    /** Merges an index file in. Never deletes; chats the account is not in are marked to join. */
+    suspend fun importFrom(text: String): IndexImport { import(text); return IndexImport(0, 0, 0) }
+
+    /** Joins an imported chat through its link and marks it joined; false when it could not be joined. */
+    suspend fun join(chatId: Long): Boolean = false
 
     /** The index as text, for saving to Telegram; and the way back. */
     suspend fun export(): String

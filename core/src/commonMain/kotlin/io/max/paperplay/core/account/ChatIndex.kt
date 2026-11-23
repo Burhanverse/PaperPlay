@@ -36,8 +36,10 @@ import kotlin.math.abs
 object IndexPrefs {
     const val AUTO = "index_auto"
     const val AUTO_COPY = "index_auto_copy"
+    const val PAUSED = "index_paused"
     fun auto(library: LibraryRepository) = library.pref(AUTO) == "true"
-    fun autoCopy(library: LibraryRepository) = library.pref(AUTO_COPY) == "true"
+    /** On unless turned off: songs a Spotify playlist waits for are fetched from the index as soon as they are found. */
+    fun autoCopy(library: LibraryRepository) = library.pref(AUTO_COPY) != "false"
 
     /** Per channel: "true" lets automatic copying take songs from this added channel into the main chat. Default off. */
     fun channelKey(chatId: Long) = "channel_copy:$chatId"
@@ -52,7 +54,7 @@ object IndexPrefs {
 
 /** A [Song] row built from a post, so the shared matching rules can be applied to it. */
 fun ChatPost.asSong(): Song = Song(
-    chat_id = chatId, message_id = messageId, unique_id = uniqueId, remote_id = "", title = title, artist = artist, album = "",
+    chat_id = chatId, message_id = messageId, unique_id = uniqueId, remote_id = "", title = title, artist = artist, album = album,
     duration_sec = durationSec.toLong(), size = size, mime = mime, file_name = fileName, date = date,
     cover_path = null, release_id = null, cover_url = null, genre = null, year = null, metadata_source = null,
     favorite = false, cover_hi_res = false, user_edited = false, enrich_state = 0, lyrics = null,
@@ -93,8 +95,31 @@ class ChatIndex(
     }
 
     private val _chats = MutableStateFlow(store.chats().associate { it.id to it.title })
+    private val _chatRows = MutableStateFlow(store.chats())
     private val _progress = MutableStateFlow<IndexProgress?>(null)
+    private val _paused = MutableStateFlow(library.pref(IndexPrefs.PAUSED) == "true")
     private val runLock = Mutex()
+
+    override val chats: StateFlow<List<IndexedChat>> = _chatRows
+    override val changes: StateFlow<Long> = store.changes
+    override val paused: StateFlow<Boolean> = _paused
+
+    /** Called with the new pause state, so a linked device can follow it. */
+    var onPausedChanged: ((Boolean) -> Unit)? = null
+
+    override fun setPaused(paused: Boolean) {
+        if (paused) stopRun()
+        if (_paused.value == paused) return
+        _paused.value = paused
+        library.setPref(IndexPrefs.PAUSED, "$paused")
+        onPausedChanged?.invoke(paused)
+    }
+
+    private fun chatsChanged() {
+        val rows = store.chats()
+        _chatRows.value = rows
+        _chats.value = rows.associate { it.id to it.title }
+    }
 
     /** Called after a read finished, for example to save the index to Telegram. */
     var onRunFinished: (suspend () -> Unit)? = null
@@ -104,12 +129,16 @@ class ChatIndex(
 
     override suspend fun indexChat(chat: ChatInfo, full: Boolean) {
         runLock.withLock {
+            // Starting a read by hand is also a resume.
+            setPaused(false)
             val had = store.chat(chat.id)
-            store.saveChat(chat.id, chat.title)
-            _chats.value = store.chats().associate { it.id to it.title }
+            store.saveChat(chat.id, chat.title, clock())
+            saveLinks(chat.id, chat.isChannel)
+            chatsChanged()
             // Already indexed: only what is new, or the rest of a stopped read; never the whole chat again unless asked.
             if (full) read(chat.id, chat.title, after = 0, complete = true) else readFromCheckpoint(had ?: IndexedChat(chat.id, chat.title, 0, 0, false))
             mainChat() // finds and saves the main chat when this was it
+            chatsChanged()
         }
         onRunFinished?.invoke()
     }
@@ -120,15 +149,35 @@ class ChatIndex(
     override fun stopRun() { stopGen++ }
 
     override suspend fun refresh() {
-        if (!account.loggedIn.value) return
+        if (!account.loggedIn.value || _paused.value) return
         runLock.withLock {
             val gen = stopGen
             for (c in store.chats()) {
-                if (stopGen != gen) break
-                readFromCheckpoint(c)
+                if (stopGen != gen || _paused.value) break
+                // Chats from someone else's file are read only after joining them.
+                if (!c.joined) continue
+                // One chat that fails (left, banned, gone) does not stop the others.
+                try {
+                    if (c.username.isEmpty() && c.inviteLink.isEmpty()) saveLinks(c.id, c.isChannel)
+                    readFromCheckpoint(c)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastError = "${c.title}: ${e.message}"
+                }
             }
+            chatsChanged()
         }
         onRunFinished?.invoke()
+    }
+
+    /** The last error of a refresh, for the log; one failing chat no longer stops the rest. */
+    @kotlin.concurrent.Volatile var lastError: String? = null
+
+    /** Saves how others can join [chatId]; failures leave it unknown. */
+    private suspend fun saveLinks(chatId: Long, isChannel: Boolean) {
+        val l = runCatching { account.chatLinks(chatId) }.getOrNull()
+        store.setChatInfo(chatId, l?.username.orEmpty(), l?.inviteLink.orEmpty(), l?.isChannel ?: isChannel, joined = true, at = clock())
     }
 
     private fun ckptKey(chatId: Long) = "index_ckpt:$chatId"
@@ -154,11 +203,14 @@ class ChatIndex(
     /** Message ids the last full read of each chat saw in this session. */
     @kotlin.concurrent.Volatile private var fullRead: Map<Long, Set<Long>> = emptyMap()
 
+    /** Called after a batch added or changed posts, for example to send them to a linked device. */
+    var onPostsSaved: (() -> Unit)? = null
+
     private suspend fun read(chatId: Long, title: String, after: Long, complete: Boolean, resume: ReadCheckpoint? = null) {
         var found = 0
         val ids = HashSet<Long>()
         var newest = 0L
-        _progress.value = IndexProgress(chatId, title, 0, true)
+        _progress.value = IndexProgress(chatId, title, store.count(chatId), true)
         // A new full read replaces the old snapshot; if it is stopped or fails, no snapshot remains and nothing is reconciled.
         if (after == 0L && resume == null) fullRead = fullRead - chatId
         // A full read keeps its page cursor, so stopping it (or closing the app) loses no work.
@@ -169,15 +221,17 @@ class ChatIndex(
                 // The shown count is the real count, updated as each batch lands; an estimate between batches ran ahead and then dropped back.
                 run {
                     account.songsIn(chatId, after, cp).collect { batch ->
+                        // Checked on every page, empty ones too, so a pause takes effect within one page.
                         if (stopGen != gen) throw StopRun()
                         if (batch.isEmpty()) return@collect
-                        store.upsertPosts(batch)
+                        if (store.upsertPosts(batch, clock()) > 0) onPostsSaved?.invoke()
                         batch.forEach { ids += it.messageId }
                         found += batch.size
                         newest = maxOf(newest, batch.maxOf { it.messageId })
                         // Newest is saved at once but the chat only counts as complete when the whole read ends.
                         store.setState(chatId, newest, clock(), complete = after > 0 && complete)
-                        _progress.value = IndexProgress(chatId, title, found, true)
+                        // The count shown is everything saved for the chat, so a resumed read goes on from 78,700, not from 0.
+                        _progress.value = IndexProgress(chatId, title, store.count(chatId), true)
                         cp?.let { library.setPref(ckptKey(chatId), "${it.filter}:${it.from}") }
                     }
                 }
@@ -218,26 +272,56 @@ class ChatIndex(
 
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     override fun songs(chatId: Long): Flow<List<IndexedSong>> =
-        // While a chat is being read the index changes every batch; the list is rebuilt at most about twice a second, not on each one.
+        // Kept for small callers and tests; the chat page reads pages instead.
         combine(store.changes, library.changes) { _, _ -> }.debounce(400).map {
-            val main: Main? = libraryMain()
-            val mainId = mainChat()
-            val copied = store.copiedIds()
-            // Tracks that imported Spotify playlists still wait for, by loose title and artist.
-            val lists = library.repo.db.playlistsQueries
-            val wantedKeys = lists.livePlaylists().executeAsList()
-                .flatMap { pl -> lists.missingTracks(pl.id).executeAsList() }
-                .map { looseTitleKey(it.title, it.artist) }.toSet()
-            store.posts(chatId).map { p ->
-                val have = main?.has(p) == true
-                val mine = if (have && p.uniqueId !in (main?.ids ?: emptySet())) main?.match(p) else null
-                val own = p.chatId == mainId
-                // A post in the main chat is already in your channel; comparing it with a library copy is not a "better" file to fetch.
-                val better = !own && mine != null && io.max.paperplay.core.dupes.DefaultSongRules.compareQuality(p.asSong(), mine) < 0
-                IndexedSong(p, inMainChat = have, copied = p.uniqueId in copied, better = better, betterWhy = if (better && mine != null) betterReason(p.asSong(), mine) else null,
-                    wanted = looseTitleKey(p.title, p.artist) in wantedKeys, ownChat = own)
-            }
+            updateFlags()
+            store.page(chatId, IndexFilter.All, "", 0, Int.MAX_VALUE, mainChat())
         }.flowOn(Dispatchers.Default)
+
+    override fun page(chatId: Long, filter: IndexFilter, query: String, offset: Int, limit: Int): List<IndexedSong> =
+        store.page(chatId, filter, query, offset, limit, configuredMain())
+
+    override fun counts(chatId: Long, query: String): List<Int> = store.counts(chatId, query)
+
+    override fun select(chatId: Long, filter: IndexFilter, query: String): List<ChatPost> = store.select(chatId, filter, query)
+
+    override fun postsByIds(chatId: Long, ids: Collection<Long>): List<ChatPost> = store.postsByIds(chatId, ids)
+
+    override fun thumb(chatId: Long, messageId: Long): ByteArray? = store.thumb(chatId, messageId)
+
+    override fun searchAll(query: String, limit: Int): List<ChatPost> = store.searchAll(query, limit)
+
+    private val flagsLock = Mutex()
+    private var flagsInput: Any? = null
+    private var flagsStamp = -1L
+
+    /**
+     * Works the library flags of the posts out again, but only when what they depend on changed: the songs the library has (not their
+     * play counts), the tracks Spotify playlists wait for, or the posts themselves.
+     */
+    override suspend fun updateFlags() = flagsLock.withLock {
+        store.prepare()
+        val all = library.repo.db.songsQueries.allSongs().executeAsList()
+        val real = all.filter { it.remote_id != io.max.paperplay.core.app.ACCOUNT_REMOTE }
+        val ids = real.mapTo(HashSet()) { it.unique_id } + library.repo.db.filingQueries.allPostCopies().executeAsList().map { it.unique_id }
+        val byKey = real.groupBy { looseTitleKey(it.title, it.artist) }.filterKeys { it.isNotEmpty() }
+        val lists = library.repo.db.playlistsQueries
+        val wanted = lists.livePlaylists().executeAsList()
+            .flatMap { pl -> lists.missingTracks(pl.id).executeAsList() }
+            .map { looseTitleKey(it.title, it.artist) }.filter { it.isNotEmpty() }.toSet()
+        val mainId = mainChat()
+        val input = listOf(ids, byKey.mapValues { (_, v) -> v.map { Triple(it.unique_id, it.size, it.duration_sec) } }, wanted, mainId)
+        if (input == flagsInput && store.changes.value == flagsStamp) return@withLock
+        store.refreshFlags(ids, byKey.keys, wanted) { p ->
+            val mine = byKey[looseTitleKey(p.title, p.artist)].orEmpty().firstOrNull { matchKind(it, p.title, p.artist, p.durationSec) == MatchKind.Sure }
+                ?: return@refreshFlags false to null
+            // A post in the main chat is already in your channel; comparing it with a library copy is not a "better" file to fetch.
+            val better = p.chatId != mainId && io.max.paperplay.core.dupes.DefaultSongRules.compareQuality(p.asSong(), mine) < 0
+            true to (if (better) betterReason(p.asSong(), mine) else null)
+        }
+        flagsInput = input
+        flagsStamp = store.changes.value
+    }
 
     /** What makes [post] better than [mine], following the order [DefaultSongRules.compareQuality] uses. */
     private fun betterReason(post: Song, mine: Song): String {
@@ -252,26 +336,12 @@ class ChatIndex(
         }
     }
 
-    private var keyed: Triple<Long, Long, Map<String, List<ChatPost>>>? = null
-
-    /**
-     * Posts by loose title and artist. While a chat is being read the index changes every batch, so a map is reused for 15 seconds
-     * even when it has changed, and only one caller builds it (the missing-songs sheet asks once per row).
-     */
-    @Synchronized
-    private fun byKey(): Map<String, List<ChatPost>> {
-        val stamp = store.changes.value
-        val now = clock()
-        keyed?.takeIf { it.first == stamp || now - it.second < 15_000 }?.let { return it.third }
-        return store.allPosts().groupBy { looseTitleKey(it.title, it.artist) }.also { keyed = Triple(stamp, now, it) }
-    }
-
     override suspend fun matchesFor(title: String, artist: String, durationSec: Int): List<ChatPost> {
         val key = looseTitleKey(title, artist)
         if (key.isEmpty()) return emptyList()
         val main = main()
         val copied = store.copiedIds()
-        return byKey()[key].orEmpty()
+        return store.postsWithKey(key)
             .mapNotNull { p -> matchKind(p.asSong(), title, artist, durationSec)?.let { p to it } }
             .filter { (p, _) -> p.uniqueId !in copied && main?.has(p) != true }
             .sortedWith(compareBy({ it.second != MatchKind.Sure }, { abs(it.first.durationSec - durationSec) }, { -it.first.size }))
@@ -382,64 +452,43 @@ class ChatIndex(
     }
 
     override fun details(chatId: Long): ChatIndexDetails? =
-        store.chat(chatId)?.let { ChatIndexDetails(store.count(chatId), it.lastRefreshAt, it.complete) }
+        _chatRows.value.firstOrNull { it.id == chatId }?.let { ChatIndexDetails(it.postCount, it.lastRefreshAt, it.complete) }
 
     override fun forget(chatId: Long) {
         store.deleteChat(chatId)
-        _chats.value = store.chats().associate { it.id to it.title }
+        library.setPref(ckptKey(chatId), "")
+        chatsChanged()
     }
 
-    override suspend fun export(): String = buildJsonObject {
-        put("version", 1)
-        put("chats", buildJsonArray {
-            for (c in store.chats()) add(buildJsonObject {
-                put("id", c.id); put("title", c.title); put("newest", c.newestMessageId); put("refreshed", c.lastRefreshAt); put("complete", c.complete)
-            })
-        })
-        put("posts", buildJsonArray {
-            for (p in store.allPosts()) add(buildJsonArray {
-                add(JsonPrimitive(p.chatId)); add(JsonPrimitive(p.messageId)); add(JsonPrimitive(p.uniqueId)); add(JsonPrimitive(p.title))
-                add(JsonPrimitive(p.artist)); add(JsonPrimitive(p.durationSec)); add(JsonPrimitive(p.size)); add(JsonPrimitive(p.mime))
-                add(JsonPrimitive(p.fileName)); add(JsonPrimitive(p.date))
-            })
-        })
-        put("copied", buildJsonArray {
-            for (c in store.copiedRows()) add(buildJsonArray {
-                add(JsonPrimitive(c.uniqueId)); add(JsonPrimitive(c.chatId)); add(JsonPrimitive(c.messageId)); add(JsonPrimitive(c.at))
-            })
-        })
-    }.toString()
+    override suspend fun join(chatId: Long): Boolean {
+        val c = store.chat(chatId) ?: return false
+        val link = c.publicLink ?: return false
+        val id = runCatching { account.joinChat(link) }.getOrNull() ?: return false
+        if (id != chatId) return false
+        store.setJoined(chatId, true)
+        chatsChanged()
+        return true
+    }
 
-    /** Merges an exported index in. Saved posts stay; the newer position and a finished read win. Safe to repeat. */
+    override suspend fun export(): String = StringBuilder().also { IndexFile.write(store, it, null, forSharing = false, clock()) }.toString()
+
+    override suspend fun exportTo(out: Appendable, chatIds: Set<Long>?) = IndexFile.write(store, out, chatIds, forSharing = true, clock())
+
+    /** Merges an exported index in (the account's own cloud copy). Saved posts stay; the newer position and a finished read win. Safe to repeat. */
     override suspend fun import(json: String) {
-        val root = runCatching { Json.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return
-        val mine = store.chats().associateBy { it.id }
-        for (c in root["chats"] as? JsonArray ?: JsonArray(emptyList())) {
-            val o = c as? JsonObject ?: continue
-            val id = (o["id"] as? JsonPrimitive)?.longOrNull ?: continue
-            val title = (o["title"] as? JsonPrimitive)?.contentOrNull ?: continue
-            store.saveChat(id, title)
-            val had = mine[id]
-            val newest = maxOf((o["newest"] as? JsonPrimitive)?.longOrNull ?: 0L, had?.newestMessageId ?: 0L)
-            val complete = (o["complete"] as? JsonPrimitive)?.contentOrNull == "true" || had?.complete == true
-            store.setState(id, newest, maxOf((o["refreshed"] as? JsonPrimitive)?.longOrNull ?: 0L, had?.lastRefreshAt ?: 0L), complete)
-        }
-        val posts = (root["posts"] as? JsonArray).orEmpty().mapNotNull { e ->
-            val a = e as? JsonArray ?: return@mapNotNull null
-            runCatching {
-                fun s(i: Int) = (a[i] as JsonPrimitive).content
-                fun n(i: Int) = s(i).toLong()
-                ChatPost(n(0), n(1), s(2), s(3), s(4), n(5).toInt(), n(6), s(7), s(8), n(9))
-            }.getOrNull()
-        }
-        if (posts.isNotEmpty()) store.upsertPosts(posts)
-        for (e in (root["copied"] as? JsonArray).orEmpty()) {
-            val a = e as? JsonArray ?: continue
-            runCatching {
-                store.markCopied(ChatPost((a[1] as JsonPrimitive).content.toLong(), (a[2] as JsonPrimitive).content.toLong(), (a[0] as JsonPrimitive).content, "", "", 0, 0, "", "", 0), (a[3] as JsonPrimitive).content.toLong())
-            }
-        }
-        _chats.value = store.chats().associate { it.id to it.title }
+        IndexFile.read(json, store, clock(), own = true)
+        chatsChanged()
+    }
+
+    /** Merges someone else's (or another device's) file: copied marks stay theirs, and chats this account cannot see are marked to join. */
+    override suspend fun importFrom(text: String): IndexImport {
+        val fresh = ArrayList<Long>()
+        val r = IndexFile.read(text, store, clock(), own = false, fresh)
+        // A chat the account is already in needs no joining.
+        var notJoined = r.notJoined
+        for (id in fresh) if (runCatching { account.canSee(id) }.getOrDefault(false)) { store.setJoined(id, true); notJoined-- }
+        chatsChanged()
+        return r.copy(notJoined = notJoined)
     }
 }
 
@@ -450,8 +499,16 @@ class ChatIndex(
 class IndexCloud(private val account: AccountApi, private val index: ChatIndexApi, private val library: LibraryRepository) {
     private val tag = "paperplay-index-v1"
 
-    suspend fun save() {
+    /**
+     * Saves the index to Saved Messages when it changed since the last save, at most once a day ([force] skips the wait, not the change
+     * check). A big index is tens of MB, so it is not sent again after every read.
+     */
+    suspend fun save(force: Boolean = false) {
         if (!account.loggedIn.value) return
+        val sig = index.chats.value.joinToString(";") { "${it.id}:${it.postCount}:${it.newestMessageId}:${it.complete}" }
+        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        val last = library.pref("index_cloud_at")?.toLongOrNull() ?: 0L
+        if (sig == library.pref("index_cloud_sig") || (!force && now - last < 24 * 3600_000L)) return
         val body = buildJsonObject {
             put("index", Json.parseToJsonElement(index.export()))
             put("prefs", buildJsonObject {
@@ -462,6 +519,8 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
             put("user", userData())
         }.toString()
         account.saveToCloud(tag, "paperplay-index.json", body.encodeToByteArray())
+        library.setPref("index_cloud_at", "$now")
+        library.setPref("index_cloud_sig", sig)
     }
 
     /** Favorites, listening counts, edited tags, pins and playlists, keyed by unique_id. */

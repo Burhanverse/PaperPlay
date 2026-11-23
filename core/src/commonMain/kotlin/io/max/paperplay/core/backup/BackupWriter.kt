@@ -16,6 +16,9 @@ class BackupSummary(val songs: Int, val covers: Int, val credentials: Boolean, v
  * Writes the zip the Flutter app (Teleplayer) writes and reads: `library.json` (Drift `toJson` rows, camelCase keys),
  * `credentials.enc`, `profile/<photo>`, `usersession.enc` and `covers/<name>`. The music itself is not in it.
  */
+/** The zip entry with the chat index ([io.max.paperplay.core.account.IndexFile]). */
+internal const val INDEX_ENTRY = "index.json"
+
 object BackupWriter {
     private const val VERSION = 1
     private val snake = Regex("_([a-z])")
@@ -37,6 +40,8 @@ object BackupWriter {
         sealedCredentials: String? = null,
         sealedSessionPath: String? = null,
         progress: (String, Double?) -> Unit = { _, _ -> },
+        /** Where the chat index is written before it goes into the zip; it can be tens of MB, so it is never held in memory whole. */
+        indexTempPath: String? = null,
     ): BackupSummary {
         progress("Reading your library", 0.02)
         val covers = linkedSetOf<String>() // cover paths
@@ -66,6 +71,9 @@ object BackupWriter {
         sealedCredentials?.let { sink.add("credentials.enc", it.encodeToByteArray()) }
         prefMap["profile_photo"]?.takeIf { it.isNotEmpty() }?.let { sink.addFile("profile/${baseName(it)}", it) }
         sealedSessionPath?.let { sink.addFile("usersession.enc", it) }
+        // The chat index (songs found in other chats): it took days to read, so every backup carries it.
+        progress("Adding the chat index", 0.09)
+        writeIndex(driver, sink, indexTempPath)
 
         val added = mutableSetOf<String>()
         var done = 0
@@ -77,6 +85,30 @@ object BackupWriter {
         }
         progress("Done", 1.0)
         return BackupSummary(songs.size, added.size, sealedCredentials != null, sealedSessionPath != null)
+    }
+
+    private fun writeIndex(driver: SqlDriver, sink: BackupSink, tempPath: String?) {
+        val store = io.max.paperplay.core.account.IndexStore(driver)
+        if (tempPath == null) {
+            val text = StringBuilder().also { io.max.paperplay.core.account.IndexFile.write(store, it, null, forSharing = false, now = 0) }
+            sink.add(INDEX_ENTRY, text.toString().encodeToByteArray())
+            return
+        }
+        Fs.deleteRecursively(tempPath)
+        val buf = StringBuilder()
+        val out = object : Appendable {
+            fun flushIfBig() { if (buf.length > 1 shl 20) { Fs.append(tempPath, buf.toString()); buf.setLength(0) } }
+            override fun append(c: CharSequence?): Appendable { buf.append(c); flushIfBig(); return this }
+            override fun append(c: CharSequence?, start: Int, end: Int): Appendable { buf.append(c, start, end); flushIfBig(); return this }
+            override fun append(c: Char): Appendable { buf.append(c); return this }
+        }
+        try {
+            io.max.paperplay.core.account.IndexFile.write(store, out, null, forSharing = false, now = 0)
+            Fs.append(tempPath, buf.toString())
+            sink.addFile(INDEX_ENTRY, tempPath)
+        } finally {
+            Fs.deleteRecursively(tempPath)
+        }
     }
 
     private fun baseName(path: String) = path.substringAfterLast('/').substringAfterLast('\\')

@@ -311,7 +311,17 @@ class AppServices(
         io.max.paperplay.core.account.ChatIndex(
             account, io.max.paperplay.core.account.IndexStore(driver), library,
             { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) }, clock,
-        ).also { it.onRunFinished = { runCatching { indexCloud.save() } } }
+        ).also { index ->
+            index.onRunFinished = { runCatching { indexCloud.save() } }
+            // Which indexed songs the library already has, is better than, or a playlist waits for: worked out in the background a few
+            // seconds after the library or the index changed, never while a list is drawn.
+            @OptIn(kotlinx.coroutines.FlowPreview::class)
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                kotlinx.coroutines.flow.combine(index.changes, library.changes) { _, _ -> }
+                    .debounce(3_000)
+                    .collect { runCatching { index.updateFlags() } }
+            }
+        }
     }
 
     /** Music folders on this device, with optional sending of new songs to Telegram. */
@@ -886,7 +896,7 @@ class AppServices(
     /** Logs the account out, saving its chat index to the cloud first. Nothing happens when no account is logged in. */
     suspend fun logOutAccount() {
         if (!account.loggedIn.value) return
-        runCatching { indexCloud.save() }
+        runCatching { indexCloud.save(force = true) }
         account.logOut()
     }
 
