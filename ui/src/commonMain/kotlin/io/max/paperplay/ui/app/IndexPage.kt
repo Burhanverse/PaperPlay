@@ -130,6 +130,12 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
                         Text(if (unfinished || pausedIndex) "Resume indexing" else "Refresh index now")
                     }
                     if (pausedIndex && !indexing) Text("Indexing is paused. Nothing is read until you resume.", color = muted)
+                    // The index as a file: to keep, to move, or to give someone so they can skip reading the same chats.
+                    val pickFile = io.max.paperplay.ui.LocalAppEnv.current?.restore?.pickBackup
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton({ scope.launch { message = exportIndex(backend, null, "all") } }, enabled = indexed.isNotEmpty()) { Text("Export index") }
+                        if (pickFile != null) OutlinedButton({ pickFile { src -> scope.launch { message = importIndex(backend, src) } } }) { Text("Import index") }
+                    }
                     IndexProgressText(progressState)
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     // Songs added to the library with no copy in Telegram ("Bot can't reach"): copied into the main chat, then the bot owns them.
@@ -187,6 +193,33 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
                 OutlinedButton({ backend.indexChat(c) { message = it } }, enabled = !indexing) { Text("Index") }
             }
         }
+    }
+}
+
+/** Writes the index of [chatIds] (all when null) to a zip and asks where to save it. Returns what happened, for a status line. */
+internal suspend fun exportIndex(backend: CoreBackend, chatIds: Set<Long>?, label: String): String {
+    val dir = backend.services.platform.dataDir.trimEnd('/', '\\')
+    val zip = "$dir/index-export.zip"
+    val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching { io.max.paperplay.core.app.IndexArchive.export(backend.chatIndex, zip, "$dir/index-export.tmp", chatIds) }
+    }
+    ok.exceptionOrNull()?.let { return "Could not export: ${it.message}" }
+    val m = io.max.paperplay.ui.nowMoment()
+    fun two(n: Int) = n.toString().padStart(2, '0')
+    val name = "paperplay-index-$label-${m.year}-${two(m.month)}-${two(m.day)}.zip"
+    return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        saveFromFile(name, zip) { if (cont.isActive) cont.resumeWith(Result.success(it)) }
+    }
+}
+
+/** Merges the index in an index zip or an app backup. Returns what happened, for a status line. */
+internal suspend fun importIndex(backend: CoreBackend, source: io.max.paperplay.core.backup.BackupSource): String {
+    val tmp = backend.services.platform.dataDir.trimEnd('/', '\\') + "/index-import.tmp"
+    return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching { io.max.paperplay.core.app.IndexArchive.import(backend.chatIndex, source, tmp) }.fold(
+            { r -> "Imported ${r.posts} songs" + (if (r.chats > 0) " and ${r.chats} new chats" else "") + if (r.notJoined > 0) ". Join ${r.notJoined} of them to copy from them." else "." },
+            { "Could not import: ${it.message}" },
+        )
     }
 }
 
@@ -409,6 +442,7 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                         val first = shown.firstOrNull { !it.inMainChat && !it.copied } ?: return@OutlinedButton
                         scope.launch { status = "Asking the bot about \"${first.post.title}\"..."; status = backend.services.botCheck(first.post.chatId, first.post.messageId) }
                     }, enabled = counts[1] > 0) { Text("Check why the first missing song is missing") }
+                    OutlinedButton({ scope.launch { status = exportIndex(backend, setOf(chatId), "chat") } }) { Text("Export this chat's index") }
                     OutlinedButton({ forgetting = true }) { Text("Forget this chat") }
                 }
             }

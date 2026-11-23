@@ -94,17 +94,10 @@ object BackupWriter {
             sink.add(INDEX_ENTRY, text.toString().encodeToByteArray())
             return
         }
-        Fs.deleteRecursively(tempPath)
-        val buf = StringBuilder()
-        val out = object : Appendable {
-            fun flushIfBig() { if (buf.length > 1 shl 20) { Fs.append(tempPath, buf.toString()); buf.setLength(0) } }
-            override fun append(c: CharSequence?): Appendable { buf.append(c); flushIfBig(); return this }
-            override fun append(c: CharSequence?, start: Int, end: Int): Appendable { buf.append(c, start, end); flushIfBig(); return this }
-            override fun append(c: Char): Appendable { buf.append(c); return this }
-        }
+        val out = FileAppender(tempPath)
         try {
             io.max.paperplay.core.account.IndexFile.write(store, out, null, forSharing = false, now = 0)
-            Fs.append(tempPath, buf.toString())
+            out.close()
             sink.addFile(INDEX_ENTRY, tempPath)
         } finally {
             Fs.deleteRecursively(tempPath)

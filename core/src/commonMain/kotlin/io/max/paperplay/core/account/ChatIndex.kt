@@ -472,7 +472,8 @@ class ChatIndex(
 
     override suspend fun export(): String = StringBuilder().also { IndexFile.write(store, it, null, forSharing = false, clock()) }.toString()
 
-    override suspend fun exportTo(out: Appendable, chatIds: Set<Long>?) = IndexFile.write(store, out, chatIds, forSharing = true, clock())
+    // Every chat goes in, private ones too: on another account a chat with no link just shows no Join button.
+    override suspend fun exportTo(out: Appendable, chatIds: Set<Long>?) = IndexFile.write(store, out, chatIds, forSharing = false, clock())
 
     /** Merges an exported index in (the account's own cloud copy). Saved posts stay; the newer position and a finished read win. Safe to repeat. */
     override suspend fun import(json: String) {
