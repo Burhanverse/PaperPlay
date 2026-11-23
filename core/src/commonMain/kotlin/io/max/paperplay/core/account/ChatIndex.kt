@@ -532,8 +532,8 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
         val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
         val last = library.pref("index_cloud_at")?.toLongOrNull() ?: 0L
         if (sig == library.pref("index_cloud_sig") || (!force && now - last < 24 * 3600_000L)) return
-        val body = buildJsonObject {
-            put("index", Json.parseToJsonElement(index.export()))
+        // The index text goes in as it is: parsing 40 MB of posts back into a JSON tree only to print it again could run out of memory.
+        val rest = buildJsonObject {
             put("prefs", buildJsonObject {
                 put(IndexPrefs.AUTO, library.pref(IndexPrefs.AUTO) ?: "false")
                 put(IndexPrefs.AUTO_COPY, library.pref(IndexPrefs.AUTO_COPY) ?: "false")
@@ -541,6 +541,7 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
             put("version", 2)
             put("user", userData())
         }.toString()
+        val body = "{\"index\":" + index.export() + "," + rest.removePrefix("{")
         account.saveToCloud(tag, "paperplay-index.json", body.encodeToByteArray())
         library.setPref("index_cloud_at", "$now")
         library.setPref("index_cloud_sig", sig)
