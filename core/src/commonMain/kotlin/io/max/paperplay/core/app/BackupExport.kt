@@ -71,7 +71,7 @@ suspend fun AppServices.createBackup(
         }
         var summary: BackupSummary? = null
         writeZip(outPath) { sink ->
-            summary = BackupWriter.write(driver, sink, Clock.System.now().toString(), sealed, session, onProgress)
+            summary = BackupWriter.write(driver, sink, Clock.System.now().toString(), sealed, session, onProgress, indexTempPath = "$outPath.index.json")
         }
         summary!!
     } catch (e: Throwable) {

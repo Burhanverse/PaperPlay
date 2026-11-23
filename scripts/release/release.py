@@ -25,12 +25,13 @@ IGNORED = ("8e9b526",)  # commits that never appear in the notes or decide a ver
 KNOWN = {"feat", "fix", "perf", "docs", "chore", "ci", "build", "style", "test", "refactor"}
 SECTIONS = [  # (heading, commit types); unprefixed commits go to "Other changes"
     ("Breaking changes", None),
+    ("Improved", {"perf"}),
     ("Added", {"feat"}),
     ("Fixed", {"fix"}),
-    ("Improved", {"perf"}),
-    ("Documentation", {"docs"}),
     ("Other changes", {None}),
+    ("Maintenance", "internal"),  # docs and release/ci/build work; the app leaves this section out
 ]
+INTERNAL_SCOPES = {"release", "ci", "build", "docs"}
 MAJOR, MINOR, PATCH, NONE = 3, 2, 1, 0
 _PREFIX = re.compile(r"^(?P<type>[A-Za-z]+)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?:\s+(?P<text>\S.*)$")
 _STABLE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
@@ -43,6 +44,11 @@ class Commit:
     kind: str | None  # a type from KNOWN, or None when the subject has no type
     text: str
     breaking: bool = False
+    scope: str = ""
+
+    @property
+    def internal(self) -> bool:
+        return self.kind == "docs" or self.scope in INTERNAL_SCOPES
 
     @property
     def bump(self) -> int:
@@ -61,7 +67,7 @@ def parse_commit(sha: str, subject: str, body: str = "") -> Commit:
     breaking = any(line.startswith(("BREAKING CHANGE:", "BREAKING-CHANGE:")) for line in body.splitlines())
     m = _PREFIX.match(subject)
     if m and m["type"].lower() in KNOWN:
-        return Commit(sha, m["type"].lower(), m["text"].strip(), breaking or bool(m["bang"]))
+        return Commit(sha, m["type"].lower(), m["text"].strip(), breaking or bool(m["bang"]), (m["scope"] or "").strip().lower())
     return Commit(sha, None, subject, breaking)
 
 
@@ -145,8 +151,10 @@ def notes(commits, previous, tag) -> str:
     for heading, kinds in SECTIONS:
         if kinds is None:
             items = [c for c in commits if c.breaking]
+        elif kinds == "internal":
+            items = [c for c in commits if not c.breaking and c.internal and c.kind in {"feat", "fix", "perf", "docs", None}]
         else:
-            items = [c for c in commits if not c.breaking and c.kind in kinds]
+            items = [c for c in commits if not c.breaking and not c.internal and c.kind in kinds]
         if items:
             out.append(f"### {heading}")
             out += [f"- {c.text[0].upper()}{c.text[1:]} ([`{c.sha[:7]}`]({REPO_URL}/commit/{c.sha}))" for c in items]

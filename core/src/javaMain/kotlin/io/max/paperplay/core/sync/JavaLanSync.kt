@@ -107,7 +107,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private val deviceId: String = lib.pref("device_id") ?: newUuid().also { lib.setPref("device_id", it) }
     private val guard = PairingGuard(env.clock, ::randomDigits)
     private val book = AddressBook({ lib.pref("lan_addresses") }, { lib.setPref("lan_addresses", it) }, env.clock)
-    private val store = SnapshotStore(lib)
+    private val store = SnapshotStore(lib) { ids -> env.data?.stillPosted(ids).orEmpty() }
 
     private val _listening = MutableStateFlow(false)
     private val _port = MutableStateFlow(lib.pref("lan_port")?.toIntOrNull()?.takeIf { it in 1..65535 } ?: lanPort)
@@ -415,11 +415,20 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                             put("data", SnapshotCodec.encode(store.build()))
                         },
                     )
-                } catch (e: IllegalArgumentException) {
+                } catch (e: Exception) {
+                    // Any failure is answered, so the other side does not wait out its timeout and the link stays up.
                     p.send(buildJsonObject { put("t", "sync-reply"); put("rid", rid); put("error", true) })
                 }
             }
             "sync-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }
+            "data" -> {
+                val rid = m.str("rid") ?: return
+                val answer = runCatching { env.data?.answer(p.info.id, m.obj("q") ?: JsonObject(emptyMap())) }.getOrNull()
+                p.send(buildJsonObject { put("t", "data-reply"); put("rid", rid); if (answer != null) put("a", answer) else put("error", true) })
+            }
+            "data-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }
+            // Index pause, resume and "read this chat" requests, and "new index posts are here".
+            "indexctl", "indexnudge" -> if (p.info.paired) _messages.tryEmit(LanMessage(p.info.id, m.str("t")!!, m.toString()))
             "coverreq" -> serveCovers(p, m.arr("ids")?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty())
             "cover" -> {
                 val id = m.str("id")
@@ -591,6 +600,10 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         var other = 0
         var failure: LanFailure? = null
         for (p in targets) {
+            // Rows and index posts first, so the song state below also covers the songs that just arrived.
+            env.data?.let { data ->
+                runCatching { data.pull(p.info.id) { q -> ask(p, q) } }.onSuccess { songs += it }
+            }
             val rid = newUuid()
             val waiter = CompletableDeferred<JsonObject>()
             p.waiting[rid] = waiter
@@ -611,6 +624,26 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             }
         }
         SyncResult(failure == null, failure, songs, lists, other)
+    }
+
+    /** Sends a data request to [p] and waits for its answer; throws when the link fails or the other side could not answer. */
+    private suspend fun ask(p: Peer, q: JsonObject): JsonObject {
+        val rid = newUuid()
+        val waiter = CompletableDeferred<JsonObject>()
+        p.waiting[rid] = waiter
+        try {
+            p.send(buildJsonObject { put("t", "data"); put("rid", rid); put("q", q) })
+            val reply = withTimeoutOrNull(120_000) { waiter.await() } ?: throw IOException("no answer")
+            if (reply.flag("error") == true) throw IOException("the other device could not answer")
+            return reply.obj("a") ?: throw IOException("empty answer")
+        } finally {
+            p.waiting.remove(rid)
+        }
+    }
+
+    override suspend fun sendMessage(deviceId: String?, body: JsonObject): Boolean = withContext(Dispatchers.IO) {
+        val targets = if (deviceId == null) peers.values.toList() else listOfNotNull(peers[deviceId])
+        targets.count { p -> runCatching { p.send(body) }.isSuccess } > 0
     }
 
     /** Sends the hand-chosen covers [ids] asked for, one message each, skipping any that are missing or too big. */

@@ -42,6 +42,12 @@ val devicePrefs = listOf(
     "pc_bitperfect", "pc_exclusive", "usb_exclusive_mode",
 ) + backgroundPrefs + standbyPrefs
 
+/**
+ * Prefs tied to this device: the [devicePrefs] list, plus where each chat index read stopped and whether indexing is paused. The index
+ * itself is kept from this device on a restore, so its read positions must be too.
+ */
+fun isDevicePref(key: String) = key in devicePrefs || key.startsWith("index_ckpt:") || key == "index_paused" || key == "cloud_restored"
+
 /** One file in the backup zip, read once, in zip order. */
 interface BackupEntry {
     val name: String

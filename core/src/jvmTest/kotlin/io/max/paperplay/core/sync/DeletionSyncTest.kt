@@ -44,4 +44,15 @@ class DeletionSyncTest {
         SnapshotStore(b).apply(SnapshotStore(a).build())
         assertNotNull(b.songByUniqueId("u1"))
     }
+
+    @Test fun aDeletionWhosePostIsStillInTheMainChatIsIgnoredAndDropped() {
+        // The other device's record says u1 was deleted, but the index still sees its post in the main chat: the deletion is stale.
+        val a = library()
+        val b = library(song(1, "u1"), song(2, "u2"))
+        a.setPref(GONE_KEY, """{"u1":${System.currentTimeMillis()},"u2":${System.currentTimeMillis()}}""")
+        SnapshotStore(b) { ids -> ids.filterTo(HashSet()) { it == "u1" } }.apply(SnapshotStore(a).build())
+        assertNotNull(b.songByUniqueId("u1"))
+        assertNull(b.songByUniqueId("u2"))
+        assertEquals(false, b.pref(GONE_KEY)?.contains("u1"))
+    }
 }

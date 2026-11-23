@@ -2,6 +2,51 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.14.1] - 2026-11-23
+
+### Fixed
+- The cover file check reads two columns and survives a read during a delete, which crashed the app ([`f997fad`](https://github.com/maxcodl/PaperPlay/commit/f997fadb826750181705669a2e3ee3ac82a50298))
+- A duplicate delete batch that hits an error fails its posts and logs where, instead of crashing the app ([`b97eb75`](https://github.com/maxcodl/PaperPlay/commit/b97eb753ff8cfa419f5f184d20c674856a93e480))
+
+### Other changes
+- Delete: duplicate posts go at about 2 a second ([`b851de8`](https://github.com/maxcodl/PaperPlay/commit/b851de899233b984b306cd893d8bd9316b6d1f3b))
+
+**Full changes:** [v1.14.0...v1.14.1](https://github.com/maxcodl/PaperPlay/compare/v1.14.0...v1.14.1)
+
+## [1.14.0] - 2026-11-23
+
+### Added
+- Re-sending a song shows its download and upload progress and speed, and keeps the file until the upload ends; back arrow turns as a page opens ([`ac8206c`](https://github.com/maxcodl/PaperPlay/commit/ac8206cec687bb6e7a9be16b7c80fd4bafa77624))
+
+### Fixed
+- A refused copy says whether the chat restricts saving or what Telegram answered ([`9c2460e`](https://github.com/maxcodl/PaperPlay/commit/9c2460e0ee7616a47dd7c8c1047e394a32a8e355))
+- A chat that blocks copying fails the rest of its songs at once; the copy shows why and logs an early stop ([`9e9d3d4`](https://github.com/maxcodl/PaperPlay/commit/9e9d3d4c52343e15fbb202a1f2d6dc6f87570a18))
+- Copying from a chat that blocks it no longer downloads and re-uploads unless turned on ([`3bc246d`](https://github.com/maxcodl/PaperPlay/commit/3bc246d1595ab22ed29ea29b434661cf970dbce0))
+
+**Full changes:** [v1.13.0...v1.14.0](https://github.com/maxcodl/PaperPlay/compare/v1.13.0...v1.14.0)
+
+## [1.13.0] - 2026-11-23
+
+### Improved
+- Chat pages load from the index a page at a time; pause holds across restarts; posts keep their cover; chats keep their join links ([`47c3ca1`](https://github.com/maxcodl/PaperPlay/commit/47c3ca18d6b1a2a0a2aba151f7d8f75c1c00809c))
+
+### Added
+- Indexed chats in the library and search; copying runs as a task that can be paused and stopped ([`778d07b`](https://github.com/maxcodl/PaperPlay/commit/778d07b905ed807403d357c819e20619625b006d))
+- Linked devices share library rows and the chat index; the PC reads for the phone; pause holds on both ([`c04905d`](https://github.com/maxcodl/PaperPlay/commit/c04905dc94d66402cabee607846a11d6517f14a0))
+- Export and import the chat index as a file, with join links; an app backup imports too ([`ee9933f`](https://github.com/maxcodl/PaperPlay/commit/ee9933f15f8e7a4ba4917af06ab455471470c360))
+- Backups carry the chat index and a restore never loses it; index stored with links, counts and library flags ([`5550a7d`](https://github.com/maxcodl/PaperPlay/commit/5550a7d77ff822c27fbf091ae82f8cd028ffec3d))
+- Songs the bot can't reach show a red robot instead of being greyed out ([`d8a40ed`](https://github.com/maxcodl/PaperPlay/commit/d8a40edd5dfcd6293c6ca611bbf41f6e05848a0a))
+
+### Fixed
+- A deletion record from another device is not applied to songs still posted in the main chat ([`91e5c4d`](https://github.com/maxcodl/PaperPlay/commit/91e5c4d68cb1dc0d518359f9adc695c70d5e0b31))
+- Songs whose post is gone from a fully read chat leave the library; a deletion whose post is still in the main chat no longer blocks sync ([`4de5b3e`](https://github.com/maxcodl/PaperPlay/commit/4de5b3e7c57b54779e136027865d1b000459af5b))
+- Copying a song leaves the source post's caption behind ([`36e2cd3`](https://github.com/maxcodl/PaperPlay/commit/36e2cd31a9f782181a69f4b5fa1999bb8bf43873))
+- Saving the index to Saved Messages no longer parses it back into memory ([`7a64f27`](https://github.com/maxcodl/PaperPlay/commit/7a64f27ca536ed24e6f7c5db767a5f38279c193a))
+- Songs named Song - Artist get their artist back, checked after every scan ([`d822c16`](https://github.com/maxcodl/PaperPlay/commit/d822c16b69d4bc3ce7f5c55eccb8c22a3bc7c2ee))
+- Readable update notes, buttons above them, device chips on their own row ([`0b22f1b`](https://github.com/maxcodl/PaperPlay/commit/0b22f1b6921525d30d82e6fba29c19d5a7b526f9))
+
+**Full changes:** [v1.12.0...v1.13.0](https://github.com/maxcodl/PaperPlay/compare/v1.12.0...v1.13.0)
+
 ## [1.12.0] - 2026-11-22
 
 ### Added

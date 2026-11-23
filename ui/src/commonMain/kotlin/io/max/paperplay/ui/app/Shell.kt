@@ -303,7 +303,18 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         backend.services.covers.queued.collect { q -> if (q > 0) saw = true else if (saw) coversStarting = false }
     }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(10_000); coversStarting = false }
-    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalAlbums provides backend.albums, LocalArtists provides backend.artists, LocalTelegramLists provides remember(telegramState) { { telegramState.value } }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput, { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } }, { id -> backend.switchOutput(id, move = true) { m -> scope.launch { snack.showSnackbar(m) } } }) }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalAlbums provides backend.albums, LocalArtists provides backend.artists, LocalTelegramLists provides remember(telegramState) { { telegramState.value } }, LocalIndexedChats provides remember(backend) {
+        fun openChat(id: Long, title: String, query: String) {
+            indexPageTitles["index:$id"] = title
+            indexPageQuery["index:$id"] = query
+            navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("index:$id") }
+        }
+        IndexedChats(
+            backend.chatIndex.chats, { c -> openChat(c.id, c.title, "") },
+            search = { q, n -> backend.chatIndex.searchAll(q, n) },
+            openSearch = { id, q -> openChat(id, backend.chatIndex.chats.value.firstOrNull { it.id == id }?.title ?: "Indexed chat", q) },
+        )
+    }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput, { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } }, { id -> backend.switchOutput(id, move = true) { m -> scope.launch { snack.showSnackbar(m) } } }) }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).

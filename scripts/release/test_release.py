@@ -111,12 +111,23 @@ class Notes(unittest.TestCase):
         commits = [c("feat: add the updater", "1" * 40), c("fix: crash on restore", "2" * 40), c("docs: readme", "3" * 40),
                    c("chore: bump", "4" * 40), c("Lists glide", "5" * 40), c("feat!: new backup format", "6" * 40)]
         text = r.notes(commits, "v1.2.0", "v1.3.0")
-        order = [text.index(h) for h in ("### Breaking changes", "### Added", "### Fixed", "### Documentation", "### Other changes")]
+        order = [text.index(h) for h in ("### Breaking changes", "### Added", "### Fixed", "### Other changes", "### Maintenance")]
         self.assertEqual(order, sorted(order))
         self.assertIn("- Add the updater ([`1111111`]", text)
         self.assertIn("- New backup format", text)
         self.assertNotIn("bump", text)
         self.assertIn("compare/v1.2.0...v1.3.0", text)
+
+    def test_user_facing_order_and_internal_work_last(self):
+        commits = [c("fix: crash", "1" * 40), c("feat: queue", "2" * 40), c("perf: covers", "3" * 40),
+                   c("fix(release): tag check", "4" * 40), c("docs: readme", "5" * 40)]
+        text = r.notes(commits, "v1.2.0", "v1.3.0")
+        order = [text.index(h) for h in ("### Improved", "### Added", "### Fixed", "### Maintenance")]
+        self.assertEqual(order, sorted(order))
+        maint = text[text.index("### Maintenance"):]
+        self.assertIn("Tag check", maint)
+        self.assertIn("Readme", maint)
+        self.assertNotIn("Tag check", text[:text.index("### Maintenance")])
 
     def test_empty_notes_say_so(self):
         self.assertIn("No user-facing changes.", r.notes([c("chore: x")], "v1.2.0", "v1.3.0"))

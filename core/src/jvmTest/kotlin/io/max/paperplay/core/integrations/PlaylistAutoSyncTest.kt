@@ -68,7 +68,8 @@ class PlaylistAutoSyncTest {
         PlaylistAutoSync(library, store, defaultHttp(), StubAccount(logged), index, CoroutineScope(Dispatchers.Unconfined), pause = {})
 
     @Test
-    fun offByDefault() = runBlocking {
+    fun offWhenTurnedOff() = runBlocking {
+        library.setPref(io.max.paperplay.core.account.IndexPrefs.AUTO_COPY, "false")
         playlistWithMissing("One")
         val index = StubIndex { listOf(post(1, "One")) }
         assertEquals(0, sync(index).fetchFromIndex())

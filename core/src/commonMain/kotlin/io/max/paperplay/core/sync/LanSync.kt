@@ -183,6 +183,27 @@ interface LanSync {
 
     /** As above, with "queue:<index>:<ms>" and [uids] to play that list from that song and place. */
     suspend fun sendControl(deviceId: String, action: String, uids: List<String>): Boolean = false
+
+    /**
+     * Sends [body] (with its own "t", such as "indexctl") to one linked device, or to all when [deviceId] is null. It arrives in
+     * [messages] there. Only paired devices are listened to. False when nothing was linked.
+     */
+    suspend fun sendMessage(deviceId: String?, body: kotlinx.serialization.json.JsonObject): Boolean = false
+}
+
+/**
+ * The heavy data that goes between linked devices besides the song state: library rows one device lacks and the chat index. Each
+ * device pulls what it is missing during [LanSync.syncNow]; the other answers.
+ */
+interface LanDataSync {
+    /** Answers [request] from the device [peerId]. Runs on the link's thread; keep each answer to a page. */
+    fun answer(peerId: String, request: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject
+
+    /** This device's side: asks [peerId] for what it lacks through [ask] (a request and its answer) and stores it. Returns rows added. */
+    suspend fun pull(peerId: String, ask: suspend (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject): Int
+
+    /** Which of [ids] (song unique ids) still have their post in the main chat, so a deletion of them is stale. */
+    fun stillPosted(ids: Set<String>): Set<String> = emptySet()
 }
 
 /** The song a linked device is playing. */
@@ -252,6 +273,8 @@ class LanEnv(
     val coverBytes: (uniqueId: String) -> CoverData? = { null },
     /** Stores a hand-chosen cover another device sent, keeping the time it was chosen. */
     val saveCover: (uniqueId: String, at: Long, bytes: ByteArray, sourceUrl: String?) -> Unit = { _, _, _, _ -> },
+    /** Library rows and the chat index, pulled from each linked device on every sync. */
+    val data: LanDataSync? = null,
 )
 
 /** Builds the sockets, crypto and discovery (Android and desktop share one implementation). Does not start it. */

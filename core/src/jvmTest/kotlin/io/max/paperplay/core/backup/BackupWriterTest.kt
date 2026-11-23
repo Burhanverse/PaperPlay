@@ -57,7 +57,7 @@ class BackupWriterTest {
 
         ZipFile(zipPath).use { z ->
             val names = z.entries().asSequence().map { it.name }.toSet()
-            assertEquals(setOf("library.json", "credentials.enc", "profile/me.png", "covers/c1.jpg"), names)
+            assertEquals(setOf("library.json", "credentials.enc", "profile/me.png", "covers/c1.jpg", "index.json"), names)
             val json = z.getInputStream(z.getEntry("library.json")).readBytes().decodeToString()
             assertTrue("\"favorite\":true" in json && "\"chatId\":1" in json && "\"useBot\":true" in json, json) // Drift toJson shape
             assertFalse("user_session" in json) // no session in this backup
@@ -84,6 +84,38 @@ class BackupWriterTest {
         assertEquals("42", secrets.get(SecretKeys.API_ID)!!.decodeToString())
         assertEquals(1, summary!!.songs)
         assertEquals(1, summary!!.covers)
+    }
+
+    @Test
+    fun theChatIndexIsBackedUpAndARestoreNeverLosesIt() {
+        // The backup has chat -5 with two posts; this device has chat -7 with one post and a third post of chat -5.
+        val src = dir()
+        val driver = libraryDriver("${src.p()}/library.sqlite")
+        val store = io.max.paperplay.core.account.IndexStore(driver)
+        fun post(chat: Long, msg: Long) = io.max.paperplay.core.account.ChatPost(chat, msg, "u$chat$msg", "T$msg", "A", 100, 1, "audio/flac", "f.flac", msg, "Alb")
+        store.saveChat(-5, "Five"); store.setChatInfo(-5, "fivechan", "", true, true, 1)
+        store.upsertPosts(listOf(post(-5, 1), post(-5, 2)), 1)
+        val zipPath = "${src.p()}/out.zip"
+        writeZip(zipPath) { sink -> BackupWriter.write(driver, sink, "2026-01-01T00:00:00Z", indexTempPath = "${src.p()}/idx.tmp") }
+        driver.close()
+        assertFalse(File(src, "idx.tmp").exists())
+
+        val dst = dir()
+        val here = libraryDriver("${dst.p()}/library.sqlite")
+        val mine = io.max.paperplay.core.account.IndexStore(here)
+        mine.saveChat(-7, "Seven"); mine.upsertPosts(listOf(post(-7, 9)), 1)
+        mine.saveChat(-5, "Five"); mine.upsertPosts(listOf(post(-5, 3)), 1)
+        here.execute(null, "INSERT INTO prefs (key, value) VALUES ('index_ckpt:-7', '0:123')", 0)
+        here.close()
+
+        runBlocking { BackupRestorer().restore(fileBackupSource(zipPath), target(dst, MemSecrets())).toList() }
+        val db = "${dst.p()}/library.sqlite"
+        assertEquals(
+            listOf(listOf("-5", "1"), listOf("-5", "2"), listOf("-5", "3"), listOf("-7", "9")),
+            query(db, "select chat_id, message_id from index_posts order by chat_id desc, message_id"),
+        )
+        assertEquals(listOf(listOf("-5", "fivechan", "3"), listOf("-7", "", "1")), query(db, "select chat_id, username, post_count from index_chats order by chat_id desc"))
+        assertEquals("0:123", query(db, "select value from prefs where key = 'index_ckpt:-7'").single()[0])
     }
 
     @Test

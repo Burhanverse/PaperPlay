@@ -1,5 +1,6 @@
 package io.max.paperplay.core.app
 
+import kotlinx.coroutines.sync.withLock
 import io.max.paperplay.core.db.LibraryDatabase
 import io.max.paperplay.core.integrations.defaultHttpFetcher
 import io.max.paperplay.core.library.LibraryRepo
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
@@ -97,8 +99,59 @@ class AppServices(
                     }
                 }
             },
+            // Library rows and the chat index go between the devices too, so both hold the same database.
+            data = io.max.paperplay.core.sync.LibraryDataSync(
+                driver, library, { indexStore },
+                pauseState = { realIndex.pauseState() },
+                takePause = { p, at -> realIndex.takePause(p, at) },
+                onIndexChanged = { realIndex.syncedIn() },
+                mainChat = { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) },
+            ),
         ),
-    ).also { lanSync = it; bindLan(it) }
+    ).also { lanSync = it; bindLan(it); bindIndexToLan(it, isDesktop) }
+
+    /**
+     * The chat index across linked devices: the PC does the reading while a phone is linked to it (the phone asks it and receives the
+     * posts), pause and resume on either device hold on both, and new posts reach the other device within seconds.
+     */
+    private fun bindIndexToLan(lan: io.max.paperplay.core.sync.LanSync, isDesktop: Boolean) {
+        fun leader(): String? = if (isDesktop) null else lan.connected.value.firstOrNull { it.desktop && it.paired }?.id
+        realIndex.delegate = { action, chat ->
+            val to = leader()
+            to != null && lan.sendMessage(to, kotlinx.serialization.json.buildJsonObject {
+                put("t", "indexctl"); put("action", action)
+                if (chat != null) { put("chat", chat.id); put("title", chat.title); put("channel", chat.isChannel) }
+            })
+        }
+        realIndex.onPausedChanged = { paused ->
+            val at = realIndex.pauseState().second
+            scope.launch { lan.sendMessage(null, kotlinx.serialization.json.buildJsonObject { put("t", "indexctl"); put("paused", paused); put("at", at) }) }
+        }
+        // New posts are announced at most every 5 s; the other device then pulls them.
+        val nudge = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        realIndex.onPostsSaved = { nudge.tryEmit(Unit) }
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        scope.launch {
+            nudge.sample(5_000).collect { lan.sendMessage(null, kotlinx.serialization.json.buildJsonObject { put("t", "indexnudge") }) }
+        }
+        scope.launch {
+            lan.messages.collect { m ->
+                if (m.type != "indexctl" && m.type != "indexnudge") return@collect
+                val o = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(m.body) as kotlinx.serialization.json.JsonObject }.getOrNull() ?: return@collect
+                fun str(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                when {
+                    m.type == "indexnudge" -> launch { runCatching { lan.syncNow(m.deviceId) } }
+                    str("paused") != null -> realIndex.takePause(str("paused") == "true", str("at")?.toLongOrNull() ?: clockMs())
+                    str("action") == "refresh" -> launch { runCatching { realIndex.setPaused(false); realIndex.refresh() } }
+                    str("action") == "index" -> {
+                        val id = str("chat")?.toLongOrNull() ?: return@collect
+                        val chat = io.max.paperplay.core.account.ChatInfo(id, str("title").orEmpty(), str("channel") == "true")
+                        launch { runCatching { realIndex.indexChat(chat, false) } }
+                    }
+                }
+            }
+        }
+    }
 
     /** The device this one controls from its player: null is none (this device plays), else a paired device's id. */
     private val _activeOutput = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
@@ -309,12 +362,36 @@ class AppServices(
         )
     }
 
+    /** The saved chat index tables (posts of the account's chats), shared by the index and device sync. */
+    val indexStore: io.max.paperplay.core.account.IndexStore by lazy { io.max.paperplay.core.account.IndexStore(driver) }
+
+    private val realIndex get() = chatIndex as io.max.paperplay.core.account.ChatIndex
+
+    /** Copies indexed songs into the main chat as a task that outlives the page it was started from. */
+    val indexCopier: io.max.paperplay.core.account.IndexCopier by lazy {
+        io.max.paperplay.core.account.IndexCopier(chatIndex, scope) { library.pref("copy_rate")?.toIntOrNull() ?: 20 }
+    }
+
     /** The saved index of the account's chats. The real one replaces the stand-in. */
     val chatIndex: io.max.paperplay.core.account.ChatIndexApi by lazy {
         io.max.paperplay.core.account.ChatIndex(
-            account, io.max.paperplay.core.account.IndexStore(driver), library,
+            account, indexStore, library,
             { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) }, clock,
-        ).also { it.onRunFinished = { runCatching { indexCloud.save() } } }
+        ).also { index ->
+            index.onRunFinished = { runCatching { indexCloud.save() } }
+            // Which indexed songs the library already has, is better than, or a playlist waits for: worked out in the background a few
+            // seconds after the library or the index changed, never while a list is drawn.
+            @OptIn(kotlinx.coroutines.FlowPreview::class)
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                kotlinx.coroutines.flow.combine(index.changes, library.changes) { _, _ -> }
+                    .debounce(3_000)
+                    .collect {
+                        runCatching { index.updateFlags() }
+                        // Songs whose post was deleted in Telegram leave the library once a full read shows them gone.
+                        runCatching { index.pruneDeadRows() }
+                    }
+            }
+        }
     }
 
     /** Music folders on this device, with optional sending of new songs to Telegram. */
@@ -529,6 +606,15 @@ class AppServices(
         get() = platform.settings.get(Keys.API_ID)?.toIntOrNull() != null &&
             !platform.settings.get(Keys.API_HASH).isNullOrEmpty() && !platform.secrets.get(Keys.BOT_TOKEN).isNullOrEmpty()
 
+    private val namesLock = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun repairNames() = namesLock.withLock {
+        val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
+        if (fixed.isEmpty()) return@withLock
+        library.replaceSongs(fixed)
+        activityLog("Library", "Fixed the title and artist of ${fixed.size} songs")
+    }
+
     /**
      * Logs the bot in and then reads the library chats. Returns at once; watch [auth], [ready] and [error].
      * Does nothing when already connected.
@@ -543,14 +629,12 @@ class AppServices(
             return
         }
         _error.value = null
-        // Once: songs whose names were split badly ("Song - Lofi - Artist") get their title and artist right, and are looked up again.
+        // Songs whose names were split badly ("Song - Lofi - Artist", "Song - Artist" read the other way round) get their title and artist
+        // right, and are looked up again. Runs now and after every scan, because new uploads arrive split by the file name alone.
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            if (library.pref("split_names_v4") != "done") {
-                val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
-                if (fixed.isNotEmpty()) library.replaceSongs(fixed)
-                library.setPref("split_names_v4", "done")
-                activityLog("Library", "Fixed the title and artist of ${fixed.size} songs named like \"Song - Version - Artist\"")
-            }
+            scanner.progress.collect { if (it == null) repairNames() }
+        }
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             if (library.pref("forum_topics_id_fix_v1") != "done") {
                 val topics = library.repo.db.miscQueries.topics().executeAsList()
                 val songs = library.repo.db.songsQueries.allSongs().executeAsList()
@@ -882,7 +966,7 @@ class AppServices(
     /** Logs the account out, saving its chat index to the cloud first. Nothing happens when no account is logged in. */
     suspend fun logOutAccount() {
         if (!account.loggedIn.value) return
-        runCatching { indexCloud.save() }
+        runCatching { indexCloud.save(force = true) }
         account.logOut()
     }
 

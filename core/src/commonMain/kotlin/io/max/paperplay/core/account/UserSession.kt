@@ -49,6 +49,9 @@ import kotlin.time.Duration.Companion.seconds
 /** The pref that remembers a signed-in account, so a restart reconnects without a code. */
 const val USER_SESSION_PREF = "user_session"
 
+/** "true" lets a copy from a chat that blocks copying download the song and upload it again (uses data). Off by default. */
+const val COPY_REUPLOAD = "copy_reupload"
+
 private const val READING_RATE_PREF = "rate_reading"
 private const val DEFAULT_READING_RATE = 20
 private const val PAGE = 100
@@ -266,6 +269,69 @@ class UserSession(
         return out
     }
 
+    /** The tiny cover Telegram puts inside an audio post (a JPEG of about 40 px), or null. Part of the message: no download. */
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    private fun miniCover(msg: JsonObject): ByteArray? {
+        val data = msg.obj("content")?.obj("audio")?.obj("album_cover_minithumbnail")?.str("data") ?: return null
+        return runCatching { kotlin.io.encoding.Base64.decode(data) }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
+    override suspend fun chatLinks(chatId: Long): ChatLinks? {
+        if (!_loggedIn.value) return null
+        val c = ready()
+        knowChat(c, chatId, loadList = false)
+        val type = call(c, request("getChat") { put("chat_id", chatId) }).obj("type") ?: return null
+        return when (type.str("@type")) {
+            "chatTypeSupergroup" -> {
+                val id = type.long("supergroup_id") ?: return null
+                val group = call(c, request("getSupergroup") { put("supergroup_id", id) })
+                val name = group.obj("usernames")?.let { u -> (u["active_usernames"] as? JsonArray)?.firstOrNull()?.jsonPrimitive?.content } ?: group.str("username").orEmpty()
+                // Only admins see the invite link; for everyone else this is empty and the public name has to do.
+                val invite = runCatching { call(c, request("getSupergroupFullInfo") { put("supergroup_id", id) }).obj("invite_link")?.str("invite_link") }.getOrNull().orEmpty()
+                ChatLinks(name, invite, type["is_channel"]?.jsonPrimitive?.content == "true")
+            }
+            "chatTypeBasicGroup" -> {
+                val id = type.long("basic_group_id") ?: return null
+                val invite = runCatching { call(c, request("getBasicGroupFullInfo") { put("basic_group_id", id) }).obj("invite_link")?.str("invite_link") }.getOrNull().orEmpty()
+                ChatLinks("", invite, false)
+            }
+            else -> null
+        }
+    }
+
+    override suspend fun joinChat(link: String): Long? {
+        if (!_loggedIn.value) return null
+        val c = ready()
+        val l = link.trim().removePrefix("https://").removePrefix("http://").removePrefix("t.me/").removePrefix("telegram.me/")
+        val chat = if (l.startsWith("+") || l.startsWith("joinchat/")) {
+            call(c, request("joinChatByInviteLink") { put("invite_link", link.trim()) })
+        } else {
+            val found = call(c, request("searchPublicChat") { put("username", l.substringBefore('/').removePrefix("@")) })
+            val id = found.long("id") ?: return null
+            runCatching { call(c, request("joinChat") { put("chat_id", id) }) }
+            found
+        }
+        return chat.long("id")
+    }
+
+    override suspend fun canSee(chatId: Long): Boolean {
+        if (!_loggedIn.value) return false
+        val c = ready()
+        return try {
+            knowChat(c, chatId, loadList = false)
+            val type = call(c, request("getChat") { put("chat_id", chatId) }).obj("type") ?: return false
+            if (type.str("@type") != "chatTypeSupergroup") return true
+            val sg = type.long("supergroup_id") ?: return false
+            val group = call(c, request("getSupergroup") { put("supergroup_id", sg) })
+            val status = group.obj("status")?.str("@type")
+            // A public channel can be read without joining; a private one only as a member.
+            val public = group.obj("usernames")?.let { (it["active_usernames"] as? JsonArray)?.isNotEmpty() } == true || group.str("username").orEmpty().isNotEmpty()
+            public || (status != "chatMemberStatusLeft" && status != "chatMemberStatusBanned")
+        } catch (e: TdError) {
+            false
+        }
+    }
+
     @kotlin.concurrent.Volatile override var lastReadNotes: String = ""
         private set
 
@@ -315,9 +381,11 @@ class UserSession(
                     batch += ChatPost(
                         chatId = chatId, messageId = id, uniqueId = song.unique_id, title = song.title, artist = song.artist,
                         durationSec = song.duration_sec.toInt(), size = song.size, mime = song.mime, fileName = song.file_name, date = song.date,
+                        thumb = miniCover(msg),
                     )
                 }
-                if (batch.isNotEmpty()) emit(batch)
+                // Sent even when empty, so the reader can stop between any two pages.
+                emit(batch)
                 val next = page.long("next_from_message_id") ?: 0L
                 // TDLib may answer a page with fewer posts than asked, even none, while more follow; only the end marker or several empty pages in a row stop the read.
                 emptyPages = if (messages.isEmpty()) emptyPages + 1 else 0
@@ -400,28 +468,64 @@ class UserSession(
     override suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long) {
         val c = ready()
         knowChat(c, toChat, loadList = false)
-        // send_copy posts it as a new message with no "forwarded from" line.
+        // send_copy posts it as a new message with no "forwarded from" line; remove_caption leaves the other chat's text
+        // ("reQuest by ...", links, tags) behind, so only the song goes in.
         val sent = runCatching {
             call(c, request("forwardMessages") {
                 put("chat_id", toChat)
                 put("from_chat_id", fromChat)
                 put("message_ids", buildJsonArray { add(messageId) })
                 put("send_copy", true)
-                put("remove_caption", false)
+                put("remove_caption", true)
             })
         }
         // Telegram answers with an empty entry for a post it will not copy, for example when the chat blocks saving content.
         val first = (sent.getOrNull()?.get("messages") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
         if (first is kotlinx.serialization.json.JsonObject) return
-        // Refused: the account downloads the song and sends it again as its own upload, which has no forward line either.
+        // Refused. Sending it again means downloading the whole file and uploading it, tens of MB each way for a FLAC, so it only
+        // happens when the owner turned it on. The reason is Telegram's own: the chat's "restrict saving content", or its error.
+        if (pref(COPY_REUPLOAD) != "true") {
+            val protected = runCatching { call(c, request("getChat") { put("chat_id", fromChat) })["has_protected_content"]?.jsonPrimitive?.content == "true" }.getOrNull()
+            val why = sent.exceptionOrNull()?.message
+            throw IllegalStateException(
+                when {
+                    protected == true -> "This chat does not allow copying (it restricts saving content)."
+                    why != null -> "Telegram refused the copy: $why."
+                    else -> "Telegram did not copy this post and gave no reason."
+                } + " Turn on \"Send again when a chat blocks copying\" to download and upload it instead (uses data).",
+            )
+        }
         reupload(c, fromChat, messageId, toChat)
+    }
+
+    private val _transfer = kotlinx.coroutines.flow.MutableStateFlow<Transfer?>(null)
+    override val transfer: kotlinx.coroutines.flow.StateFlow<Transfer?> = _transfer
+
+    /**
+     * Reports the progress of [fileId] once a second as [_transfer] until [finished] says so (or the caller cancels): bytes done
+     * (downloaded or uploaded) of the file's size, and the speed over the last second.
+     */
+    private suspend fun watchFile(c: TdClient, fileId: Int, title: String, upload: Boolean, finished: (JsonObject) -> Boolean = { false }) {
+        var last = -1L
+        while (true) {
+            val f = runCatching { call(c, request("getFile") { put("file_id", fileId) }) }.getOrNull()
+            if (f != null) {
+                val done = if (upload) f.obj("remote")?.long("uploaded_size") ?: 0L else f.obj("local")?.long("downloaded_size") ?: 0L
+                val total = (f.long("size") ?: 0L).takeIf { it > 0 } ?: f.long("expected_size") ?: 0L
+                _transfer.value = Transfer(title, upload, done, total, if (last < 0) 0 else (done - last).coerceAtLeast(0))
+                last = done
+                if (finished(f)) return
+            }
+            kotlinx.coroutines.delay(1000)
+        }
     }
 
     private suspend fun reupload(c: TdClient, fromChat: Long, messageId: Long, toChat: Long) {
         val message = call(c, request("getMessage") { put("chat_id", fromChat); put("message_id", messageId) })
         val song = io.max.paperplay.core.app.songFromMessage(message)
             ?: throw IllegalStateException("Telegram did not copy this post, and it holds no song to send again.")
-        val (path, fileId) = downloadPost(fromChat, messageId)
+        io.max.paperplay.player.PlayLog.log("copy", "Sending \"${song.title}\" again: the chat blocks copying, so it is downloaded and uploaded (${song.size / (1L shl 20)} MB each way)")
+        val (path, fileId) = downloadPost(fromChat, messageId, song.title)
             ?: throw IllegalStateException("Telegram did not copy this post, and the file could not be downloaded to send it again.")
         try {
             val newApi = c.newApi()
@@ -433,20 +537,35 @@ class UserSession(
                 ))
             }, 600)
             if (sentAgain.long("id") == null) throw IllegalStateException("Telegram did not accept the song.")
+            // The message is only queued: the file uploads now. The download is kept until the upload has finished, or it would be
+            // deleted from under it.
+            val upId = sentAgain.obj("content")?.let { it.obj("audio")?.obj("audio") ?: it.obj("document")?.obj("document") }?.long("id")?.toInt()
+            if (upId != null) kotlinx.coroutines.withTimeoutOrNull(30 * 60_000L) {
+                watchFile(c, upId, song.title, upload = true) { f -> f.obj("remote")?.str("is_uploading_completed") == "true" || f.obj("remote")?.str("is_uploading_active") == "false" && (f.obj("remote")?.long("uploaded_size") ?: 0L) > 0 }
+            }
         } finally {
+            _transfer.value = null
             releaseFile(fileId)
         }
     }
 
     /** Downloads the song of a post with the owner's account. The local path and TDLib's file id, or null when it holds no song. */
-    suspend fun downloadPost(chatId: Long, messageId: Long): Pair<String, Int>? {
+    suspend fun downloadPost(chatId: Long, messageId: Long, progressTitle: String? = null): Pair<String, Int>? {
         val c = ready()
         knowChat(c, chatId, loadList = false)
         val message = call(c, request("getMessage") { put("chat_id", chatId); put("message_id", messageId) })
         val fileId = io.max.paperplay.core.app.fileOfMessage(message)?.long("id")?.toInt() ?: return null
-        val file = call(c, request("downloadFile") {
-            put("file_id", fileId); put("priority", 1); put("offset", 0); put("limit", 0); put("synchronous", true)
-        }, 1800)
+        val file = kotlinx.coroutines.coroutineScope {
+            // While the download runs, its progress is reported once a second for the copy's status line.
+            val watcher = progressTitle?.let { t -> launch { watchFile(c, fileId, t, upload = false) } }
+            try {
+                call(c, request("downloadFile") {
+                    put("file_id", fileId); put("priority", 1); put("offset", 0); put("limit", 0); put("synchronous", true)
+                }, 1800)
+            } finally {
+                watcher?.cancel()
+            }
+        }
         val path = file.obj("local")?.str("path")?.takeIf { it.isNotEmpty() } ?: return null
         return path to fileId
     }

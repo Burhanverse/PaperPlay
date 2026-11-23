@@ -219,7 +219,17 @@ class DeleteQueue(
             }
             val batch = pending.getAndUpdate { it.drop(DELETE_STEP) }.take(DELETE_STEP)
             for (e in batch) set(e.key, DeleteStatus.Deleting)
-            deleteDuplicateBatch(batch)
+            try {
+                deleteDuplicateBatch(batch)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A bug or bad row in one batch must not take the app down; the batch fails and the next one runs.
+                log("Batch failed: $e at " + e.stackTraceToString().lines().drop(1).take(6).joinToString(" < ") { it.trim().removePrefix("at ") })
+                for (p in batch) if (_jobs.value.firstOrNull { it.key == p.key }?.status != DeleteStatus.Done) set(p.key, DeleteStatus.Failed, "Something went wrong: ${e.message ?: e::class.simpleName}. Nothing more was done for this post.")
+            }
+            // About 2 posts a second, so the library is not busy while a long delete runs.
+            if (pending.value.isNotEmpty()) pause(DELETE_STEP * 500L)
         }
     }
 

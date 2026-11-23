@@ -44,6 +44,9 @@ CREATE TABLE songs (
 allSongs:
 SELECT * FROM songs ORDER BY date DESC;
 
+coverPaths:
+SELECT unique_id, cover_path FROM songs WHERE cover_path IS NOT NULL AND cover_path <> '';
+
 song:
 SELECT * FROM songs WHERE chat_id = :chatId AND message_id = :messageId;
 

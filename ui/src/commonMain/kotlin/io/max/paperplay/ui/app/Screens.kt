@@ -462,18 +462,26 @@ private fun SearchResults(
             .filter { io.max.paperplay.core.metadata.songSearchScore(q, it.artist, "", "", null, null) > 0 }.take(3)
     }
     val otherArtists = remember(artists, topArtists) { artists.filter { a -> topArtists.none { it.artist == a.artist } } }
-    if (results.isEmpty()) {
+    // Songs in the account's indexed chats that match, so a song not in the library yet can still be found and added.
+    val indexed = LocalIndexedChats.current
+    val chatNames = indexed?.chats?.collectAsState()?.value.orEmpty().associate { it.id to it.title }
+    val fromIndex by androidx.compose.runtime.produceState(emptyList<io.max.paperplay.core.account.ChatPost>(), query, indexed) {
+        value = if (indexed == null || query.isBlank()) emptyList()
+        else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { indexed.search(query.trim(), 30) }.getOrDefault(emptyList()) }
+    }
+    if (results.isEmpty() && fromIndex.isEmpty()) {
         Text("No songs match \"${query.trim()}\".", modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding + 16.dp)) {
+        if (results.isEmpty()) item(key = "none") { Text("Nothing in your library matches.", Modifier.padding(horizontal = 24.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (topArtists.isNotEmpty()) {
             item(key = "h-top") { SearchHeader("Top result", topArtists.size) }
             items(topArtists, key = { "t-${it.artist}" }) { s ->
                 SearchGroupRow(s.artist, "Artist", s.coverUri, "artist:${s.artist}", circle = true) { onOpen(Detail.Artist(s.artist)) }
             }
         }
-        item(key = "h-songs") { SearchHeader("Songs", results.size) }
+        if (results.isNotEmpty()) item(key = "h-songs") { SearchHeader("Songs", results.size) }
         itemsIndexed(results, key = { _, s -> "s-${s.id}" }) { i, song ->
             SongRow(
                 song = song, onClick = { actions.play(results, i) }, onLongClick = {},
@@ -491,6 +499,14 @@ private fun SearchResults(
             item(key = "h-artists") { SearchHeader("Artists", otherArtists.size) }
             items(otherArtists, key = { "r-${it.artist}" }) { s ->
                 SearchGroupRow(s.artist, "", s.coverUri, "artist:${s.artist}", circle = true) { onOpen(Detail.Artist(s.artist)) }
+            }
+        }
+        if (fromIndex.isNotEmpty()) {
+            item(key = "h-index") { SearchHeader("In your indexed chats", fromIndex.size) }
+            items(fromIndex, key = { "x-${it.chatId}-${it.messageId}" }) { p ->
+                SearchGroupRow(p.title.ifBlank { p.fileName }, listOfNotNull(p.artist.ifBlank { null }, chatNames[p.chatId]).joinToString(" · "), null, "x${p.uniqueId}", circle = false) {
+                    indexed?.openSearch?.invoke(p.chatId, p.title.ifBlank { p.fileName })
+                }
             }
         }
     }

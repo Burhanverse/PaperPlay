@@ -76,6 +76,17 @@ val LocalListActions = androidx.compose.runtime.staticCompositionLocalOf<ListAct
 internal val LocalAlbums = androidx.compose.runtime.staticCompositionLocalOf<kotlinx.coroutines.flow.StateFlow<List<io.max.paperplay.ui.state.GroupUi>>> { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }
 internal val LocalArtists = androidx.compose.runtime.staticCompositionLocalOf<kotlinx.coroutines.flow.StateFlow<List<io.max.paperplay.ui.state.GroupUi>>> { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }
 
+/** The chats of the account's chat index, for the library lists, and how to open one (its paged songs page). */
+internal class IndexedChats(
+    val chats: kotlinx.coroutines.flow.StateFlow<List<io.max.paperplay.core.account.IndexedChat>>,
+    val open: (io.max.paperplay.core.account.IndexedChat) -> Unit,
+    /** Posts of every indexed chat matching a search, best first. Reads the database: call off the main thread. */
+    val search: (query: String, limit: Int) -> List<io.max.paperplay.core.account.ChatPost> = { _, _ -> emptyList() },
+    /** Opens a chat's songs page with a search already typed. */
+    val openSearch: (chatId: Long, query: String) -> Unit = { _, _ -> },
+)
+internal val LocalIndexedChats = androidx.compose.runtime.staticCompositionLocalOf<IndexedChats?> { null }
+
 internal val LocalTelegramLists = androidx.compose.runtime.staticCompositionLocalOf<() -> List<CoreBackend.TelegramList>> { { emptyList() } }
 
 /** What a list of songs can do; the shell provides one. */

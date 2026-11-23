@@ -60,6 +60,8 @@ class BackupRestorer {
         val covers: MutableSet<String> = mutableSetOf(),
         var profile: String? = null,
         val unknown: MutableList<String> = mutableListOf(),
+        /** The backup's chat index, copied to disk (it can be tens of MB). */
+        var indexFile: String? = null,
         var tooBig: Int = 0,
     )
 
@@ -84,6 +86,10 @@ class BackupRestorer {
                 when {
                     e.name == MANIFEST -> scan.manifest = e.readBytes(MAX_MANIFEST) ?: throw BackupException("This backup is damaged.")
                     e.name == CREDENTIALS -> scan.credentials = e.readBytes(MAX_CREDENTIALS)
+                    e.name == INDEX_ENTRY -> {
+                        e.copyTo("$staging/$INDEX_ENTRY")
+                        scan.indexFile = "$staging/$INDEX_ENTRY"
+                    }
                     e.name == USER_SESSION_ENTRY -> {
                         scan.sessionPresent = true
                         if (target.userSessionDir != null) {
@@ -147,6 +153,9 @@ class BackupRestorer {
         val songCount: Int
         try {
             songCount = buildLibrary(manifest, scan, target, options, newDb)
+        } catch (e: IndexKeepFailed) {
+            removeDb(newDb)
+            throw BackupException("Your chat index could not be carried over, so nothing was restored. Your library is unchanged.")
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             removeDb(newDb)
@@ -289,7 +298,7 @@ class BackupRestorer {
                 val backupPrefs = m.rows("prefs")!!.associate {
                     it.jsonObject.getValue("key").jsonPrimitive.content to it.jsonObject.getValue("value").jsonPrimitive.content
                 }
-                for ((k, v) in backupPrefs) if (k !in devicePrefs) prefs[k] = v
+                for ((k, v) in backupPrefs) if (!isDevicePref(k)) prefs[k] = v
                 for ((k, v) in ownPrefs) if (!(options.applyLayout && k in m.layout)) prefs[k] = v
                 if (options.applyLayout) prefs.putAll(m.layout)
                 scan.profile?.let { prefs["profile_photo"] = "${target.profileDir}/$it" }
@@ -326,10 +335,71 @@ class BackupRestorer {
                 driver.execute(null, "UPDATE songs SET favorite_at = 1 WHERE favorite_at = 0 AND favorite = 1", 0)
                 driver.execute(null, "UPDATE playlists SET uuid = 'legacy-' || id || '-' || name WHERE uuid = ''", 0)
             }
+            progress("Keeping your chat index", 0.9)
+            keepIndex(driver, target, scan)
             return songs.size
         } finally {
             driver.close()
         }
+    }
+
+    private class IndexKeepFailed(cause: Throwable) : RuntimeException(cause)
+
+    /**
+     * A restore never loses the chat index: this device's own index is copied into the new library as it is, then the backup's index is
+     * merged on top (nothing is deleted, the further read wins). If this device's index can't be copied, the whole restore stops.
+     */
+    private fun keepIndex(driver: SqlDriver, target: RestoreTarget, scan: Scanned) {
+        val store = io.max.paperplay.core.account.IndexStore(driver)
+        if (Fs.exists(target.libraryPath)) try {
+            val old = target.openDriver(target.libraryPath)
+            try {
+                LibraryDatabase(driver).transaction {
+                    for (table in listOf("index_chats", "index_posts", "index_copied")) copyTable(old, driver, table)
+                }
+            } finally {
+                old.close()
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            throw IndexKeepFailed(e)
+        }
+        // Counts and keys follow the copied rows.
+        io.max.paperplay.core.account.IndexStore(driver)
+        scan.indexFile?.let { path ->
+            runCatching { io.max.paperplay.core.account.IndexFile.read(Fs.readText(path), store, 0, own = true) }
+        }
+    }
+
+    /** Column name to type ("INTEGER", "TEXT", "BLOB") of [table]; empty when the table does not exist. */
+    private fun columnsOf(driver: SqlDriver, table: String): Map<String, String> =
+        driver.executeQuery(null, "PRAGMA table_info($table)", { c ->
+            val out = linkedMapOf<String, String>()
+            while (c.next().value) out[c.getString(1)!!] = c.getString(2)!!.uppercase()
+            QueryResult.Value<Map<String, String>>(out)
+        }, 0).value
+
+    /** Copies every row of [table] from [from] to [to] (the columns both have), replacing rows with the same key. */
+    private fun copyTable(from: SqlDriver, to: SqlDriver, table: String) {
+        val have = columnsOf(from, table)
+        if (have.isEmpty()) return
+        val cols = columnsOf(to, table).filterKeys { it in have }.toList()
+        val names = cols.joinToString(",") { "\"${it.first}\"" }
+        val insert = "INSERT OR REPLACE INTO $table ($names) VALUES (${cols.joinToString(",") { "?" }})"
+        from.executeQuery(null, "SELECT $names FROM $table", { c ->
+            while (c.next().value) {
+                to.execute(null, insert, cols.size) {
+                    cols.forEachIndexed { i, (_, type) ->
+                        when {
+                            type.startsWith("INT") -> bindLong(i, c.getLong(i))
+                            type.startsWith("BLOB") -> bindBytes(i, c.getBytes(i))
+                            else -> bindString(i, c.getString(i))
+                        }
+                    }
+                }
+            }
+            QueryResult.Unit
+        }, 0)
     }
 
     /** This device's own prefs from the library about to be replaced; empty if there is none or it can't be read. */
@@ -342,7 +412,7 @@ class BackupRestorer {
                     val out = linkedMapOf<String, String>()
                     while (c.next().value) {
                         val k = c.getString(0)!!
-                        if (k in devicePrefs) out[k] = c.getString(1)!!
+                        if (isDevicePref(k)) out[k] = c.getString(1)!!
                     }
                     QueryResult.Value<Map<String, String>>(out)
                 }, 0).value

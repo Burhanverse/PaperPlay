@@ -112,4 +112,39 @@ class ChatIndexTest {
         assertTrue(songs.single().copied)
         assertFalse(index.indexedChats.value.isEmpty())
     }
+
+    @Test
+    fun anIndexZipMovesToAnotherDevice() = runBlocking {
+        account.batches = listOf(listOf(post(20, "u2", "Two"), post(10, "u1", "One")))
+        index.indexChat(ChatInfo(-5, "Chat", true), false)
+        val dir = java.nio.file.Files.createTempDirectory("idx").toFile()
+        val zip = "${dir.path}/i.zip"
+        io.max.paperplay.core.app.IndexArchive.export(index, zip, "${dir.path}/t")
+        val other = ChatIndex(account, IndexStore(libraryDriver()), library, { main }, { ++now })
+        val r = io.max.paperplay.core.app.IndexArchive.import(other, io.max.paperplay.core.backup.fileBackupSource(zip), "${dir.path}/t2")
+        assertEquals(2, r.posts)
+        assertEquals(listOf(20L, 10L), other.page(-5, IndexFilter.All, "", 0, 10).map { it.post.messageId })
+        assertEquals(2, other.chats.value.single().postCount)
+    }
+
+    @Test
+    fun songsWhosePostIsGoneFromAFullyReadChatLeave() = runBlocking {
+        // The library has 20 songs of chat -5; a full read finds 19 of them (post 7 was deleted in Telegram).
+        for (m in 1L..20L) library.upsertBotSong(post(m, "u$m", "S$m").asSong().copy(remote_id = "r$m"))
+        account.batches = listOf((1L..20L).filter { it != 7L }.map { post(it, "u$it", "S$it") })
+        index.indexChat(ChatInfo(-5, "Chat", true), true)
+        assertEquals(1, index.pruneDeadRows())
+        assertEquals(null, library.songByUniqueId("u7"))
+        assertEquals(19, library.songsInChat(-5).size)
+        assertEquals(0, index.pruneDeadRows())
+    }
+
+    @Test
+    fun aReadThatMissesManyPostsRemovesNothing() = runBlocking {
+        for (m in 1L..20L) library.upsertBotSong(post(m, "u$m", "S$m").asSong().copy(remote_id = "r$m"))
+        account.batches = listOf((11L..20L).map { post(it, "u$it", "S$it") })
+        index.indexChat(ChatInfo(-5, "Chat", true), true)
+        assertEquals(0, index.pruneDeadRows())
+        assertEquals(20, library.songsInChat(-5).size)
+    }
 }
