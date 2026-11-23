@@ -2,6 +2,17 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.14.1] - 2026-11-23
+
+### Fixed
+- The cover file check reads two columns and survives a read during a delete, which crashed the app ([`f997fad`](https://github.com/maxcodl/PaperPlay/commit/f997fadb826750181705669a2e3ee3ac82a50298))
+- A duplicate delete batch that hits an error fails its posts and logs where, instead of crashing the app ([`b97eb75`](https://github.com/maxcodl/PaperPlay/commit/b97eb753ff8cfa419f5f184d20c674856a93e480))
+
+### Other changes
+- Delete: duplicate posts go at about 2 a second ([`b851de8`](https://github.com/maxcodl/PaperPlay/commit/b851de899233b984b306cd893d8bd9316b6d1f3b))
+
+**Full changes:** [v1.14.0...v1.14.1](https://github.com/maxcodl/PaperPlay/compare/v1.14.0...v1.14.1)
+
 ## [1.14.0] - 2026-11-23
 
 ### Added
