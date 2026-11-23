@@ -2,6 +2,18 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.14.0] - 2026-11-23
+
+### Added
+- Re-sending a song shows its download and upload progress and speed, and keeps the file until the upload ends; back arrow turns as a page opens ([`ac8206c`](https://github.com/maxcodl/PaperPlay/commit/ac8206cec687bb6e7a9be16b7c80fd4bafa77624))
+
+### Fixed
+- A refused copy says whether the chat restricts saving or what Telegram answered ([`9c2460e`](https://github.com/maxcodl/PaperPlay/commit/9c2460e0ee7616a47dd7c8c1047e394a32a8e355))
+- A chat that blocks copying fails the rest of its songs at once; the copy shows why and logs an early stop ([`9e9d3d4`](https://github.com/maxcodl/PaperPlay/commit/9e9d3d4c52343e15fbb202a1f2d6dc6f87570a18))
+- Copying from a chat that blocks it no longer downloads and re-uploads unless turned on ([`3bc246d`](https://github.com/maxcodl/PaperPlay/commit/3bc246d1595ab22ed29ea29b434661cf970dbce0))
+
+**Full changes:** [v1.13.0...v1.14.0](https://github.com/maxcodl/PaperPlay/compare/v1.13.0...v1.14.0)
+
 ## [1.13.0] - 2026-11-23
 
 ### Improved
