@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.17.0] - 2026-11-23
+
+### Added
+- Settings search also finds options inside pages ([`dc90f51`](https://github.com/maxcodl/PaperPlay/commit/dc90f5163a244871c22cd5bfbeb2b68c79ecf35e))
+
+**Full changes:** [v1.16.0...v1.17.0](https://github.com/maxcodl/PaperPlay/compare/v1.16.0...v1.17.0)
+
 ## [1.16.0] - 2026-11-23
 
 ### Added
