@@ -126,4 +126,25 @@ class ChatIndexTest {
         assertEquals(listOf(20L, 10L), other.page(-5, IndexFilter.All, "", 0, 10).map { it.post.messageId })
         assertEquals(2, other.chats.value.single().postCount)
     }
+
+    @Test
+    fun songsWhosePostIsGoneFromAFullyReadChatLeave() = runBlocking {
+        // The library has 20 songs of chat -5; a full read finds 19 of them (post 7 was deleted in Telegram).
+        for (m in 1L..20L) library.upsertBotSong(post(m, "u$m", "S$m").asSong().copy(remote_id = "r$m"))
+        account.batches = listOf((1L..20L).filter { it != 7L }.map { post(it, "u$it", "S$it") })
+        index.indexChat(ChatInfo(-5, "Chat", true), true)
+        assertEquals(1, index.pruneDeadRows())
+        assertEquals(null, library.songByUniqueId("u7"))
+        assertEquals(19, library.songsInChat(-5).size)
+        assertEquals(0, index.pruneDeadRows())
+    }
+
+    @Test
+    fun aReadThatMissesManyPostsRemovesNothing() = runBlocking {
+        for (m in 1L..20L) library.upsertBotSong(post(m, "u$m", "S$m").asSong().copy(remote_id = "r$m"))
+        account.batches = listOf((11L..20L).map { post(it, "u$it", "S$it") })
+        index.indexChat(ChatInfo(-5, "Chat", true), true)
+        assertEquals(0, index.pruneDeadRows())
+        assertEquals(20, library.songsInChat(-5).size)
+    }
 }

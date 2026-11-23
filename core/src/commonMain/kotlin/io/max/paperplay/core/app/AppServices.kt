@@ -101,6 +101,7 @@ class AppServices(
                 pauseState = { realIndex.pauseState() },
                 takePause = { p, at -> realIndex.takePause(p, at) },
                 onIndexChanged = { realIndex.syncedIn() },
+                mainChat = { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) },
             ),
         ),
     ).also { lanSync = it; bindLan(it); bindIndexToLan(it, isDesktop) }
@@ -380,7 +381,11 @@ class AppServices(
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 kotlinx.coroutines.flow.combine(index.changes, library.changes) { _, _ -> }
                     .debounce(3_000)
-                    .collect { runCatching { index.updateFlags() } }
+                    .collect {
+                        runCatching { index.updateFlags() }
+                        // Songs whose post was deleted in Telegram leave the library once a full read shows them gone.
+                        runCatching { index.pruneDeadRows() }
+                    }
             }
         }
     }

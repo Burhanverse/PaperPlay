@@ -479,6 +479,33 @@ class ChatIndex(
         chatsChanged()
     }
 
+    /**
+     * Removes library songs whose post is gone from a chat that was read in full: the read saw every post up to the newest one, so a
+     * song row there with no post is one deleted in Telegram. A brake keeps a bad read from emptying the library: when more than a tenth
+     * of a chat's songs would go (and more than 5), nothing is removed from it. Returns how many were removed.
+     */
+    fun pruneDeadRows(): Int {
+        var removed = 0
+        for (c in store.chats()) {
+            if (!c.complete || !c.joined || c.postCount == 0) continue
+            val rows = library.songsInChat(c.id).filter { it.message_id <= c.newestMessageId }
+            if (rows.isEmpty()) continue
+            val alive = store.messageIds(c.id)
+            val dead = rows.filter { it.message_id !in alive }
+            if (dead.isEmpty()) continue
+            if (dead.size > maxOf(5, rows.size / 10)) {
+                io.max.paperplay.player.PlayLog.log("index", "Not removing ${dead.size} of ${rows.size} songs of ${c.title} whose posts are gone: too many, read the chat again first")
+                continue
+            }
+            for (s in dead) {
+                library.removePost(s.chat_id, s.message_id)
+                io.max.paperplay.player.PlayLog.log("index", "Removed \"${s.title}\": its post is no longer in ${c.title}")
+            }
+            removed += dead.size
+        }
+        return removed
+    }
+
     override fun alreadyHave(post: ChatPost): Boolean =
         store.had(post.chatId, post.messageId, post.uniqueId) || library.songByUniqueId(post.uniqueId)?.remote_id?.let { it != io.max.paperplay.core.app.ACCOUNT_REMOTE } == true
 

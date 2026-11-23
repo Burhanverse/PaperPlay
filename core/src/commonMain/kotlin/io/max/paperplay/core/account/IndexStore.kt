@@ -269,6 +269,17 @@ class IndexStore(private val driver: SqlDriver) {
         { bindLong(0, chatId); bindLong(1, messageId); bindString(2, uniqueId) },
     ) { it.getLong(0) == 1L }.firstOrNull() == true
 
+    /** Message ids saved for [chatId]. */
+    fun messageIds(chatId: Long): Set<Long> = query("SELECT message_id FROM index_posts WHERE chat_id = ?", 1, { bindLong(0, chatId) }) { it.getLong(0)!! }.toHashSet()
+
+    /** Which of [uniqueIds] are posted in [chatId] (as of its last read). */
+    fun posted(chatId: Long, uniqueIds: Collection<String>): Set<String> = uniqueIds.chunked(500).flatMapTo(HashSet()) { part ->
+        query(
+            "SELECT DISTINCT unique_id FROM index_posts WHERE chat_id = ? AND unique_id IN (${part.joinToString(",") { "?" }})", part.size + 1,
+            { bindLong(0, chatId); part.forEachIndexed { i, u -> bindString(i + 1, u) } },
+        ) { it.getString(0)!! }
+    }
+
     /** The cover picture Telegram keeps inside the post (a tiny JPEG), if the file had one. */
     fun thumb(chatId: Long, messageId: Long): ByteArray? =
         query("SELECT thumb FROM index_posts WHERE chat_id = ? AND message_id = ?", 2, { bindLong(0, chatId); bindLong(1, messageId) }) { it.getBytes(0) }.firstOrNull()

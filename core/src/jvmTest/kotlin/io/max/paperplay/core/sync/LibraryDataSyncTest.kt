@@ -17,7 +17,7 @@ class LibraryDataSyncTest {
         val library = LibraryRepository(LibraryRepo(LibraryDatabase(driver)) { ++now }) { ++now }
         val index = IndexStore(driver)
         var paused = false to 0L
-        val sync = LibraryDataSync(driver, library, { index }, { paused }, { p, at -> paused = p to at })
+        val sync = LibraryDataSync(driver, library, { index }, { paused }, { p, at -> paused = p to at }, mainChat = { -1L })
 
         fun song(uid: String, msg: Long) = driver.execute(
             null,
@@ -58,6 +58,21 @@ class LibraryDataSyncTest {
         assertEquals(listOf(-6L), phone.index.changedAfter(-1, 0, 0, "pc", 10).map { it.first.chatId })
         pull(phone, pc)
         assertEquals(4500, phone.index.chat(-5)!!.postCount)
+    }
+
+    @Test
+    fun aDeletionWhosePostIsStillInTheMainChatIsStale() = runBlocking {
+        val pc = Device("pc")
+        val phone = Device("phone")
+        pc.song("alive", 1); pc.song("elsewhere", 2)
+        phone.library.setPref(io.max.paperplay.core.filing.GONE_KEY, """{"alive":5,"elsewhere":5}""")
+        // The phone's index still sees "alive" posted in the main chat (-1); "elsewhere" only in another chat, which is never deleted from.
+        phone.index.saveChat(-1, "Main"); phone.index.upsertPosts(listOf(post(-1, 1).copy(uniqueId = "alive")), 1)
+        phone.index.saveChat(-9, "Other"); phone.index.upsertPosts(listOf(post(-9, 4).copy(uniqueId = "elsewhere")), 1)
+        assertEquals(1, pull(phone, pc))
+        assertEquals(1L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'alive'"))
+        assertEquals(0L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'elsewhere'"))
+        assertEquals("""{"elsewhere":5}""", phone.library.pref(io.max.paperplay.core.filing.GONE_KEY))
     }
 
     @Test

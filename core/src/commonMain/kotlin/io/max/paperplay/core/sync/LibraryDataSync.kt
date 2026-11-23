@@ -39,6 +39,8 @@ class LibraryDataSync(
     private val takePause: (paused: Boolean, at: Long) -> Unit,
     /** Called after posts or chats arrived, so the index lists refresh. */
     private val onIndexChanged: () -> Unit = {},
+    /** The main chat: the only chat where deleting a song deletes its post in Telegram. */
+    private val mainChat: () -> Long? = { null },
 ) : LanDataSync {
 
     override fun answer(peerId: String, request: JsonObject): JsonObject = when ((request["k"] as? JsonPrimitive)?.contentOrNull) {
@@ -95,11 +97,22 @@ class LibraryDataSync(
     private fun deleted(): Set<String> =
         runCatching { Json.parseToJsonElement(library.pref(GONE_KEY) ?: "{}").jsonObject.keys }.getOrDefault(emptySet())
 
+    private fun forget(ids: Set<String>) {
+        val o = runCatching { Json.parseToJsonElement(library.pref(GONE_KEY) ?: "{}").jsonObject }.getOrNull() ?: return
+        library.setPref(GONE_KEY, JsonObject(o.filterKeys { it !in ids }).toString())
+    }
+
     private suspend fun pullSongs(ask: suspend (JsonObject) -> JsonObject): Int {
         val theirs = (ask(buildJsonObject { put("k", "songkeys") })["ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
         val mine = songIds().toHashSet()
+        // Deleting a song deletes its post in the main chat. A deletion entry whose post is still in the main chat (by the index's last
+        // read) is stale: the song comes back, and the entry leaves the record so the next sync does not remove it again. Posts in
+        // other chats are never deleted, so a song deleted here that is also posted there stays deleted.
         val gone = deleted()
-        val missing = theirs.filter { it !in mine && it !in gone }
+        val main = mainChat()
+        val stale = if (main == null) emptySet() else index()?.posted(main, theirs.filter { it !in mine && it in gone }).orEmpty()
+        if (stale.isNotEmpty()) forget(stale)
+        val missing = theirs.filter { it !in mine && (it !in gone || it in stale) }
         if (missing.isEmpty()) return 0
         val cols = columns().associate { it.first to it.second }
         var added = 0
