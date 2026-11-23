@@ -52,6 +52,10 @@ class AppServices(
     val driver = platform.openDriver("${platform.dataDir}/library.sqlite")
     val db = LibraryDatabase(driver)
     val library = LibraryRepository(LibraryRepo(db, clock), clock, scope)
+    val eqRepo = io.max.paperplay.core.eq.EqRepository(db, clock)
+    val autoEqCatalog: io.max.paperplay.core.eq.AutoEqCatalog by lazy {
+        io.max.paperplay.core.eq.openAutoEqCatalog(platform.dataDir)
+    }
     val scanner = Scanner(library, scope)
 
     /** Looks for newer releases on GitHub; the person's update choices are kept as settings of this device. */

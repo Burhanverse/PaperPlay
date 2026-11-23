@@ -57,6 +57,37 @@ actual object PlatformBitPerfectPrefs {
         }
     }
 
+    actual fun loadAllowEqInUsbExclusive(sqliteGet: ((String) -> String?)?, sqliteSet: ((String, String) -> Unit)?): Boolean {
+        val ctx = PlaybackCore.appContext
+        val dbStore = sqliteGet?.let { g ->
+            object : PrefKeyValueStore {
+                override fun get(key: String): String? = g(key)
+                override fun set(key: String, value: String) { sqliteSet?.invoke(key, value) }
+            }
+        }
+        return when {
+            ctx != null -> BitPerfectPrefs.loadAllowEqInUsbExclusive(spStore(ctx), dbStore)
+            dbStore != null -> BitPerfectPrefs.loadAllowEqInUsbExclusive(dbStore, null)
+            else -> true
+        }
+    }
+
+    actual fun saveAllowEqInUsbExclusive(allow: Boolean, sqliteSet: ((String, String) -> Unit)?) {
+        PlaybackCore.allowEqInUsbExclusive = allow
+        val ctx = PlaybackCore.appContext
+        val dbMirror = sqliteSet?.let { s ->
+            object : PrefKeyValueStore {
+                override fun get(key: String): String? = null
+                override fun set(key: String, value: String) { s(key, value) }
+            }
+        }
+        if (ctx != null) {
+            BitPerfectPrefs.saveAllowEqInUsbExclusive(spStore(ctx), dbMirror, allow)
+        } else {
+            sqliteSet?.invoke(BitPerfectPrefs.KEY_ALLOW_EQ_IN_USB_EXCLUSIVE, allow.toString())
+        }
+    }
+
     actual fun syncFromRestoredPrefs(restoredPrefs: Map<String, String>) {
         val ctx = PlaybackCore.appContext ?: return
         val restored = BitPerfectPrefs.resolveBackupRestore(isPhone = true, restoredPrefs = restoredPrefs) ?: return

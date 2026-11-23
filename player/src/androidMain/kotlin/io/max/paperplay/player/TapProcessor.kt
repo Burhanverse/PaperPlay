@@ -35,6 +35,8 @@ internal class EngineAudioSink(
     private var appliedWidth = 1f
     private var appliedCorrection: FloatArray? = null
     private var appliedOptions = 0
+    private var appliedPeq: ParametricEqProfile? = null
+    private var appliedPeqOn = false
     private var pending: ByteBuffer? = null
     private var out: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
     private var calls = 0
@@ -63,6 +65,8 @@ internal class EngineAudioSink(
         appliedWidth = 1f
         appliedCorrection = null
         appliedOptions = 0
+        appliedPeq = null
+        appliedPeqOn = false
         val floatFormat = f.buildUpon().setPcmEncoding(C.ENCODING_PCM_FLOAT).build()
         super.configure(
             AudioSink.AudioSinkConfig.Builder(floatFormat)
@@ -135,6 +139,24 @@ internal class EngineAudioSink(
         if (corr !== appliedCorrection) { EngineNative.setCorrection(handle, corr ?: FloatArray(0)); appliedCorrection = corr; PlayLog.log("engine", "correction ${(corr?.size ?: 0) / 4} filters") }
         val opts = PlaybackCore.options
         if (opts != appliedOptions) { EngineNative.setOptions(handle, opts); appliedOptions = opts; PlayLog.log("engine", "options $opts") }
+        val peq = PlaybackCore.parametricEq
+        val peqOn = PlaybackCore.parametricEnabled && peq != null
+        if (peq !== appliedPeq || peqOn != appliedPeqOn) {
+            if (peqOn && peq != null) {
+                EngineNative.setParametricEq(
+                    handle = handle,
+                    enabled = true,
+                    preampDb = peq.preampDb,
+                    autoPreamp = peq.autoPreamp,
+                    limiterEnabled = peq.limiterEnabled,
+                    bands = peq.toNativeFlatFloatArray(),
+                )
+            } else {
+                EngineNative.setParametricEq(handle, false, 0f, false, true, FloatArray(0))
+            }
+            appliedPeq = peq
+            appliedPeqOn = peqOn
+        }
         tap(src, samples)
         val kind = when (enc) { C.ENCODING_PCM_16BIT -> 0; C.ENCODING_PCM_24BIT -> 1; C.ENCODING_PCM_FLOAT -> 3; else -> 2 }
         // Decoder buffers are direct, so Rust reads them in place; anything else is converted here first.
@@ -232,17 +254,246 @@ internal class PlainDiagAudioSink(
     }
 }
 
-/** Passes audio through unchanged and feeds a mono mix to [AudioTap]. Inactive for formats it cannot read. */
+internal interface PcmEqNativeApi {
+    val available: Boolean
+    fun create(rate: Int, channels: Int): Long
+    fun destroy(handle: Long)
+    fun reconfigure(handle: Long, rate: Int, channels: Int)
+    fun setParametricEq(
+        handle: Long,
+        enabled: Boolean,
+        preampDb: Float,
+        autoPreamp: Boolean,
+        limiterEnabled: Boolean,
+        bands: FloatArray,
+    )
+    fun setDry(handle: Long, on: Boolean)
+    fun processPcmInPlace(handle: Long, buf: ByteBuffer, offset: Int, length: Int, kind: Int): Int
+    fun reset(handle: Long)
+}
+
+internal object DefaultPcmEqNativeApi : PcmEqNativeApi {
+    override val available: Boolean get() = EngineNative.available
+    override fun create(rate: Int, channels: Int): Long = EngineNative.create(rate, channels)
+    override fun destroy(handle: Long) = EngineNative.destroy(handle)
+    override fun reconfigure(handle: Long, rate: Int, channels: Int) = EngineNative.reconfigure(handle, rate, channels)
+    override fun setParametricEq(
+        handle: Long,
+        enabled: Boolean,
+        preampDb: Float,
+        autoPreamp: Boolean,
+        limiterEnabled: Boolean,
+        bands: FloatArray,
+    ) = EngineNative.setParametricEq(handle, enabled, preampDb, autoPreamp, limiterEnabled, bands)
+    override fun setDry(handle: Long, on: Boolean) = EngineNative.setDry(handle, on)
+    override fun processPcmInPlace(handle: Long, buf: ByteBuffer, offset: Int, length: Int, kind: Int): Int =
+        EngineNative.processPcmInPlace(handle, buf, offset, length, kind)
+    override fun reset(handle: Long) = EngineNative.reset(handle)
+}
+
+/**
+ * Zero-allocation format-preserving native Rust EQ stage for USB Exclusive & Android 14+ Direct Mixer paths.
+ * Operates in full `f64` precision + TPDF dither across `PCM_16BIT`, `PCM_24BIT` (3-byte packed),
+ * `PCM_32BIT`, and `PCM_FLOAT` at any native sample rate (`44.1 .. 384 kHz`).
+ * True byte-exact bypass (zero JNI calls, zero copies, zero dithering) whenever EQ is off/flat or `allowEqInUsbExclusive` is false.
+ */
 @OptIn(UnstableApi::class)
-internal class TapProcessor : BaseAudioProcessor() {
-    override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat =
-        if (inputAudioFormat.encoding in setOf(C.ENCODING_PCM_16BIT, C.ENCODING_PCM_FLOAT, C.ENCODING_PCM_24BIT, C.ENCODING_PCM_32BIT)) inputAudioFormat else AudioFormat.NOT_SET
+internal class NativePcmEqStage(
+    private val nativeApi: PcmEqNativeApi = DefaultPcmEqNativeApi,
+) {
+    private var handle: Long = 0L
+    private var rate: Int = 0
+    private var channels: Int = 0
+    private var encoding: Int = C.ENCODING_INVALID
+    private var appliedPeq: ParametricEqProfile? = null
+    private var appliedPeqOn: Boolean = false
+    private var appliedDry: Boolean = false
+    private var scratch: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
+
+    private fun pcmKind(enc: Int): Int = when (enc) {
+        C.ENCODING_PCM_16BIT -> 0
+        C.ENCODING_PCM_24BIT -> 1
+        C.ENCODING_PCM_32BIT -> 2
+        C.ENCODING_PCM_FLOAT -> 3
+        else -> -1
+    }
+
+    fun configure(sampleRate: Int, channelCount: Int, pcmEncoding: Int) {
+        val changed = sampleRate != rate || channelCount != channels || pcmEncoding != encoding
+        rate = sampleRate
+        channels = channelCount
+        encoding = pcmEncoding
+        if (handle != 0L && changed && sampleRate > 0 && channelCount > 0) {
+            nativeApi.reconfigure(handle, sampleRate, channelCount)
+        }
+        appliedPeq = null
+        appliedPeqOn = false
+        appliedDry = false
+    }
+
+    private fun prepareNativeForProcessing(isDoP: Boolean): Int {
+        val kind = pcmKind(encoding)
+        val peq = PlaybackCore.parametricEq
+        val shouldProcess = !isDoP &&
+            PlaybackCore.allowEqInUsbExclusive &&
+            PlaybackCore.parametricEnabled &&
+            peq != null &&
+            peq.hasActiveShaping() &&
+            kind >= 0 &&
+            rate > 0 &&
+            channels > 0 &&
+            nativeApi.available
+
+        if (!shouldProcess) {
+            if (appliedPeqOn && handle != 0L) {
+                nativeApi.setParametricEq(handle, false, 0f, false, true, FloatArray(0))
+                appliedPeqOn = false
+                appliedPeq = null
+            }
+            PlaybackCore.usbEqActive = false
+            return -1
+        }
+
+        if (handle == 0L) {
+            handle = nativeApi.create(rate, channels)
+            appliedPeq = null
+            appliedPeqOn = false
+            appliedDry = false
+        }
+        if (handle == 0L) {
+            PlaybackCore.usbEqActive = false
+            return -1
+        }
+
+        val profile = peq!!
+        if (profile !== appliedPeq || !appliedPeqOn) {
+            nativeApi.setParametricEq(
+                handle = handle,
+                enabled = true,
+                preampDb = profile.preampDb,
+                autoPreamp = profile.autoPreamp,
+                limiterEnabled = profile.limiterEnabled,
+                bands = profile.toNativeFlatFloatArray(),
+            )
+            appliedPeq = profile
+            appliedPeqOn = true
+        }
+        val dry = PlaybackCore.dryCompare
+        if (dry != appliedDry) {
+            nativeApi.setDry(handle, dry)
+            appliedDry = dry
+        }
+        return kind
+    }
+
+    /**
+     * When EQ is active & allowed, copies `[src.position(), src.limit())` into an internal direct native-order
+     * scratch buffer, processes it with Rust 64-bit EQ (+ TPDF dither for 16/24-bit int), and returns that
+     * processed direct buffer ready to read (`position=0, limit=src.remaining()`), leaving [src] unconsumed.
+     * Supports read-only [MediaCodec] output buffers without discarding EQ output.
+     * Returns `null` when bypassed (true zero-copy, byte-exact pass-through).
+     */
+    fun processToDirectBufferIfActive(src: ByteBuffer, isDoP: Boolean = false): ByteBuffer? {
+        val kind = prepareNativeForProcessing(isDoP)
+        if (kind < 0) return null
+
+        val remaining = src.remaining()
+        if (remaining <= 0) {
+            PlaybackCore.usbEqActive = true
+            return null
+        }
+
+        if (scratch.capacity() < remaining) {
+            scratch = ByteBuffer.allocateDirect(remaining.coerceAtLeast(65536)).order(ByteOrder.nativeOrder())
+        }
+        scratch.clear()
+        scratch.put(src.duplicate())
+        scratch.flip()
+        nativeApi.processPcmInPlace(handle, scratch, 0, remaining, kind)
+        PlaybackCore.usbEqActive = true
+        return scratch
+    }
+
+    /**
+     * Processes `[buf.position(), buf.limit())` in-place when EQ is enabled & allowed on the direct route
+     * and [buf] is writable (e.g., [TapProcessor]'s direct output buffer). Leaves `buf.position()` and
+     * `buf.limit()` unchanged. Returns `true` iff audio in [buf] was modified by EQ.
+     */
+    fun processInPlaceIfActive(buf: ByteBuffer, isDoP: Boolean = false): Boolean {
+        if (buf.isReadOnly) {
+            return false
+        }
+        val kind = prepareNativeForProcessing(isDoP)
+        if (kind < 0) return false
+
+        val remaining = buf.remaining()
+        if (remaining <= 0) {
+            PlaybackCore.usbEqActive = true
+            return false
+        }
+
+        if (buf.isDirect) {
+            nativeApi.processPcmInPlace(handle, buf, buf.position(), remaining, kind)
+            PlaybackCore.usbEqActive = true
+            return true
+        }
+
+        val processed = processToDirectBufferIfActive(buf, isDoP = isDoP) ?: return false
+        val pos = buf.position()
+        val lim = buf.limit()
+        buf.put(processed)
+        buf.position(pos)
+        buf.limit(lim)
+        PlaybackCore.usbEqActive = true
+        return true
+    }
+
+    fun reset() {
+        if (handle != 0L) nativeApi.reset(handle)
+    }
+
+    fun release() {
+        if (handle != 0L) {
+            nativeApi.destroy(handle)
+            handle = 0L
+        }
+        appliedPeq = null
+        appliedPeqOn = false
+        PlaybackCore.usbEqActive = false
+    }
+}
+
+/**
+ * Passes audio through at the exact input PCM format (16/24/32-bit int or float, any sample rate)
+ * and feeds a mono mix to [AudioTap]. When [enableDirectPcmEq] is true (API 34+ direct mixer path),
+ * applies in-place Rust 31-band parametric EQ via [NativePcmEqStage] without altering `outputAudioFormat`.
+ */
+@OptIn(UnstableApi::class)
+internal class TapProcessor(
+    private val enableDirectPcmEq: Boolean = false,
+) : BaseAudioProcessor() {
+    private val directEq: NativePcmEqStage? = if (enableDirectPcmEq) NativePcmEqStage() else null
+
+    override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
+        val supported = inputAudioFormat.encoding in setOf(
+            C.ENCODING_PCM_16BIT,
+            C.ENCODING_PCM_FLOAT,
+            C.ENCODING_PCM_24BIT,
+            C.ENCODING_PCM_32BIT,
+        )
+        if (!supported) return AudioFormat.NOT_SET
+        directEq?.configure(inputAudioFormat.sampleRate, inputAudioFormat.channelCount, inputAudioFormat.encoding)
+        return inputAudioFormat
+    }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         val size = inputBuffer.remaining()
         if (size == 0) return
         val out = replaceOutputBuffer(size)
-        val src = inputBuffer.duplicate().order(ByteOrder.nativeOrder())
+        out.put(inputBuffer)
+        out.flip()
+        directEq?.processInPlaceIfActive(out, isDoP = false)
+        val src = out.duplicate().order(ByteOrder.nativeOrder())
         val ch = inputAudioFormat.channelCount.coerceAtLeast(1)
         val rate = inputAudioFormat.sampleRate
         val enc = inputAudioFormat.encoding
@@ -257,12 +508,17 @@ internal class TapProcessor : BaseAudioProcessor() {
             }
             AudioTap.push(rate, sum / ch)
         }
-        out.put(inputBuffer)
-        out.flip()
     }
 
-    override fun onFlush() { AudioTap.reset() }
-    override fun onReset() { AudioTap.reset() }
+    override fun onFlush() {
+        directEq?.reset()
+        AudioTap.reset()
+    }
+
+    override fun onReset() {
+        directEq?.release()
+        AudioTap.reset()
+    }
 }
 
 /**

@@ -36,9 +36,15 @@ class LazyPlayerEngineTest {
         override val currentIndex: StateFlow<Int> get() = _idx
 
         override fun setQueue(items: List<QueueItem>, startIndex: Int) {
+            setQueue(items, startIndex, 0L)
+        }
+
+        override fun setQueue(items: List<QueueItem>, startIndex: Int, startPositionMs: Long) {
             queueItems = items
             queueIndex = startIndex
+            seekPos = startPositionMs
             _idx.value = startIndex
+            _pos.value = startPositionMs
             _state.value = PlayerState.Playing
         }
 
@@ -120,7 +126,7 @@ class LazyPlayerEngineTest {
     }
 
     @Test
-    fun seekInstantiatesAndMaintainsPause() {
+    fun seekWhilePausedUpdatesPendingPositionAndStartsAtThatPositionOnPlay() {
         val fake = FakeEngine()
         val lazy = LazyPlayerEngine { fake }
 
@@ -129,8 +135,13 @@ class LazyPlayerEngineTest {
         assertFalse(lazy.isCreated)
 
         lazy.seek(2500L)
+        assertFalse(lazy.isCreated)
+        assertEquals(PlayerState.Paused, lazy.state.value)
+        assertEquals(2500L, lazy.positionMs.value)
+
+        lazy.play()
         assertTrue(lazy.isCreated)
-        assertTrue(fake.paused)
         assertEquals(2500L, fake.seekPos)
+        assertTrue(fake.played)
     }
 }

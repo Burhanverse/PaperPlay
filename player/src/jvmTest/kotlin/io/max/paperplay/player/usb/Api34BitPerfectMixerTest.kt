@@ -132,6 +132,23 @@ class Api34BitPerfectMixerTest {
             Api34BitPerfectMixerPolicy.verifyAllFiveGates(baseInput().copy(dspAndEffectsBypassed = false)),
         )
         assertEquals(4, dspOn.failedGate)
+
+        val directEqAllowed = assertIs<Api34MixerVerification.Verified>(
+            Api34BitPerfectMixerPolicy.verifyAllFiveGates(
+                baseInput().copy(dspAndEffectsBypassed = false, allowEqInDirectMixer = true),
+            ),
+        )
+        assertEquals(true, directEqAllowed.eqActive)
+        assertEquals(24, directEqAllowed.bitDepth)
+        assertEquals(96_000, directEqAllowed.sampleRateHz)
+
+        // Even when EQ is allowed, float output must remain rejected
+        val floatStillRejected = assertIs<Api34MixerVerification.Rejected>(
+            Api34BitPerfectMixerPolicy.verifyAllFiveGates(
+                baseInput().copy(floatOutputDisabled = false, dspAndEffectsBypassed = false, allowEqInDirectMixer = true),
+            ),
+        )
+        assertEquals(4, floatStillRejected.failedGate)
     }
 
     @Test

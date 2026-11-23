@@ -25,6 +25,7 @@ data class Api34MixerProbeInput(
     val audioTrackEncoding: Int,
     val audioTrackRateHz: Int,
     val audioTrackChannels: Int,
+    val allowEqInDirectMixer: Boolean = false,
 )
 
 sealed interface Api34MixerVerification {
@@ -33,6 +34,7 @@ sealed interface Api34MixerVerification {
         val bitDepth: Int,
         val sampleRateHz: Int,
         val channels: Int,
+        val eqActive: Boolean = false,
     ) : Api34MixerVerification
 
     data class Rejected(
@@ -120,11 +122,11 @@ object Api34BitPerfectMixerPolicy {
             )
         }
 
-        // Gate 4: Float output disabled AND DSP/effects bypassed
+        // Gate 4: Float output disabled AND DSP/effects bypassed (or EQ explicitly permitted in direct mixer mode)
         if (!input.floatOutputDisabled) {
             return Api34MixerVerification.Rejected(4, "Float output is enabled; API 34 mixer requires integer output")
         }
-        if (!input.dspAndEffectsBypassed) {
+        if (!input.dspAndEffectsBypassed && !input.allowEqInDirectMixer) {
             return Api34MixerVerification.Rejected(4, "DSP or audio effects active")
         }
 
@@ -146,6 +148,7 @@ object Api34BitPerfectMixerPolicy {
             bitDepth = bitDepth,
             sampleRateHz = input.audioTrackRateHz,
             channels = input.audioTrackChannels,
+            eqActive = !input.dspAndEffectsBypassed && input.allowEqInDirectMixer,
         )
     }
 }

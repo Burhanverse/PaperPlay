@@ -31,15 +31,15 @@ class LibraryDbTest {
     fun schemaVersionMatchesDrift() {
         val f = tmp()
         libraryDriver(f.path).close()
-        assertEquals(15, userVersion(f)) // Drift schemaVersion in db.dart
+        assertEquals(DRIFT_SCHEMA_VERSION.toInt(), userVersion(f))
         DriverManager.getConnection("jdbc:sqlite:${f.path}").use { c ->
             val names = c.createStatement().executeQuery(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
             ).use { rs -> generateSequence { if (rs.next()) rs.getString(1) else null }.toList() }
             assertEquals(
                 listOf(
-                    "forum_topics", "library_chats", "listen_stats", "missing_tracks", "mood_votes",
-                    "playlist_songs", "playlists", "post_copies", "prefs", "songs",
+                    "eq_device_map", "eq_presets", "forum_topics", "library_chats", "listen_stats",
+                    "missing_tracks", "mood_votes", "playlist_songs", "playlists", "post_copies", "prefs", "songs",
                 ),
                 names,
             )
@@ -134,6 +134,7 @@ class LibraryDbTest {
         assertNotNull(db.miscQueries.chatTitle(1).executeAsOneOrNull())
         db.songsQueries.setFavorite(true, 5, 1, 2)
         assertTrue(db.songsQueries.favorites().executeAsOne().favorite)
-        assertEquals(15, userVersion(f))
+        assertEquals(DRIFT_SCHEMA_VERSION.toInt(), userVersion(f))
+        assertTrue(db.eqQueries.allEqPresets().executeAsList().isEmpty())
     }
 }

@@ -139,15 +139,10 @@ internal fun EngineExtras(backend: PlayerControls) {
     )
 }
 
-/** Settings > Listening > Equalizer. Ten bands drawn as a curve you can drag, plus presets. */
+/** Settings > Listening > Equalizer. Full 31-band parametric EQ, AutoEQ browser, and engine extras. */
 @Composable
 internal fun EqualizerPage(backend: CoreBackend) {
-    val on by backend.eqOn.collectAsState()
-    val gains by backend.eqGains.collectAsState()
-    val bass by backend.eqBass.collectAsState()
-    BitPerfectRow(backend)
-    EqualizerContent(on, gains, { backend.setEqualizer(on = it) }, { backend.setEqualizer(on = true, gains = it) }, bass, if (backend.hasBass) { v: Float -> backend.setEqBass(v) } else null)
-    EngineExtras(backend)
+    ParametricEqualizerContent(backend = backend, showTopMasterSwitch = true)
 }
 
 @Composable

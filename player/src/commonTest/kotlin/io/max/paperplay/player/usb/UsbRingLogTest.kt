@@ -20,15 +20,17 @@ class UsbRingLogTest {
         UsbRingLog.recordAudio(UsbRingLog.CODE_SET_CUR_RATE, 96000, 0)
         UsbRingLog.recordAudio(UsbRingLog.CODE_SINK_CONFIGURE, 96000, 2)
         UsbRingLog.recordAudio(UsbRingLog.CODE_SINK_HANDLE_BUFFER, 4096, 1000000)
+        UsbRingLog.record("PowerTelemetry", "SCREEN_OFF: doze=true", UsbRingLog.CODE_POWER_EVENT)
 
         val dump = UsbRingLog.dump()
-        assertEquals(6, dump.size)
+        assertEquals(7, dump.size)
         assertTrue(dump[0].contains("Initial setup"))
         assertTrue(dump[1].contains("CLAIM_IFACE iface=1 attempt=1"))
         assertTrue(dump[2].contains("CLAIM_RES iface=1 success=true"))
         assertTrue(dump[3].contains("SET_CUR_RATE rate=96000 result=0"))
         assertTrue(dump[4].contains("SINK_CONFIGURE rate=96000 ch/enc=2"))
         assertTrue(dump[5].contains("SINK_HANDLE_BUF bytes=4096 ptsUs=1000000"))
+        assertTrue(dump[6].contains("POWER_EVENT SCREEN_OFF: doze=true"))
     }
 
     @Test

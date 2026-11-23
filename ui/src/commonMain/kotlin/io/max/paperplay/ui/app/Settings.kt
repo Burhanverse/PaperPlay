@@ -135,7 +135,7 @@ private fun SettingsScreen(
             if (page == "channels" && loggedIn) IconButton({ stack.add("index") }) { AppIcon(Icons.Rounded.Forum, "Your chats and channels") }
         }
         // The chat pages hold long lists, so they scroll lazily instead of inside the shared scroll column.
-        val isLazy = page == "index" || page == "missing" || page == "log" || page?.startsWith("index:") == true
+        val isLazy = page == "index" || page == "missing" || page == "log" || page == "changelog" || page?.startsWith("index:") == true
         if (page == "index") IndexPage(backend, stack, bottomPadding)
         else if (page == "dupes") DuplicatesPage(backend, bottomPadding)
         else if (page != null && page.startsWith("index:")) ChatSongsPage(backend, page.removePrefix("index:").toLongOrNull() ?: 0L, stack, bottomPadding)
@@ -158,7 +158,7 @@ internal val LocalPageBottomPadding = androidx.compose.runtime.compositionLocalO
 internal val subTitles = mapOf(
     "channels" to "Channels and chats", "bots" to "Bots", "account" to "Your account", "log" to "Activity log",
     "repair" to "Scan library", "recover" to "Recover songs", "folders" to "Music folders", "exports" to "Saved export lists", "cache" to "Cache manager", "sort" to "Sort General", "dupes" to "Find duplicates", "missing" to "Song info left", "uploadhub" to "Upload songs", "mixlearn" to "Mixes and learning", "weather" to "Weather",
-    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB DAC", "usb_probe" to "USB probe",
+    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB DAC", "usb_probe" to "USB probe", "changelog" to "Change log",
 )
 
 @Composable
@@ -629,7 +629,8 @@ internal fun SettingsPage(
         }
         "mixlearn" -> MixLearnPage(backend) { confirm = "clearlearned" }
         "weather" -> WeatherPage(backend)
-        "about" -> AboutPage(backend)
+        "about" -> AboutPage(backend, onOpenChangelog = { stack.add("changelog") })
+        "changelog" -> ChangelogPage(backend)
         "permissions" -> PermissionsPage()
         "conn" -> ConnectionPage(conn, backend)
         "netplay" -> NetplayPage(backend)

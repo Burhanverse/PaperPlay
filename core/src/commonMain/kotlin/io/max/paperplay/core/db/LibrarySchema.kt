@@ -5,7 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 
 /** Drift's `schemaVersion`, stored in SQLite's `user_version`. Bump together with db.dart. */
-const val DRIFT_SCHEMA_VERSION = 15L
+const val DRIFT_SCHEMA_VERSION = 16L
 
 /** Fresh files get the SQLDelight DDL; files from the Flutter app are upgraded with Drift's steps. */
 object LibrarySchema : SqlSchema<QueryResult.Value<Unit>> {
@@ -113,6 +113,19 @@ object LibrarySchema : SqlSchema<QueryResult.Value<Unit>> {
             sql(
                 "UPDATE playlist_songs SET position = (SELECT COUNT(*) FROM playlist_songs AS o WHERE o.playlist_id = playlist_songs.playlist_id " +
                     "AND (o.added_at < playlist_songs.added_at OR (o.added_at = playlist_songs.added_at AND o.rowid <= playlist_songs.rowid)))",
+            )
+        }
+        if (from < 16) {
+            sql(
+                "CREATE TABLE IF NOT EXISTS eq_presets (\"id\" TEXT NOT NULL PRIMARY KEY, \"name\" TEXT NOT NULL, " +
+                    "\"source\" TEXT NOT NULL DEFAULT 'Custom', \"preamp_db\" REAL NOT NULL DEFAULT 0.0, " +
+                    "\"auto_preamp\" INTEGER NOT NULL DEFAULT 1, \"limiter_enabled\" INTEGER NOT NULL DEFAULT 1, " +
+                    "\"bands_json\" TEXT NOT NULL, \"updated_at\" INTEGER NOT NULL DEFAULT 0)",
+            )
+            sql(
+                "CREATE TABLE IF NOT EXISTS eq_device_map (\"device_key\" TEXT NOT NULL PRIMARY KEY, " +
+                    "\"device_label\" TEXT NOT NULL, \"preset_id\" TEXT, \"enabled\" INTEGER NOT NULL DEFAULT 1, " +
+                    "\"profile_json\" TEXT NOT NULL, \"updated_at\" INTEGER NOT NULL DEFAULT 0)",
             )
         }
         return QueryResult.Unit

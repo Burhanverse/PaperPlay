@@ -30,6 +30,8 @@ data class RouteInput(
     val protocolVersion: String? = null,
     val confirmedAlt: Int? = null,
     val hardwareVolume: String? = null,
+    val eqEnabled: Boolean = false,
+    val allowEqInUsbExclusive: Boolean = false,
 )
 
 /** Deterministic routing + telemetry verdict produced by [BitPerfectRouter]. */
@@ -133,9 +135,12 @@ object BitPerfectRouter {
 
         // 4. Optional Stage 5 API 34+ MIXER_BEHAVIOR_BIT_PERFECT (only when dev flag on and available without direct USB claim)
         if (!input.usbDacAttached && input.api34MixerEnabled && input.api34MixerAvailable && !input.isDoP) {
+            val effectiveEffects = effectiveDirectEffects(input)
+            val nonEqEffects = effectiveEffects.filterNot(BitPerfectEvaluator::isEqEffect)
             val transport = TransportInfo(
                 kind = TransportKind.ANDROID_BIT_PERFECT_MIXER,
-                verified = input.sourceFormat != null && input.verifiedOutputFormat != null && input.effects.isEmpty(),
+                verified = input.sourceFormat != null && input.verifiedOutputFormat != null &&
+                    (nonEqEffects.isEmpty() && (effectiveEffects.isEmpty() || input.allowEqInUsbExclusive)),
                 deviceName = input.deviceName,
                 deviceId = input.deviceId,
                 confirmedRateHz = input.verifiedOutputFormat?.sampleRateHz,
@@ -146,20 +151,26 @@ object BitPerfectRouter {
                 transport = transport,
                 source = input.sourceFormat,
                 output = input.verifiedOutputFormat,
-                effects = input.effects,
+                effects = effectiveEffects,
                 requestedOn = true,
+                allowEqInUsbExclusive = input.allowEqInUsbExclusive,
             )
             return RouteDecision(
                 route = OutputRoute.Api34BitPerfectMixer,
-                status = if (verdict.bitPerfect && input.verifiedOutputFormat != null) {
-                    BitPerfectStatus.Active(
+                status = when {
+                    verdict.bitPerfect && input.verifiedOutputFormat != null -> BitPerfectStatus.Active(
                         transportLabel = TransportKind.ANDROID_BIT_PERFECT_MIXER.displayName,
                         sampleRateHz = input.verifiedOutputFormat.sampleRateHz,
                         bitDepth = input.verifiedOutputFormat.wireBitDepth,
                         deviceName = input.deviceName,
                     )
-                } else {
-                    BitPerfectStatus.Fallback(verdict.note)
+                    verdict.directWithEq && input.verifiedOutputFormat != null -> BitPerfectStatus.DirectWithEq(
+                        transportLabel = TransportKind.ANDROID_BIT_PERFECT_MIXER.displayName,
+                        sampleRateHz = input.verifiedOutputFormat.sampleRateHz,
+                        bitDepth = input.verifiedOutputFormat.wireBitDepth,
+                        deviceName = input.deviceName,
+                    )
+                    else -> BitPerfectStatus.Fallback(verdict.note)
                 },
                 outputBitPerfect = verdict.bitPerfect,
                 allowPlayback = true,
@@ -262,6 +273,7 @@ object BitPerfectRouter {
 
         // 6. Verified Direct USB UAC path.
         val outFmt = input.verifiedOutputFormat
+        val effectiveEffects = effectiveDirectEffects(input)
         val transport = TransportInfo(
             kind = TransportKind.USB_UAC_DIRECT,
             verified = true,
@@ -278,18 +290,24 @@ object BitPerfectRouter {
             transport = transport,
             source = input.sourceFormat,
             output = outFmt,
-            effects = input.effects,
+            effects = effectiveEffects,
             requestedOn = true,
+            allowEqInUsbExclusive = input.allowEqInUsbExclusive,
         )
-        val status = if (verdict.bitPerfect && outFmt != null) {
-            BitPerfectStatus.Active(
+        val status = when {
+            verdict.bitPerfect && outFmt != null -> BitPerfectStatus.Active(
                 transportLabel = TransportKind.USB_UAC_DIRECT.displayName,
                 sampleRateHz = outFmt.sampleRateHz,
                 bitDepth = outFmt.wireBitDepth,
                 deviceName = input.deviceName,
             )
-        } else {
-            BitPerfectStatus.Fallback(verdict.note)
+            verdict.directWithEq && outFmt != null -> BitPerfectStatus.DirectWithEq(
+                transportLabel = TransportKind.USB_UAC_DIRECT.displayName,
+                sampleRateHz = outFmt.sampleRateHz,
+                bitDepth = outFmt.wireBitDepth,
+                deviceName = input.deviceName,
+            )
+            else -> BitPerfectStatus.Fallback(verdict.note)
         }
         if (!verdict.bitPerfect && input.isDoP) {
             return RouteDecision(
@@ -309,5 +327,17 @@ object BitPerfectRouter {
             note = verdict.note,
             transport = transport,
         )
+    }
+
+    /** Resolves effective DSP effects on direct USB/API-34 routes based on strict vs allow-EQ policy. */
+    private fun effectiveDirectEffects(input: RouteInput): List<String> {
+        if (input.isDoP) return input.effects
+        return when {
+            input.eqEnabled && input.allowEqInUsbExclusive ->
+                if (input.effects.any(BitPerfectEvaluator::isEqEffect)) input.effects else input.effects + "Parametric EQ"
+            input.eqEnabled && !input.allowEqInUsbExclusive ->
+                input.effects.filterNot(BitPerfectEvaluator::isEqEffect)
+            else -> input.effects
+        }
     }
 }

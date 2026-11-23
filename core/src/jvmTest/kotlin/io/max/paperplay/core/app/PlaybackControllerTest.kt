@@ -36,15 +36,22 @@ private class FakePlayerEngine : PlayerEngine {
 
     var lastQueue: List<QueueItem> = emptyList()
     var lastStartIndex: Int = -1
+    var lastStartPositionMs: Long = 0L
     var playCalls = 0
     var pauseCalls = 0
     var lastEqualizer: List<Float>? = emptyList()
     var released = false
 
     override fun setQueue(items: List<QueueItem>, startIndex: Int) {
+        setQueue(items, startIndex, 0L)
+    }
+
+    override fun setQueue(items: List<QueueItem>, startIndex: Int, startPositionMs: Long) {
         lastQueue = items
         lastStartIndex = startIndex
+        lastStartPositionMs = startPositionMs
         mutableCurrentIndex.value = if (items.isEmpty()) -1 else startIndex
+        mutablePositionMs.value = if (items.isEmpty()) 0L else startPositionMs
         mutableState.value = if (items.isEmpty()) PlayerState.Idle else PlayerState.Playing
     }
 
@@ -289,6 +296,54 @@ class PlaybackControllerTest {
             controller.release()
             assertTrue(engine.released)
         } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun restoreSessionAndPlayResumesFromSavedPositionAndClampsNearEnd() = runBlocking {
+        var now = 1_000L
+        val db = LibraryDatabase(libraryDriver())
+        val repo = LibraryRepository(LibraryRepo(db) { ++now }) { ++now }
+        val s1 = song(1)
+        val s2 = song(2) // duration_sec = 200 -> 200_000 ms
+        db.songsQueries.insertSong(s1)
+        db.songsQueries.insertSong(s2)
+
+        repo.setPref("session_queue", "u1,u2")
+        repo.setPref("session_index", "1")
+        repo.setPref("session_pos", "45000")
+
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val realEngine = FakePlayerEngine()
+        val lazyEngine = io.max.paperplay.player.LazyPlayerEngine { realEngine }
+        val controller = PlaybackController(lazyEngine, TrackResolver { null }, repo, scope)
+        try {
+            controller.restoreSession()
+            await {
+                val np = controller.nowPlaying.value
+                np.song?.unique_id == "u2" && np.positionMs == 45_000L && !np.isPlaying
+            }
+            // Real engine is not created until Play is pressed.
+            assertTrue(!lazyEngine.isCreated)
+
+            controller.play()
+            await {
+                val np = controller.nowPlaying.value
+                lazyEngine.isCreated && np.isPlaying && np.positionMs == 45_000L && realEngine.lastStartPositionMs == 45_000L
+            }
+            assertEquals(1, realEngine.lastStartIndex)
+            assertEquals(45_000L, realEngine.lastStartPositionMs)
+            assertEquals(45_000L, realEngine.mutablePositionMs.value)
+
+            // Verify near-end position (>= durationMs - 2000) is clamped to 0 on saveSession().
+            realEngine.mutableDurationMs.value = 200_000L
+            realEngine.mutablePositionMs.value = 198_500L
+            controller.pause()
+            await { repo.pref("session_pos") == "0" }
+            assertEquals("0", repo.pref("session_pos"))
+        } finally {
+            controller.release()
             scope.cancel()
         }
     }

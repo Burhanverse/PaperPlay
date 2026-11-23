@@ -72,6 +72,8 @@ class UsbAudioSink(
     @Volatile
     private var pendingDelegateConfigure = false
     private var lastDelegateDiagLogMs = 0L
+    private val usbPcmEq = io.max.paperplay.player.NativePcmEqStage()
+    private var pendingEqBuf: ByteBuffer? = null
 
     private fun playerStateDesc(): String {
         val state = PlaybackCore.playerPlaybackState
@@ -196,6 +198,7 @@ class UsbAudioSink(
                 } catch (_: Throwable) {}
                 activeMode = ActiveSinkMode.DELEGATE
                 PlaybackCore.usbActive = false
+                pendingEqBuf = null
                 UsbAudioManager.instance?.onUsbReleased(closeConnection = true)
                 pendingDelegateConfigure = true
             }
@@ -513,6 +516,8 @@ class UsbAudioSink(
             )
             if (configured) {
                 switchToUsbSink()
+                pendingEqBuf = null
+                usbPcmEq.configure(rate, channels, enc)
                 stateMachine.hasHardwareVolume = usbManager.hasHardwareVolume
                 PlaybackCore.usbActive = true
                 val alt = stateMachine.currentAltSetting?.altSetting ?: 0
@@ -598,18 +603,45 @@ class UsbAudioSink(
                     presentationTimeUs
                 )
             }
-            val done = stateMachine.handleBuffer(buffer, presentationTimeUs)
+            var eqBuf = pendingEqBuf
+            if (eqBuf == null) {
+                val fmt = lastConfiguredFormat
+                if (fmt != null) {
+                    usbPcmEq.configure(fmt.sampleRate, fmt.channelCount, fmt.pcmEncoding)
+                }
+                eqBuf = usbPcmEq.processToDirectBufferIfActive(buffer, isDoP = stateMachine.isDop)
+                if (eqBuf != null) pendingEqBuf = eqBuf
+            }
+            val feedBuf = eqBuf ?: buffer
+            val beforeRem = feedBuf.remaining()
+            val done = stateMachine.handleBuffer(feedBuf, presentationTimeUs)
+            val afterRem = feedBuf.remaining()
+            val consumed = (beforeRem - afterRem).coerceAtLeast(0)
+            if (eqBuf != null && consumed > 0) {
+                buffer.position((buffer.position() + consumed).coerceAtMost(buffer.limit()))
+            }
+            if (done || !feedBuf.hasRemaining()) {
+                pendingEqBuf = null
+                buffer.position(buffer.limit())
+            }
             if (stateMachine.state == UsbSinkState.FALLBACK) {
                 switchToDelegateFallback(stateMachine.fallbackReason ?: "USB buffer failure")
-                return runCatching { super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+                val fbHandled = runCatching { super.handleBuffer(feedBuf, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+                if (fbHandled || !feedBuf.hasRemaining()) {
+                    pendingEqBuf = null
+                    buffer.position(buffer.limit())
+                }
+                return fbHandled
             }
             return done
         } catch (t: Throwable) {
             val reason = "handleBuffer failed in USB mode: ${t.message}\n${t.stackTraceToString()}"
             PlayLog.log("usb", reason)
             UsbRingLog.record("UsbAudioSink", reason, UsbRingLog.CODE_ERROR)
+            val feedBuf = pendingEqBuf ?: buffer
+            pendingEqBuf = null
             switchToDelegateFallback(reason, t)
-            return runCatching { super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
+            return runCatching { super.handleBuffer(feedBuf, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
         }
     }
 
@@ -736,6 +768,8 @@ class UsbAudioSink(
 
         getPosLogCountAfterReset = 5
         logFirstBufferAfterReset = true
+        pendingEqBuf = null
+        usbPcmEq.reset()
         UsbRingLog.record("UsbAudioSink", "flush [${playerStateDesc()}] activeMode=$activeMode", UsbRingLog.CODE_SINK_FLUSH)
         try {
             stateMachine.flush(preservePlayRequested = playerIsPlaying)
@@ -750,12 +784,15 @@ class UsbAudioSink(
     override fun reset() {
         if (activeMode == ActiveSinkMode.DELEGATE) {
             if (DelegateSinkDiag.isEnabled) DelegateSinkDiag.onResetOrFlush()
+            pendingEqBuf = null
             super.reset()
             return
         }
 
         getPosLogCountAfterReset = 5
         logFirstBufferAfterReset = true
+        pendingEqBuf = null
+        usbPcmEq.reset()
         UsbRingLog.record("UsbAudioSink", "reset [${playerStateDesc()}] activeMode=$activeMode", UsbRingLog.CODE_GENERIC)
         try {
             stateMachine.reset(preservePlayRequested = playerIsPlaying)
@@ -773,6 +810,8 @@ class UsbAudioSink(
         playerIsPlaying = false
         lastConfiguredFormat = null
         lastConfig = null
+        pendingEqBuf = null
+        usbPcmEq.release()
         if (activeMode == ActiveSinkMode.USB || stateMachine.isActive) {
             try {
                 stateMachine.release()
@@ -792,6 +831,8 @@ class UsbAudioSink(
         playerIsPlaying = false
         lastConfiguredFormat = null
         lastConfig = null
+        pendingEqBuf = null
+        usbPcmEq.release()
         switchToDelegateFallback("No USB DAC connected")
     }
 

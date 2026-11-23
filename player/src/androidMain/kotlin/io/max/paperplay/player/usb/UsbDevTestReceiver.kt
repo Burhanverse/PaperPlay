@@ -50,14 +50,36 @@ class UsbDevTestReceiver : BroadcastReceiver() {
                     ?.filter { it.isNotEmpty() }
                     .orEmpty()
                 if (paths.isEmpty()) return
+                val repeat = intent.getBooleanExtra("repeat", false)
                 PlaybackCore.devDirectTestActive = true
                 val player = PlaybackCore.activePlayer ?: return
                 Handler(player.applicationLooper).post {
                     val items = paths.map { MediaItem.fromUri(Uri.fromFile(File(it))) }
+                    player.repeatMode = if (repeat) androidx.media3.common.Player.REPEAT_MODE_ALL else androidx.media3.common.Player.REPEAT_MODE_OFF
                     player.setMediaItems(items, 0, 0L)
                     player.prepare()
                     player.play()
                 }
+            }
+            "set_repeat" -> {
+                val modeStr = intent.getStringExtra("mode")?.lowercase().orEmpty()
+                val player = PlaybackCore.activePlayer ?: return
+                Handler(player.applicationLooper).post {
+                    player.repeatMode = when (modeStr) {
+                        "one" -> androidx.media3.common.Player.REPEAT_MODE_ONE
+                        "all" -> androidx.media3.common.Player.REPEAT_MODE_ALL
+                        else -> androidx.media3.common.Player.REPEAT_MODE_OFF
+                    }
+                }
+            }
+            "set_usb_experiments" -> {
+                val adpf = if (intent.hasExtra("adpf")) intent.getBooleanExtra("adpf", false) else null
+                val keepAlive = if (intent.hasExtra("keepalive")) intent.getBooleanExtra("keepalive", false) else null
+                PlaybackCore.savePersistedUsbExperiments(context.applicationContext, adpf = adpf, silentKeepAlive = keepAlive)
+                if (keepAlive == false) {
+                    UsbSilentAudioKeepAlive.stop()
+                }
+                PlayLog.log("usb", "DEV_USB_CMD experiments: adpf=${PlaybackCore.devUsbAdpfEnabled} keepAlive=${PlaybackCore.devUsbSilentKeepAliveEnabled}")
             }
             "clear_dev_test" -> {
                 PlaybackCore.devDirectTestActive = false
@@ -98,6 +120,17 @@ class UsbDevTestReceiver : BroadcastReceiver() {
                 }
             }
             "status" -> writeStatusSnapshot(context)
+            "export_debug_log" -> {
+                val pr = goAsync()
+                Thread {
+                    try {
+                        val report = UsbAudioProbe.buildFullDebugReport(context.applicationContext, "DEV_SOAK_EXPORT")
+                        File(context.cacheDir, "usb_dev_full_report.txt").writeText(report)
+                    } finally {
+                        pr.finish()
+                    }
+                }.start()
+            }
             "read_dac_baseline" -> {
                 val pr = goAsync()
                 Thread {
@@ -156,16 +189,33 @@ class UsbDevTestReceiver : BroadcastReceiver() {
             appendLine("unifiedVolReadbackRaw=${unified?.lastVolumeReadbackRaw ?: 0}")
             appendLine("unifiedSubslotBytes=${unified?.lastSubslotBytes ?: 0}")
             appendLine("legacyMode=${legacy?.activeMode}")
+            val ext = LongArray(17)
+            val hasExt = unified?.readExtendedStats(ext) == true
             appendLine("framesConsumed=${stats?.framesConsumed ?: 0L}")
             appendLine("underruns=${stats?.underruns ?: 0L}")
             appendLine("urbErrors=${stats?.urbErrors ?: 0L}")
+            appendLine("pktErrors=${if (hasExt) ext[10] else 0L}")
+            appendLine("pktShorts=${if (hasExt) ext[11] else 0L}")
+            appendLine("lastPktErr=${if (hasExt) ext[12] else 0L}")
+            appendLine("maxCbGapUs=${if (hasExt) ext[13] else 0L}")
+            appendLine("lateCallbacks=${if (hasExt) ext[14] else 0L}")
+            appendLine("activeSlots=${if (hasExt) ext[15] else 0L}")
+            appendLine("cushionEscalations=${if (hasExt) ext[16] else 0L}")
+            appendLine("realFaultReconfigures=${unified?.realFaultReconfigures ?: 0}")
+            appendLine("cushionEscalationRequests=${unified?.cushionEscalationRequests ?: 0}")
             appendLine("ringFillBytes=${stats?.ringFillBytes ?: 0L}")
             appendLine("isRunning=${stats?.isRunning ?: false}")
             appendLine("statsRate=${stats?.sampleRate ?: 0}")
             appendLine("isPaused=${stats?.isPaused ?: false}")
+            appendLine("usbWakeLockHeld=${UsbStreamingWakeLock.isHeld}")
+            appendLine("usbWakeLockRefCount=${UsbStreamingWakeLock.refCount}")
+            appendLine("devUsbAdpf=${PlaybackCore.devUsbAdpfEnabled}")
+            appendLine("devUsbSilentKeepAlive=${PlaybackCore.devUsbSilentKeepAliveEnabled}")
+            appendLine("silentKeepAliveActive=${UsbSilentAudioKeepAlive.isActive}")
             appendLine("bitPerfectStatus=${mgrStatus ?: BitPerfectStatus.Off}")
             appendLine("pcmDumpStatus=${UsbPcmDumper.status}")
             appendLine("pcmDumpPath=${UsbPcmDumper.dumpFilePath ?: ""}")
+            appendLine("powerSnapshot=${UsbPowerTelemetry.snapshotSummary(context)}")
             appendLine("phase0=$phase0")
             val nlog = if (UsbEngineNative.isAlreadyLoaded) UsbEngineNative.getNativeLog().orEmpty() else ""
             appendLine("---NATIVE_RING_LOG---")

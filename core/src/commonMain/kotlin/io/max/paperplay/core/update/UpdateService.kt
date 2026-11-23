@@ -67,6 +67,14 @@ class UpdatePrefs(private val read: (String) -> String?, private val write: (Str
         set(v) = write("update_last_check", v.toString())
 }
 
+/** What the in-app change log page shows. */
+sealed interface ChangelogState {
+    data object Idle : ChangelogState
+    data object Loading : ChangelogState
+    data class Ready(val entries: List<ChangelogVersionEntry>) : ChangelogState
+    data class Failed(val message: String) : ChangelogState
+}
+
 /** Looks for a newer release on GitHub, downloads it, checks its SHA-256 against the published list and hands it to the installer. */
 class UpdateService(
     private val http: HttpFetcher,
@@ -78,6 +86,10 @@ class UpdateService(
 ) {
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state
+
+    private val _changelog = MutableStateFlow<ChangelogState>(ChangelogState.Idle)
+    val changelog: StateFlow<ChangelogState> = _changelog
+    private var cachedReleases: List<ReleaseInfo> = emptyList()
 
     val shizuku get() = installer?.shizuku
 
@@ -95,10 +107,49 @@ class UpdateService(
             )
             if (r.status != 200) throw IllegalStateException("GitHub answered ${r.status}")
             prefs.lastCheck = now()
-            val found = ReleaseFeed.newest(ReleaseFeed.parse(r.text), installed, prefs.beta, prefs.skipped)
+            val releases = ReleaseFeed.parse(r.text)
+            cachedReleases = releases
+            val found = ReleaseFeed.newest(releases, installed, prefs.beta, prefs.skipped)
             _state.value = if (found == null) UpdateState.UpToDate(now()) else UpdateState.Available(found, ReleaseFeed.assetFor(found, platform))
         } catch (e: Exception) {
             _state.value = UpdateState.Failed(e.message ?: "The update check failed")
+        }
+    }
+
+    /** Loads the full change log history from `CHANGELOG.md` and GitHub Releases for the in-app Change log page. */
+    suspend fun loadChangelog(force: Boolean = false) {
+        if (!force && _changelog.value is ChangelogState.Ready) return
+        _changelog.value = ChangelogState.Loading
+        try {
+            val mdEntries = runCatching {
+                val r = retryConnect {
+                    http.send(HttpRequest(CHANGELOG_URL, headers = mapOf("user-agent" to "PaperPlay/$installed")))
+                }
+                if (r.status == 200) ChangelogParser.parseChangelogMarkdown(r.text) else emptyList()
+            }.getOrDefault(emptyList())
+
+            val releases = if (cachedReleases.isNotEmpty() && !force) {
+                cachedReleases
+            } else {
+                runCatching {
+                    val r = retryConnect {
+                        http.send(
+                            HttpRequest(
+                                FEED_URL,
+                                headers = mapOf("accept" to "application/vnd.github+json", "user-agent" to "PaperPlay/$installed"),
+                            ),
+                        )
+                    }
+                    if (r.status == 200) ReleaseFeed.parse(r.text).also { cachedReleases = it } else cachedReleases
+                }.getOrDefault(cachedReleases)
+            }
+
+            val releaseEntries = releases.map(ChangelogParser::fromReleaseInfo)
+            val merged = ChangelogParser.mergeEntries(mdEntries, releaseEntries)
+            if (merged.isEmpty()) throw IllegalStateException("Could not load the change log from GitHub")
+            _changelog.value = ChangelogState.Ready(merged)
+        } catch (e: Exception) {
+            _changelog.value = ChangelogState.Failed(e.message ?: "Could not load the change log")
         }
     }
 
@@ -149,6 +200,7 @@ class UpdateService(
 
     private companion object {
         const val FEED_URL = "https://api.github.com/repos/maxcodl/PaperPlay/releases?per_page=30"
+        const val CHANGELOG_URL = "https://raw.githubusercontent.com/maxcodl/PaperPlay/main/CHANGELOG.md"
         const val DAY_MS = 24L * 60 * 60 * 1000
     }
 }

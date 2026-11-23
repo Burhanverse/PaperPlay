@@ -1,22 +1,41 @@
 package io.max.paperplay.ui.app
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.NewReleases
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdate
-import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -27,20 +46,30 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.max.paperplay.core.update.ChangelogBullet
+import io.max.paperplay.core.update.ChangelogGroup
+import io.max.paperplay.core.update.ChangelogParser
+import io.max.paperplay.core.update.ChangelogState
+import io.max.paperplay.core.update.ChangelogVersionEntry
 import io.max.paperplay.core.update.InstallBlocked
+import io.max.paperplay.core.update.ReleaseNotesDoc
 import io.max.paperplay.core.update.ShizukuControl
 import io.max.paperplay.core.update.UpdateService
 import io.max.paperplay.core.update.UpdateState
 import io.max.paperplay.ui.StaticLogo
+import io.max.paperplay.ui.components.AppIcon
 import kotlinx.coroutines.launch
 
 private const val REPO = "https://github.com/maxcodl/PaperPlay"
 
 /** Settings > About: the app and its update status with one button, three update choices, and the project links. */
 @Composable
-internal fun AboutPage(backend: CoreBackend) {
+internal fun AboutPage(backend: CoreBackend, onOpenChangelog: () -> Unit = {}) {
     val updates = backend.services.updates
     val uri = LocalUriHandler.current
     val devUnlocked by backend.devOptionsUnlocked.collectAsState()
@@ -57,9 +86,9 @@ internal fun AboutPage(backend: CoreBackend) {
     var auto by remember { mutableStateOf(updates.prefs.auto) }
     SwitchRow("Check automatically", auto, { updates.prefs.auto = it; auto = it }, subtitle = "At most once a day, when the app starts")
     SectionLabel("Project")
+    NavRow("Change log", "What changed in every release", Icons.Rounded.History, onClick = onOpenChangelog)
     SettingsRow("Source code", icon = Icons.Rounded.Code, subtitle = "github.com/maxcodl/PaperPlay", onClick = { uri.openUri(REPO) })
-    SettingsRow("Releases", icon = Icons.Rounded.SystemUpdate, onClick = { uri.openUri("$REPO/releases") })
-    SettingsRow("Change log", icon = Icons.Rounded.History, onClick = { uri.openUri("$REPO/blob/main/CHANGELOG.md") })
+    SettingsRow("Releases", icon = Icons.Rounded.SystemUpdate, subtitle = "Downloads and assets on GitHub", onClick = { uri.openUri("$REPO/releases") })
     MadeBy()
 }
 

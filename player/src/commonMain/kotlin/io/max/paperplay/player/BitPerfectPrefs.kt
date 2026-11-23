@@ -13,6 +13,29 @@ object BitPerfectPrefs {
     const val KEY_CANONICAL = "bit_perfect_mode"
     const val KEY_BACKUP_ANDROID = "bit_perfect_mode.android"
     const val KEY_BACKUP_DESKTOP = "bit_perfect_mode.desktop"
+    const val KEY_ALLOW_EQ_IN_USB_EXCLUSIVE = "allow_eq_in_usb_exclusive"
+
+    fun parseBool(raw: String?, default: Boolean): Boolean = when (raw?.trim()?.lowercase()) {
+        "true", "on", "1" -> true
+        "false", "off", "0" -> false
+        else -> default
+    }
+
+    fun loadAllowEqInUsbExclusive(store: PrefKeyValueStore, fallback: PrefKeyValueStore? = null): Boolean {
+        store.get(KEY_ALLOW_EQ_IN_USB_EXCLUSIVE)?.let { return parseBool(it, default = true) }
+        fallback?.get(KEY_ALLOW_EQ_IN_USB_EXCLUSIVE)?.let {
+            val v = parseBool(it, default = true)
+            store.set(KEY_ALLOW_EQ_IN_USB_EXCLUSIVE, v.toString())
+            return v
+        }
+        return true
+    }
+
+    fun saveAllowEqInUsbExclusive(store: PrefKeyValueStore, mirror: PrefKeyValueStore?, allow: Boolean) {
+        val encoded = allow.toString()
+        store.set(KEY_ALLOW_EQ_IN_USB_EXCLUSIVE, encoded)
+        mirror?.set(KEY_ALLOW_EQ_IN_USB_EXCLUSIVE, encoded)
+    }
 
     // Legacy keys kept read-only after one-time non-destructive migration.
     const val LEGACY_PC_BITPERFECT = "pc_bitperfect"
@@ -115,5 +138,7 @@ internal expect fun monotonicNowMs(): Long
 expect object PlatformBitPerfectPrefs {
     fun load(sqliteGet: ((String) -> String?)? = null, sqliteSet: ((String, String) -> Unit)? = null): BitPerfectMode
     fun save(mode: BitPerfectMode, sqliteSet: ((String, String) -> Unit)? = null)
+    fun loadAllowEqInUsbExclusive(sqliteGet: ((String) -> String?)? = null, sqliteSet: ((String, String) -> Unit)? = null): Boolean
+    fun saveAllowEqInUsbExclusive(allow: Boolean, sqliteSet: ((String, String) -> Unit)? = null)
     fun syncFromRestoredPrefs(restoredPrefs: Map<String, String>)
 }

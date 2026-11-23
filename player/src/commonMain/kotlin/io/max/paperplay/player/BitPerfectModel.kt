@@ -85,6 +85,13 @@ sealed class BitPerfectStatus {
         val bitDepth: Int,
         val deviceName: String? = null,
     ) : BitPerfectStatus()
+    /** USB Exclusive / Direct mixer active at native sample rate and bit depth with EQ enabled (not bit-perfect). */
+    data class DirectWithEq(
+        val transportLabel: String,
+        val sampleRateHz: Int,
+        val bitDepth: Int,
+        val deviceName: String? = null,
+    ) : BitPerfectStatus()
     data class Bypassed(val reason: String) : BitPerfectStatus()
     data class Fallback(val reason: String) : BitPerfectStatus()
     data class Unsupported(val reason: String) : BitPerfectStatus()

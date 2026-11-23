@@ -101,6 +101,27 @@ interface PlayerControls {
     val eqOn: StateFlow<Boolean> get() = MutableStateFlow(false)
     val eqGains: StateFlow<List<Float>> get() = MutableStateFlow(List(10) { 0f })
     fun setEqualizer(on: Boolean = eqOn.value, gains: List<Float> = eqGains.value) {}
+    /** 31-band parametric EQ profile, user presets, AutoEQ catalog, and per-device auto-assignment. */
+    val peqProfile: StateFlow<io.max.paperplay.player.ParametricEqProfile>
+        get() = MutableStateFlow(io.max.paperplay.player.ParametricEqProfile.flat10())
+    fun setParametricProfile(profile: io.max.paperplay.player.ParametricEqProfile, enabled: Boolean = eqOn.value) {}
+    fun setParametricEnabled(enabled: Boolean) { setEqualizer(on = enabled) }
+    val peqPresets: StateFlow<List<io.max.paperplay.player.ParametricEqProfile>> get() = MutableStateFlow(emptyList())
+    fun saveParametricPreset(profile: io.max.paperplay.player.ParametricEqProfile) {}
+    fun deleteParametricPreset(id: String) {}
+    val eqDeviceKey: StateFlow<String?> get() = MutableStateFlow(null)
+    val eqDeviceAssigned: StateFlow<Boolean> get() = MutableStateFlow(false)
+    val eqDeviceAssignments: StateFlow<List<io.max.paperplay.core.eq.DeviceEqAssignment>> get() = MutableStateFlow(emptyList())
+    fun assignEqToCurrentDevice() {}
+    fun unassignEqFromCurrentDevice() {}
+    fun removeDeviceEqAssignment(deviceKey: String) {}
+    val autoEqCount: Int get() = 0
+    suspend fun searchAutoEq(query: String, source: String? = null, form: String? = null): List<io.max.paperplay.core.eq.AutoEqEntry> = emptyList()
+    suspend fun autoEqSources(): List<String> = emptyList()
+    suspend fun autoEqForms(): List<String> = emptyList()
+    suspend fun refreshAutoEqIndex(): String = "AutoEQ online refresh unavailable."
+    val onlineAutoEqItems: StateFlow<List<io.max.paperplay.core.eq.AutoEqRemoteItem>> get() = MutableStateFlow(emptyList())
+    suspend fun fetchOnlineAutoEqProfile(item: io.max.paperplay.core.eq.AutoEqRemoteItem): io.max.paperplay.player.ParametricEqProfile? = null
     /** Extra bass in dB, 0 to 12, on top of the equalizer. */
     val eqBass: StateFlow<Float> get() = MutableStateFlow(0f)
     fun setEqBass(db: Float) {}
@@ -109,6 +130,9 @@ interface PlayerControls {
     val bitPerfectStatus: StateFlow<io.max.paperplay.player.BitPerfectStatus>
         get() = MutableStateFlow(io.max.paperplay.player.BitPerfectStatus.Off)
     fun setBitPerfect(on: Boolean) {}
+    /** When true, 31-band parametric EQ runs at native rate/bit-depth in USB Exclusive mode (reported as USB Direct + EQ). */
+    val allowEqInUsbExclusive: StateFlow<Boolean> get() = MutableStateFlow(true)
+    fun setAllowEqInUsbExclusive(allow: Boolean) {}
     /** Phone engine extras: exact level, A/B with the original, stereo width (see [CoreBackend]). */
     val eqExact: StateFlow<Boolean> get() = MutableStateFlow(false)
     fun setEqExact(on: Boolean) {}
@@ -660,11 +684,164 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
     }
 
-    // Equalizer: ten bands in dB, saved as a list like the Flutter app does. Older five-band saves are stretched to ten.
+    // Equalizer: 31-band parametric profile (plus legacy 10-band compatibility).
     override val eqOn = MutableStateFlow(repo.pref("eq_on") == "true")
     override val eqGains = MutableStateFlow(
         io.max.paperplay.player.migrateEqGains(repo.pref("eq_gains")?.trim('[', ']', ' ')?.split(',')?.mapNotNull { it.trim().toFloatOrNull() }),
     )
+    override val peqProfile = MutableStateFlow(
+        repo.pref("peq_active_json")?.let { io.max.paperplay.player.ParametricEqCodec.parsePowerampJson(it) }
+            ?: if (eqGains.value.any { kotlin.math.abs(it) >= 0.05f }) {
+                io.max.paperplay.player.ParametricEqProfile.fromLegacy10Gains(eqGains.value)
+            } else {
+                io.max.paperplay.player.ParametricEqProfile.flat10()
+            },
+    )
+    override val peqPresets = MutableStateFlow<List<io.max.paperplay.player.ParametricEqProfile>>(emptyList())
+    override val eqDeviceKey = MutableStateFlow<String?>(null)
+    override val eqDeviceAssigned = MutableStateFlow(false)
+    override val eqDeviceAssignments = MutableStateFlow<List<io.max.paperplay.core.eq.DeviceEqAssignment>>(emptyList())
+    private val autoEqUpdater by lazy { io.max.paperplay.core.eq.AutoEqUpdater(http) }
+    override val onlineAutoEqItems = MutableStateFlow<List<io.max.paperplay.core.eq.AutoEqRemoteItem>>(emptyList())
+    override val autoEqCount: Int get() = services.autoEqCatalog.entryCount
+
+    private fun reloadEqPersistence() {
+        scope.launch(Dispatchers.Default) {
+            runCatching {
+                peqPresets.value = services.eqRepo.allPresets()
+                eqDeviceAssignments.value = services.eqRepo.allDeviceAssignments()
+                val key = eqDeviceKey.value
+                eqDeviceAssigned.value = key != null && eqDeviceAssignments.value.any { it.deviceKey == key }
+            }
+        }
+    }
+
+    init {
+        reloadEqPersistence()
+    }
+
+    override fun setParametricProfile(profile: io.max.paperplay.player.ParametricEqProfile, enabled: Boolean) {
+        peqProfile.value = profile
+        eqOn.value = enabled
+        repo.setPref("eq_on", "$enabled")
+        repo.setPref("peq_active_json", io.max.paperplay.player.ParametricEqCodec.exportPowerampJson(profile, includePaperPlayMeta = true))
+        val key = eqDeviceKey.value
+        if (key != null && eqDeviceAssigned.value) {
+            val label = eqOutput.value ?: key
+            scope.launch(Dispatchers.Default) {
+                runCatching {
+                    services.eqRepo.assignToDevice(key, label, profile, enabled)
+                    eqDeviceAssignments.value = services.eqRepo.allDeviceAssignments()
+                }
+            }
+        }
+        pushParametricToPlayer()
+        pushBass()
+    }
+
+    override fun setParametricEnabled(enabled: Boolean) {
+        setParametricProfile(peqProfile.value, enabled)
+    }
+
+    private fun pushParametricToPlayer() {
+        if (!playerStarted.value) return
+        val allowDirectEq = io.max.paperplay.ui.isPhone && allowEqInUsbExclusive.value
+        val on = eqOn.value && (!bitPerfect.value || allowDirectEq)
+        val prof = peqProfile.value
+        if (on && prof.hasActiveShaping()) {
+            // Parametric EQ takes ownership; clear legacy 10-band so they never stack.
+            player.setEqualizer(null)
+            player.setParametricEq(prof, true)
+        } else {
+            player.setParametricEq(null, false)
+            player.setEqualizer(if (eqOn.value && !bitPerfect.value && eqGains.value.any { kotlin.math.abs(it) >= 0.05f }) eqGains.value else null)
+        }
+    }
+
+    override fun saveParametricPreset(profile: io.max.paperplay.player.ParametricEqProfile) {
+        val withId = if (profile.id.isBlank() || profile.id == "custom" || profile.id == "flat-10") {
+            profile.copy(id = "user-${nowMoment().epochMs}")
+        } else profile
+        scope.launch(Dispatchers.Default) {
+            runCatching {
+                services.eqRepo.savePreset(withId)
+                peqPresets.value = services.eqRepo.allPresets()
+            }
+        }
+    }
+
+    override fun deleteParametricPreset(id: String) {
+        scope.launch(Dispatchers.Default) {
+            runCatching {
+                services.eqRepo.deletePreset(id)
+                peqPresets.value = services.eqRepo.allPresets()
+            }
+        }
+    }
+
+    override fun assignEqToCurrentDevice() {
+        val key = eqDeviceKey.value ?: return
+        val label = eqOutput.value ?: key
+        val prof = peqProfile.value
+        val on = eqOn.value
+        eqDeviceAssigned.value = true
+        scope.launch(Dispatchers.Default) {
+            runCatching {
+                services.eqRepo.assignToDevice(key, label, prof, on)
+                eqDeviceAssignments.value = services.eqRepo.allDeviceAssignments()
+            }
+        }
+    }
+
+    override fun unassignEqFromCurrentDevice() {
+        val key = eqDeviceKey.value ?: return
+        eqDeviceAssigned.value = false
+        scope.launch(Dispatchers.Default) {
+            runCatching {
+                services.eqRepo.unassignDevice(key)
+                eqDeviceAssignments.value = services.eqRepo.allDeviceAssignments()
+            }
+        }
+    }
+
+    override fun removeDeviceEqAssignment(deviceKey: String) {
+        if (eqDeviceKey.value == deviceKey) eqDeviceAssigned.value = false
+        scope.launch(Dispatchers.Default) {
+            runCatching {
+                services.eqRepo.unassignDevice(deviceKey)
+                eqDeviceAssignments.value = services.eqRepo.allDeviceAssignments()
+            }
+        }
+    }
+
+    override suspend fun searchAutoEq(query: String, source: String?, form: String?): List<io.max.paperplay.core.eq.AutoEqEntry> =
+        withContext(Dispatchers.IO) { services.autoEqCatalog.search(query, source, form, limit = 80) }
+
+    override suspend fun autoEqSources(): List<String> =
+        withContext(Dispatchers.IO) { services.autoEqCatalog.sources() }
+
+    override suspend fun autoEqForms(): List<String> =
+        withContext(Dispatchers.IO) { services.autoEqCatalog.forms() }
+
+    override suspend fun refreshAutoEqIndex(): String = withContext(Dispatchers.IO) {
+        try {
+            val prevEtag = repo.pref("autoeq_index_etag")
+            val res = autoEqUpdater.fetchIndex(prevEtag)
+            if (res.notModified) {
+                "AutoEQ catalog is already up to date."
+            } else {
+                res.etag?.let { repo.setPref("autoeq_index_etag", it) }
+                onlineAutoEqItems.value = res.items
+                "Refreshed online AutoEQ index (${res.items.size} entries)."
+            }
+        } catch (e: Exception) {
+            "AutoEQ refresh failed: ${e.message ?: e::class.simpleName}"
+        }
+    }
+
+    override suspend fun fetchOnlineAutoEqProfile(item: io.max.paperplay.core.eq.AutoEqRemoteItem): io.max.paperplay.player.ParametricEqProfile? =
+        withContext(Dispatchers.IO) { runCatching { autoEqUpdater.fetchParametricProfile(item) }.getOrNull() }
+
     private val _outputInfo = MutableStateFlow<io.max.paperplay.player.OutputInfo?>(null)
     override val outputInfo: StateFlow<io.max.paperplay.player.OutputInfo?> = _outputInfo
 
@@ -676,6 +853,18 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     override val bitPerfect = MutableStateFlow(
         io.max.paperplay.player.PlatformBitPerfectPrefs.load(sqliteGet = repo::pref, sqliteSet = repo::setPref) == io.max.paperplay.player.BitPerfectMode.ON
     )
+    override val allowEqInUsbExclusive = MutableStateFlow(
+        io.max.paperplay.player.PlatformBitPerfectPrefs.loadAllowEqInUsbExclusive(sqliteGet = repo::pref, sqliteSet = repo::setPref)
+    )
+
+    override fun setAllowEqInUsbExclusive(allow: Boolean) {
+        allowEqInUsbExclusive.value = allow
+        io.max.paperplay.player.PlatformBitPerfectPrefs.saveAllowEqInUsbExclusive(allow, sqliteSet = repo::setPref)
+        if (playerStarted.value) {
+            player.setAllowEqInUsbExclusive(allow)
+            pushParametricToPlayer()
+        }
+    }
 
     override fun setBitPerfect(on: Boolean) {
         bitPerfect.value = on
@@ -692,7 +881,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         exclusiveOutput.value = false
         if (!playerStarted.value) return
         pushBass()
-        player.setEqualizer(if (on || !eqOn.value) null else eqGains.value)
+        pushParametricToPlayer()
         player.setNormalize(!on && normalizeOn.value)
         player.setCorrectionProfile(correctionProfile.value.takeIf { it.isNotBlank() && !on })
         if (!io.max.paperplay.ui.isPhone) player.setBitPerfect(on)
@@ -814,10 +1003,29 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     private fun saveForOutput() { eqOutput.value?.let { repo.setPref("eq_out:$it", eqSnapshot()) } }
 
-    /** Phone: the output changed (earbuds, DAC, speaker). Its saved settings come back; a new output starts from the current ones. */
-    private fun onOutput(name: String) {
-        if (!io.max.paperplay.ui.isPhone || name == eqOutput.value) return
+    /** Output device changed (earbuds, BT, USB DAC, wired, speaker, or desktop output). Applies any saved per-device mapping. */
+    private fun onOutput(info: io.max.paperplay.player.OutputInfo) {
+        val name = info.device ?: return
+        val key = info.deviceKey ?: "out:$name"
+        val keyChanged = key != eqDeviceKey.value
+        val nameChanged = name != eqOutput.value
+        if (!keyChanged && !nameChanged) return
         eqOutput.value = name
+        eqDeviceKey.value = key
+
+        val mapped = runCatching { services.eqRepo.assignmentForDevice(key) }.getOrNull()
+        eqDeviceAssigned.value = mapped != null
+        if (mapped != null) {
+            peqProfile.value = mapped.profile
+            eqOn.value = mapped.enabled
+            repo.setPref("eq_on", "${mapped.enabled}")
+            repo.setPref("peq_active_json", io.max.paperplay.player.ParametricEqCodec.exportPowerampJson(mapped.profile, includePaperPlayMeta = true))
+            pushParametricToPlayer()
+            pushBass()
+            return
+        }
+
+        if (!io.max.paperplay.ui.isPhone) return
         val saved = repo.pref("eq_out:$name")
         if (saved == null) { saveForOutput(); return }
         val m = saved.split(';').mapNotNull { kv -> kv.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
@@ -832,7 +1040,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         m["exact"]?.let { eqExact.value = it == "true"; repo.setPref("eq_exact", it) }
         m["options"]?.toIntOrNull()?.let { eqOptions.value = it; repo.setPref("eq_options", "$it") }
         if (playerStarted.value) {
-            player.setEqualizer(if (eqOn.value && !bitPerfect.value) eqGains.value else null)
+            pushParametricToPlayer()
             player.setExactLevel(eqExact.value)
         }
         pushBass()
@@ -1152,9 +1360,19 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     private val playerLazy = lazy {
         services.playback.also { p ->
-            scope.launch { p.outputInfo.collect { _outputInfo.value = it; it?.device?.let { d -> onOutput(d) } } }
+            scope.launch { p.outputInfo.collect { _outputInfo.value = it; if (it != null) onOutput(it) } }
             val bp = bitPerfect.value
-            if (eqOn.value && !bp) { p.setEqualizer(eqGains.value); p.setBass(eqBass.value) }
+            val allowDirectEq = io.max.paperplay.ui.isPhone && allowEqInUsbExclusive.value
+            p.setAllowEqInUsbExclusive(allowEqInUsbExclusive.value)
+            if (eqOn.value && (!bp || allowDirectEq)) {
+                val prof = peqProfile.value
+                if (prof.hasActiveShaping()) {
+                    p.setParametricEq(prof, true)
+                } else if (!bp) {
+                    p.setEqualizer(eqGains.value)
+                }
+                if (!bp) p.setBass(eqBass.value)
+            }
             p.setExactLevel(eqExact.value)
             if (eqOn.value && !bp) {
                 p.setStereoWidth(eqWidth.value)

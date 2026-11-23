@@ -20,6 +20,7 @@ class ReleaseInfo(
     val notes: String,
     val pageUrl: String,
     val assets: List<ReleaseAsset>,
+    val publishedAt: String? = null,
 )
 
 /** Reads GitHub's list of releases and picks the one to offer. */
@@ -45,6 +46,7 @@ object ReleaseFeed {
                         ao["size"]?.jsonPrimitive?.long ?: 0L,
                     )
                 },
+                publishedAt = o["published_at"]?.jsonPrimitive?.contentOrNull,
             )
         }
     }

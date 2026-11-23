@@ -6,6 +6,8 @@ import kotlin.math.round
 data class BitPerfectVerdict(
     val bitPerfect: Boolean,
     val note: String,
+    /** True when USB Exclusive / Direct mixer runs at native rate & bit depth with EQ active (never labeled bit-perfect). */
+    val directWithEq: Boolean = false,
 )
 
 /**
@@ -33,19 +35,27 @@ object BitPerfectEvaluator {
     /** Converts float32 back to signed 24-bit integer using exact power-of-two scaling (`2^23`). */
     fun float32ToInt24Pow2(sample: Float): Int = round(sample * SCALE_I24).toInt().coerceIn(MIN_I24, MAX_I24)
 
+    /** True when an effect label represents an equalizer stage. */
+    fun isEqEffect(label: String): Boolean =
+        label.startsWith("Parametric EQ", ignoreCase = true) ||
+            label.startsWith("Equalizer", ignoreCase = true)
+
     fun evaluate(
         transport: TransportInfo,
         source: PcmFormat?,
         output: PcmFormat?,
         effects: List<String>,
         requestedOn: Boolean = true,
+        allowEqInUsbExclusive: Boolean = false,
     ): BitPerfectVerdict {
         val speedEffect = effects.firstOrNull { it.startsWith("Speed ", ignoreCase = true) }
         if (speedEffect != null) {
             val speedText = speedEffect.substringAfter(' ').ifBlank { speedEffect }
             return BitPerfectVerdict(bitPerfect = false, note = "Not bit-perfect: speed $speedText")
         }
-        if (effects.isNotEmpty()) {
+        val nonEqEffects = effects.filterNot(::isEqEffect)
+        val hasEqEffect = effects.any(::isEqEffect)
+        if (nonEqEffects.isNotEmpty() || (hasEqEffect && !allowEqInUsbExclusive)) {
             return BitPerfectVerdict(
                 bitPerfect = false,
                 note = "Not bit-perfect: ${effects.joinToString(", ")}",
@@ -82,6 +92,16 @@ object BitPerfectEvaluator {
                 bitPerfect = false,
                 note = formatMismatchReason(source, output),
             )
+        }
+
+        if (hasEqEffect && allowEqInUsbExclusive) {
+            val directNote = when (transport.kind) {
+                TransportKind.ANDROID_BIT_PERFECT_MIXER ->
+                    "USB Direct + EQ (Android bit-perfect mixer): native rate and bit depth preserved, EQ applied in 64-bit float with TPDF dither (not bit-perfect)."
+                else ->
+                    "USB Direct + EQ: native rate and bit depth preserved, Android mixer bypassed, EQ applied in 64-bit float with TPDF dither (not bit-perfect)."
+            }
+            return BitPerfectVerdict(bitPerfect = false, note = directNote, directWithEq = true)
         }
 
         val successNote = when (transport.kind) {

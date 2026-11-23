@@ -149,14 +149,20 @@ class UsbCoarseSinkController internal constructor(
         private set
     @Volatile var lastSubslotBytes: Int = 4
         private set
+    @Volatile var cushionEscalationRequests: Int = 0
+        private set
+    @Volatile var realFaultReconfigures: Int = 0
+        private set
     @Volatile private var closing: Boolean = false
     @Volatile private var eosSignaled: Boolean = false
 
     private val lifecycleLock = Any()
     private val converter = UsbWireBufferConverter()
-    private val statsScratch = LongArray(10)
+    private val statsScratch = LongArray(17)
     private var lastFlushAtMs: Long = Long.MIN_VALUE / 2
     private var lastObservedUnderruns: Long = 0L
+    private var lastObservedUrbErrors: Long = 0L
+    private var cushionEscalatedOnce: Boolean = false
     private var muteRampedDown: Boolean = false
     private var lastEndpoint: Int = 0
     private var lastStreamingIface: Int = 1
@@ -276,7 +282,10 @@ class UsbCoarseSinkController internal constructor(
             isPausedGrace = false
             underrunWatch.reset()
             reconfigureEscalator.reset()
-            lastObservedUnderruns = if (api.getStats(handle, statsScratch) >= 0) statsScratch[1] else 0L
+            cushionEscalatedOnce = false
+            val gotStats = api.getStats(handle, statsScratch) >= 0
+            lastObservedUnderruns = if (gotStats) statsScratch[1] else 0L
+            lastObservedUrbErrors = if (gotStats) statsScratch[2] else 0L
             true
         } catch (t: Throwable) {
             closeUnlocked()
@@ -353,20 +362,47 @@ class UsbCoarseSinkController internal constructor(
     private fun checkUnderrunHealth(h: Long) {
         if (api.getStats(h, statsScratch) < 0) return
         val totalUnderruns = statsScratch[1]
-        if (totalUnderruns <= lastObservedUnderruns) return
-        lastObservedUnderruns = totalUnderruns
+        val totalUrbErrors = statsScratch[2]
+        val nativeRunning = statsScratch[5] != 0L
+        val nativeRate = statsScratch[6].toInt()
 
-        val now = clockMs()
-        val nearSeek = (now - lastFlushAtMs) in 0L..SEEK_UNDERRUN_WINDOW_MS
-        val shouldRepair = nearSeek || underrunWatch.hit()
-        if (!shouldRepair) return
+        // 1. Pure ring underrun (no URB/device fault, no clock mismatch):
+        //    Escalate URB cushion (16 -> 32) + resync idle slots. Never reconfigure or fall back.
+        if (totalUnderruns > lastObservedUnderruns) {
+            lastObservedUnderruns = totalUnderruns
+            val now = clockMs()
+            val nearSeek = (now - lastFlushAtMs) in 0L..SEEK_UNDERRUN_WINDOW_MS
+            val shouldEscalate = !cushionEscalatedOnce || nearSeek || underrunWatch.hit()
+            if (shouldEscalate) {
+                cushionEscalatedOnce = true
+                cushionEscalationRequests++
+                api.escalateCushionAndResync(h)
+            }
+        }
+
+        // 2. Real faults ONLY trigger reconfigure -> persistent-fault fallback:
+        //    (a) URB/device error increase, (b) streaming thread unexpectedly stopped, or (c) clock rate mismatch.
+        val urbErrorDelta = totalUrbErrors > lastObservedUrbErrors
+        if (urbErrorDelta) {
+            lastObservedUrbErrors = totalUrbErrors
+        }
+        val clockMismatch = nativeRate > 0 && confirmedRateHz > 0 && nativeRate != confirmedRateHz
+        val unexpectedStop = isStreaming && !isPausedGrace && !nativeRunning && statsScratch[4] > 0L
+        if (!urbErrorDelta && !clockMismatch && !unexpectedStop) return
+
+        val faultDesc = when {
+            urbErrorDelta -> "USB URB/device error (total=$totalUrbErrors)"
+            clockMismatch -> "USB clock mismatch (actual=$nativeRate expected=$confirmedRateHz)"
+            else -> "USB streaming thread stopped unexpectedly"
+        }
 
         if (reconfigureEscalator.recordReconfigureAndShouldFallback()) {
             close()
-            failOrHardStop("Persistent USB underruns")
+            failOrHardStop("Persistent USB faults: $faultDesc")
             return
         }
 
+        realFaultReconfigures++
         val rc = api.reconfigure(
             h, lastEndpoint, lastStreamingIface, confirmedAlt, confirmedRateHz, confirmedBitDepth,
             lastChannels, lastSubslotSize, lastHighSpeed, currentIsDop, lastFeedbackEp,
