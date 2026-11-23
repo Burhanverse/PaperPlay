@@ -318,6 +318,8 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
     val copier = backend.services.indexCopier
     val copyProgress by copier.progress.collectAsState()
     val copyResult by copier.lastResult.collectAsState()
+    // A song being sent again (downloaded, then uploaded) reports its bytes and speed once a second.
+    val transfer by backend.account.transfer.collectAsState()
     val copying = copyProgress != null
     // Copies per minute; the pause between two copies is a minute divided by this. Faster copying can run into Telegram's limits.
     var copyRate by remember { mutableStateOf((backend.pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)) }
@@ -401,6 +403,17 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                             Modifier.weight(1f), color = MaterialTheme.colorScheme.primary)
                         OutlinedButton({ copier.setPaused(!p.paused) }) { Text(if (p.paused) "Resume" else "Pause") }
                         TextButton({ copier.stop() }) { Text("Stop") }
+                    }
+                    transfer?.let { t ->
+                        fun mb(b: Long) = "%.1f".format(b / 1_048_576.0)
+                        val left = if (t.bytesPerSecond > 0 && t.total > t.done) " · ${(t.total - t.done) / t.bytesPerSecond} s left" else ""
+                        Column(pad) {
+                            Text(
+                                (if (t.upload) "Uploading " else "Downloading ") + "\"${t.title}\": ${mb(t.done)} of ${mb(t.total)} MB · ${mb(t.bytesPerSecond)} MB/s$left",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                            )
+                            androidx.compose.material3.LinearProgressIndicator({ if (t.total > 0) (t.done.toFloat() / t.total).coerceIn(0f, 1f) else 0f }, Modifier.fillMaxWidth().padding(top = 4.dp))
+                        }
                     }
                     p.why?.let { Text(it, pad, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
                 }

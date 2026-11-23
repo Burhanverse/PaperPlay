@@ -498,12 +498,34 @@ class UserSession(
         reupload(c, fromChat, messageId, toChat)
     }
 
+    private val _transfer = kotlinx.coroutines.flow.MutableStateFlow<Transfer?>(null)
+    override val transfer: kotlinx.coroutines.flow.StateFlow<Transfer?> = _transfer
+
+    /**
+     * Reports the progress of [fileId] once a second as [_transfer] until [finished] says so (or the caller cancels): bytes done
+     * (downloaded or uploaded) of the file's size, and the speed over the last second.
+     */
+    private suspend fun watchFile(c: TdClient, fileId: Int, title: String, upload: Boolean, finished: (JsonObject) -> Boolean = { false }) {
+        var last = -1L
+        while (true) {
+            val f = runCatching { call(c, request("getFile") { put("file_id", fileId) }) }.getOrNull()
+            if (f != null) {
+                val done = if (upload) f.obj("remote")?.long("uploaded_size") ?: 0L else f.obj("local")?.long("downloaded_size") ?: 0L
+                val total = (f.long("size") ?: 0L).takeIf { it > 0 } ?: f.long("expected_size") ?: 0L
+                _transfer.value = Transfer(title, upload, done, total, if (last < 0) 0 else (done - last).coerceAtLeast(0))
+                last = done
+                if (finished(f)) return
+            }
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
     private suspend fun reupload(c: TdClient, fromChat: Long, messageId: Long, toChat: Long) {
         val message = call(c, request("getMessage") { put("chat_id", fromChat); put("message_id", messageId) })
         val song = io.max.paperplay.core.app.songFromMessage(message)
             ?: throw IllegalStateException("Telegram did not copy this post, and it holds no song to send again.")
         io.max.paperplay.player.PlayLog.log("copy", "Sending \"${song.title}\" again: the chat blocks copying, so it is downloaded and uploaded (${song.size / (1L shl 20)} MB each way)")
-        val (path, fileId) = downloadPost(fromChat, messageId)
+        val (path, fileId) = downloadPost(fromChat, messageId, song.title)
             ?: throw IllegalStateException("Telegram did not copy this post, and the file could not be downloaded to send it again.")
         try {
             val newApi = c.newApi()
@@ -515,20 +537,35 @@ class UserSession(
                 ))
             }, 600)
             if (sentAgain.long("id") == null) throw IllegalStateException("Telegram did not accept the song.")
+            // The message is only queued: the file uploads now. The download is kept until the upload has finished, or it would be
+            // deleted from under it.
+            val upId = sentAgain.obj("content")?.let { it.obj("audio")?.obj("audio") ?: it.obj("document")?.obj("document") }?.long("id")?.toInt()
+            if (upId != null) kotlinx.coroutines.withTimeoutOrNull(30 * 60_000L) {
+                watchFile(c, upId, song.title, upload = true) { f -> f.obj("remote")?.str("is_uploading_completed") == "true" || f.obj("remote")?.str("is_uploading_active") == "false" && (f.obj("remote")?.long("uploaded_size") ?: 0L) > 0 }
+            }
         } finally {
+            _transfer.value = null
             releaseFile(fileId)
         }
     }
 
     /** Downloads the song of a post with the owner's account. The local path and TDLib's file id, or null when it holds no song. */
-    suspend fun downloadPost(chatId: Long, messageId: Long): Pair<String, Int>? {
+    suspend fun downloadPost(chatId: Long, messageId: Long, progressTitle: String? = null): Pair<String, Int>? {
         val c = ready()
         knowChat(c, chatId, loadList = false)
         val message = call(c, request("getMessage") { put("chat_id", chatId); put("message_id", messageId) })
         val fileId = io.max.paperplay.core.app.fileOfMessage(message)?.long("id")?.toInt() ?: return null
-        val file = call(c, request("downloadFile") {
-            put("file_id", fileId); put("priority", 1); put("offset", 0); put("limit", 0); put("synchronous", true)
-        }, 1800)
+        val file = kotlinx.coroutines.coroutineScope {
+            // While the download runs, its progress is reported once a second for the copy's status line.
+            val watcher = progressTitle?.let { t -> launch { watchFile(c, fileId, t, upload = false) } }
+            try {
+                call(c, request("downloadFile") {
+                    put("file_id", fileId); put("priority", 1); put("offset", 0); put("limit", 0); put("synchronous", true)
+                }, 1800)
+            } finally {
+                watcher?.cancel()
+            }
+        }
         val path = file.obj("local")?.str("path")?.takeIf { it.isNotEmpty() } ?: return null
         return path to fileId
     }

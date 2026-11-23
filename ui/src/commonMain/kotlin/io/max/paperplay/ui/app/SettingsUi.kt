@@ -37,12 +37,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
 
 /** Page title with a back arrow. */
 @Composable
 fun BackTopBar(title: String, onBack: () -> Unit, modifier: Modifier = Modifier, actions: @Composable () -> Unit = {}) {
     Row(modifier.barSurface().padding(start = 4.dp, end = 8.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onBack) { AppIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+        // The arrow arrives pointing forward (the way the page was entered) and turns to point back, as the page settles.
+        val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
+        val turn = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (reduceMotion) 180f else 0f) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            if (!reduceMotion) turn.animateTo(180f, androidx.compose.animation.core.tween(380, delayMillis = 120, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        }
+        IconButton(onBack) { AppIcon(Icons.Rounded.ChevronRight, "Back", Modifier.graphicsLayer { rotationZ = turn.value }) }
         Text(title, Modifier.weight(1f).padding(start = 4.dp), style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         actions()
     }

@@ -97,6 +97,9 @@ interface AccountApi {
     /** Joins a chat by a t.me link (public name or invite); returns its id, or null when it could not be joined. */
     suspend fun joinChat(link: String): Long? = null
 
+    /** The song being downloaded or uploaded to send it again, while that runs; null otherwise. */
+    val transfer: StateFlow<Transfer?> get() = kotlinx.coroutines.flow.MutableStateFlow(null)
+
     /** Whether the account can see [chatId] (is a member, or it is public and can be opened). */
     suspend fun canSee(chatId: Long): Boolean = true
 
@@ -133,6 +136,9 @@ data class IndexProgress(val chatId: Long, val chatTitle: String, val found: Int
 /** The saved index of the account's chats. Persisted, so it survives restarts and logouts. */
 /** What [ChatIndexApi.addPostsNotInLibrary] found: posts the account saw in the main chat, how many it added, and how many repeat posts of a file the library keeps as copies (the Duplicates page lists them). */
 data class MainChatAdd(val seen: Int, val added: Int, val repeats: Int = 0)
+
+/** A song being sent again: downloading ([upload] false) or uploading, [done] of [total] bytes at [bytesPerSecond]. */
+data class Transfer(val title: String, val upload: Boolean, val done: Long, val total: Long, val bytesPerSecond: Long)
 
 /** How a chat can be found: public [username] (no "@"), an [inviteLink], and whether it is a channel. */
 data class ChatLinks(val username: String, val inviteLink: String, val isChannel: Boolean)
