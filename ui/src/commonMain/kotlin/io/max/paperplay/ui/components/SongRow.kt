@@ -22,8 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.ui.draw.alpha
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.DropdownMenu
@@ -82,7 +81,7 @@ fun SongRow(
 
     BoxWithConstraints(modifier.fillMaxWidth()) {
     Surface(
-        modifier = Modifier.fillMaxWidth().alpha(if (song.botCantReach) 0.55f else 1f),
+        modifier = Modifier.fillMaxWidth(),
         shape = io.max.paperplay.ui.app.appShape(16.dp),
         color = containerColor,
         tonalElevation = if (current) 3.dp else 1.dp,
@@ -136,6 +135,15 @@ fun SongRow(
                         color = if (current) scheme.primary else scheme.onSurface,
                         modifier = Modifier.weight(1f, fill = false),
                     )
+                    // Only the account can play this song, not the bot: a red robot beside the name, the row stays at full strength.
+                    if (song.botCantReach) {
+                        AppIcon(
+                            imageVector = Icons.Rounded.SmartToy,
+                            contentDescription = "Bot can't reach this song",
+                            tint = scheme.error,
+                            modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                        )
+                    }
                     // A solid heart beside the name; the Material icon is used directly because AppIcon swaps it for an outline in the Tabler set.
                     if (song.favorite) {
                         androidx.compose.material3.Icon(
@@ -175,15 +183,7 @@ fun SongRow(
                             modifier = Modifier.size(14.dp),
                         )
                     }
-                    if (song.botCantReach) {
-                        AppIcon(
-                            imageVector = Icons.Rounded.Warning,
-                            contentDescription = "Bot can't reach this song",
-                            tint = scheme.error,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Text("Bot can't reach", style = MaterialTheme.typography.labelSmall, color = scheme.error, maxLines = 1, softWrap = false)
-                    } else if (detail.isNotEmpty()) Text(
+                    if (detail.isNotEmpty()) Text(
                         text = detail,
                         style = MaterialTheme.typography.labelSmall,
                         color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
