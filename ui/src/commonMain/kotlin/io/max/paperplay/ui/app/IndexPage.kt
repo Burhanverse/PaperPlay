@@ -54,6 +54,9 @@ import kotlinx.coroutines.launch
 /** Titles of the open chat pages ("index:<id>") for the settings header. */
 internal val indexPageTitles = mutableMapOf<String, String>()
 
+/** A search to start a chat page with ("index:<id>"), set when it is opened from a search result. */
+internal val indexPageQuery = mutableMapOf<String, String>()
+
 internal fun settingsPageTitle(id: String?): String? = id?.let { subTitles[it] ?: indexPageTitles[it] }
 
 /** Settings > Telegram > Chats and channels: your own chats, what is indexed, and the auto options. */
@@ -302,14 +305,17 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
     val index = backend.chatIndex
     val progressState = index.progress.collectAsState()
     val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var search by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf(indexPageQuery.remove("index:$chatId").orEmpty()) }
+    var search by remember { mutableStateOf(query) }
     var filter by remember { mutableStateOf(IndexFilter.All) }
     var selection by remember { mutableStateOf(IndexSelection()) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var copying by remember { mutableStateOf(false) }
-    var paused by remember { mutableStateOf(false) }
+    // Copying runs as an app task (Tasks shows it), so it goes on when this page is closed.
+    val copier = backend.services.indexCopier
+    val copyProgress by copier.progress.collectAsState()
+    val copyResult by copier.lastResult.collectAsState()
+    val copying = copyProgress != null
     // Copies per minute; the pause between two copies is a minute divided by this. Faster copying can run into Telegram's limits.
     var copyRate by remember { mutableStateOf((backend.pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)) }
     var tick by remember { mutableStateOf(0L) }
@@ -347,34 +353,9 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
     val pad = Modifier.padding(horizontal = 20.dp)
 
     fun copyAll(todo: List<ChatPost>) {
-        busy = true
-        scope.launch {
-            if (own) {
-                todo.forEach { runCatching { index.addToLibrary(it) } }
-                status = "Added ${todo.size} to your library. They are already in your main chat."
-                selection = selection.clear()
-                busy = false
-                return@launch
-            }
-            // Copied one by one into the main chat. A song leaves these lists only once Telegram accepted its copy.
-            var ok = 0
-            var failed = 0
-            var why: String? = null
-            copying = true
-            paused = false
-            todo.forEachIndexed { i, p ->
-                // Paused between two copies: what is done stays done, and the rest waits here.
-                while (paused) { status = "Paused: $i of ${todo.size} copied"; delay(300) }
-                status = "Copying ${i + 1} of ${todo.size} to your main chat"
-                runCatching { index.copyToMain(p) }.onSuccess { ok++ }.onFailure { failed++; if (why == null) why = it.message }
-                if (i < todo.size - 1) delay(60_000L / copyRate)
-            }
-            status = if (failed == 0) "Copied $ok to your main chat" else "Copied $ok, $failed failed. ${why.orEmpty()}"
-            selection = selection.clear()
-            copying = false
-            paused = false
-            busy = false
-        }
+        // In the main chat itself a song is only added to the library: copying would post it twice.
+        status = if (copier.start(todo, libraryOnly = own)) null else "A copy is still running. Pause or stop it in Tasks first."
+        selection = selection.clear()
     }
 
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = bottomPadding)) {
@@ -411,7 +392,15 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                         Text(if (selection.picked.isNotEmpty()) "Add $n" else "Add all shown ($n)")
                     }
                 }
-                if (copying) OutlinedButton({ paused = !paused }, pad) { Text(if (paused) "Resume copy" else "Pause copy") }
+                copyProgress?.let { p ->
+                    Row(pad, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text((if (p.paused) "Paused: " else if (p.libraryOnly) "Adding " else "Copying ") + "${p.done + p.skipped + p.failed} of ${p.total}" + if (p.failed > 0) ", ${p.failed} failed" else "",
+                            Modifier.weight(1f), color = MaterialTheme.colorScheme.primary)
+                        OutlinedButton({ copier.setPaused(!p.paused) }) { Text(if (p.paused) "Resume" else "Pause") }
+                        TextButton({ copier.stop() }) { Text("Stop") }
+                    }
+                }
+                if (!copying) copyResult?.let { Text(it, pad, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Column(pad) {
                     Text("Copy speed: $copyRate per minute (a copy every ${"%.1f".format(60.0 / copyRate)} s)", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     androidx.compose.material3.Slider(

@@ -362,6 +362,11 @@ class AppServices(
 
     private val realIndex get() = chatIndex as io.max.paperplay.core.account.ChatIndex
 
+    /** Copies indexed songs into the main chat as a task that outlives the page it was started from. */
+    val indexCopier: io.max.paperplay.core.account.IndexCopier by lazy {
+        io.max.paperplay.core.account.IndexCopier(chatIndex, scope) { library.pref("copy_rate")?.toIntOrNull() ?: 20 }
+    }
+
     /** The saved index of the account's chats. The real one replaces the stand-in. */
     val chatIndex: io.max.paperplay.core.account.ChatIndexApi by lazy {
         io.max.paperplay.core.account.ChatIndex(

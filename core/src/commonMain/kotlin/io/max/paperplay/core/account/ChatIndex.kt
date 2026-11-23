@@ -479,6 +479,9 @@ class ChatIndex(
         chatsChanged()
     }
 
+    override fun alreadyHave(post: ChatPost): Boolean =
+        store.had(post.chatId, post.messageId, post.uniqueId) || library.songByUniqueId(post.uniqueId)?.remote_id?.let { it != io.max.paperplay.core.app.ACCOUNT_REMOTE } == true
+
     override suspend fun join(chatId: Long): Boolean {
         val c = store.chat(chatId) ?: return false
         val link = c.publicLink ?: return false

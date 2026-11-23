@@ -263,6 +263,12 @@ class IndexStore(private val driver: SqlDriver) {
         return changed
     }
 
+    /** True when the library has [chatId]/[messageId] (flags) or it was copied before. */
+    fun had(chatId: Long, messageId: Long, uniqueId: String): Boolean = query(
+        "SELECT (SELECT in_library FROM index_posts WHERE chat_id = ? AND message_id = ?) > 0 OR EXISTS (SELECT 1 FROM index_copied WHERE unique_id = ?)", 3,
+        { bindLong(0, chatId); bindLong(1, messageId); bindString(2, uniqueId) },
+    ) { it.getLong(0) == 1L }.firstOrNull() == true
+
     /** The cover picture Telegram keeps inside the post (a tiny JPEG), if the file had one. */
     fun thumb(chatId: Long, messageId: Long): ByteArray? =
         query("SELECT thumb FROM index_posts WHERE chat_id = ? AND message_id = ?", 2, { bindLong(0, chatId); bindLong(1, messageId) }) { it.getBytes(0) }.firstOrNull()

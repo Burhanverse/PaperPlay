@@ -252,6 +252,9 @@ interface ChatIndexApi {
     /** Merges an index file in. Never deletes; chats the account is not in are marked to join. */
     suspend fun importFrom(text: String): IndexImport { import(text); return IndexImport(0, 0, 0) }
 
+    /** True when the library already has [post] (same file or same song) or it was copied before. */
+    fun alreadyHave(post: ChatPost): Boolean = false
+
     /** Joins an imported chat through its link and marks it joined; false when it could not be joined. */
     suspend fun join(chatId: Long): Boolean = false
 

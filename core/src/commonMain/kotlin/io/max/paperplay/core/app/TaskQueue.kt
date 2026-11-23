@@ -159,7 +159,10 @@ class TaskQueue(
     /** Scan, index and playlist sync progress become tasks. */
     fun watchServices(services: AppServices) {
         watch(TaskKind.Scan, "Reading chats", services.scanner.progress, { it.text }, { it.fraction?.toFloat() }, onStop = { services.scanner.requestStop() })
-        watch(TaskKind.Index, "Indexing chats", services.chatIndex.progress, { "${it.chatTitle}: ${it.found} songs" }, onStop = { services.chatIndex.stopRun() })
+        watch(TaskKind.Index, "Indexing chats", services.chatIndex.progress, { "${it.chatTitle}: ${it.found} songs" }, onStop = { services.chatIndex.setPaused(true) })
+        watch(TaskKind.Other, "Copying songs", services.indexCopier.progress, { p ->
+            (if (p.paused) "Paused: " else "") + "${p.done + p.skipped + p.failed} of ${p.total}" + if (p.failed > 0) ", ${p.failed} failed" else ""
+        }, { p -> (p.done + p.skipped + p.failed).toFloat() / p.total.coerceAtLeast(1) }, onStop = { services.indexCopier.stop() })
         watch(TaskKind.Sync, "Refreshing playlists", services.playlistSync.progress, { it }, onStop = { services.playlistSync.stopRun() })
         watchEnricher(services.enricher)
         watchUploads(services.uploader)

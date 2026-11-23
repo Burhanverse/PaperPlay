@@ -1,5 +1,6 @@
 ﻿package io.max.paperplay.ui.app
 
+import androidx.compose.material.icons.rounded.Campaign
 import io.max.paperplay.ui.components.AppIcon
 import io.max.paperplay.ui.components.toggleOnColor
 
@@ -160,6 +161,8 @@ fun Sidebar(
 ) {
     val readTelegram = LocalTelegramLists.current
     val telegram = readTelegram()
+    val indexedSource = LocalIndexedChats.current
+    val indexed = indexedSource?.chats?.collectAsState()?.value.orEmpty()
     var toolsOpen by remember { mutableStateOf(false) }
     var playlistsOpen by remember { mutableStateOf(true) }
     var telegramOpen by remember { mutableStateOf(true) }
@@ -245,7 +248,7 @@ fun Sidebar(
         }
         if (playlistsOpen) items(playlists, key = { it.id }) { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
         // The main chat's topics (and starred channels) sit apart from the playlists you made.
-        if (telegram.isNotEmpty()) {
+        if (telegram.isNotEmpty() || indexed.isNotEmpty()) {
             item {
                 item("telegram_group", "From Telegram", { AppIcon(Icons.Rounded.Forum, null, Modifier.size(22.dp)) }, false, {
                     AppIcon(if (telegramOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (telegramOpen) "Hide Telegram" else "Show Telegram", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
@@ -253,6 +256,10 @@ fun Sidebar(
             }
             if (telegramOpen) items(telegram, key = { it.key }) { t ->
                 item(t.key, t.name, { CoverGrid(t.songs.mapNotNull { it.coverUri }.distinct().take(4), t.key, 28.dp, 6.dp) }, false) { onTelegram(t) }
+            }
+            // Indexed chats: browsed a page at a time, their songs join the library only when added.
+            if (telegramOpen) items(indexed, key = { "idx${it.id}" }) { c ->
+                item("idx${c.id}", c.title, { AppIcon(if (c.isChannel) Icons.Rounded.Campaign else Icons.Rounded.Forum, null, Modifier.size(22.dp)) }, false) { indexedSource?.open?.invoke(c) }
             }
         }
         item { Spacer(Modifier.height(8.dp)) }

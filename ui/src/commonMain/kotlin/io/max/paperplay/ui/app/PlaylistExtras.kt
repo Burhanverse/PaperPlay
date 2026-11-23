@@ -1,5 +1,7 @@
 package io.max.paperplay.ui.app
 
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -245,6 +247,8 @@ fun PlaylistsTab(
 ) {
     val read = LocalTelegramLists.current
     val telegramLists = read()
+    val indexedSource = LocalIndexedChats.current
+    val indexed = indexedSource?.chats?.collectAsState()?.value.orEmpty()
     LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(top = 4.dp, bottom = bottomPadding + 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { PlaylistActionRow(Icons.Rounded.Favorite, "Favorites") { onOpen(Detail.Songs("Favorites", favorites)) } }
         item { PlaylistActionRow(Icons.Rounded.History, "Recently played") { onOpen(Detail.Songs("Recently played", recents)) } }
@@ -277,6 +281,13 @@ fun PlaylistsTab(
                         }
                     }
                 }
+            }
+        }
+        // Chats of the account's index: browsed a page at a time; their songs join the library only when added.
+        if (indexed.isNotEmpty()) {
+            item { Text("Indexed chats", Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium) }
+            items(indexed, key = { "idx${it.id}" }) { c ->
+                PlaylistActionRow(if (c.isChannel) Icons.Rounded.Campaign else Icons.Rounded.Forum, "${c.title} (${c.postCount} songs)") { indexedSource?.open?.invoke(c) }
             }
         }
     }
