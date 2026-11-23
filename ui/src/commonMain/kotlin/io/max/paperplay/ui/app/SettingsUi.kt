@@ -27,6 +27,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -107,6 +109,30 @@ private fun TitleWithInfo(title: String, explanation: String?, open: Boolean, on
     }
 }
 
+/** The option a Settings search result was tapped for; the row with that title scrolls into view and flashes once. */
+internal var focusedSetting by mutableStateOf<String?>(null)
+
+/** Makes a row findable from Settings search: scrolls it into view when it is the focused option and flashes its background. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.searchFocus(title: String): Modifier {
+    val want = focusedSetting?.lowercase()
+    val mine = want != null && title.lowercase().startsWith(want)
+    val requester = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    val flash by androidx.compose.animation.animateColorAsState(
+        if (mine) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent, label = "searchFocus",
+    )
+    LaunchedEffect(mine) {
+        if (mine) {
+            kotlinx.coroutines.delay(350)
+            runCatching { requester.bringIntoView() }
+            kotlinx.coroutines.delay(1800)
+            if (focusedSetting?.lowercase() == want) focusedSetting = null
+        }
+    }
+    return this.bringIntoViewRequester(requester).background(flash)
+}
+
 /** A row inside a sub-page: optional icon, title, optional subtitle, optional trailing content. */
 @Composable
 fun SettingsRow(
@@ -118,7 +144,7 @@ fun SettingsRow(
     trailing: @Composable () -> Unit = {},
 ) {
     Row(
-        modifier.fillMaxWidth().then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
+        modifier.fillMaxWidth().searchFocus(title).then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -167,7 +193,7 @@ fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit, icon
 
 @Composable
 fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit, steps: Int = 0, hint: String? = null, onDone: () -> Unit = {}) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
+    Column(Modifier.fillMaxWidth().searchFocus(title).padding(horizontal = 20.dp, vertical = 4.dp)) {
         val behindInfo = LocalSettingsInfo.current && hint != null
         var open by remember { mutableStateOf(false) }
         TitleWithInfo(title, if (behindInfo) hint else null, open, { open = !open }, MaterialTheme.colorScheme.onSurface, MaterialTheme.typography.bodyLarge)

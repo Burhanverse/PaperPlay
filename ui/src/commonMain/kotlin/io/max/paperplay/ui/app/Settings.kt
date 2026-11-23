@@ -195,7 +195,7 @@ private fun SettingsList(prefs: UiPrefs, stack: MutableList<String>) {
             SectionLabel("Options")
             hits.forEach { x ->
                 val where = categories.firstOrNull { it.id == x.page }?.title ?: subTitles[x.page]
-                SettingsCard(Icons.Rounded.Tune, x.title, where.orEmpty(), { stack.add(x.page) })
+                SettingsCard(Icons.Rounded.Tune, x.title, where.orEmpty(), { focusedSetting = x.title; stack.add(x.page) })
             }
         }
         if (shown.isEmpty() && !tourShown && hits.isEmpty()) Text("No settings match", Modifier.padding(24.dp))
