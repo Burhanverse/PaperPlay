@@ -130,11 +130,6 @@ fun LanDevicesSection(modifier: Modifier = Modifier) {
                         listOfNotNull(if (isActive) "Controlled from here" else null, via?.let { "via $it" }).joinToString(" · "),
                         style = muted, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
-                    // Play on: both keep playing. Move: the song and queue go over and the other one stops.
-                    if (d.paired && output != null) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        androidx.compose.material3.FilterChip(false, { output.switchTo(if (isActive) null else d.id) }, { Text(if (isActive) "Control here" else "Play on", style = muted) })
-                        androidx.compose.material3.FilterChip(false, { output.moveTo(if (isActive) null else d.id) }, { Text(if (isActive) "Move back" else "Move to", style = muted) })
-                    }
                 }
                 if (d.paired) {
                     IconButton({ scope.launch { lan.sendControl(d.id, "previous") } }, Modifier.size(36.dp)) { AppIcon(Icons.Rounded.SkipPrevious, "Previous on ${d.name}", Modifier.size(22.dp)) }
@@ -143,6 +138,12 @@ fun LanDevicesSection(modifier: Modifier = Modifier) {
                     }
                     IconButton({ scope.launch { lan.sendControl(d.id, "next") } }, Modifier.size(36.dp)) { AppIcon(Icons.Rounded.SkipNext, "Next on ${d.name}", Modifier.size(22.dp)) }
                 }
+            }
+            // Play on: both keep playing. Move: the song and queue go over and the other one stops.
+            // A row of its own under the device, so the narrow text column beside the transport buttons never squeezes them.
+            if (d.paired && output != null) Row(Modifier.padding(start = 42.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                androidx.compose.material3.FilterChip(false, { output.switchTo(if (isActive) null else d.id) }, { Text(if (isActive) "Control here" else "Play on", style = muted, maxLines = 1, softWrap = false) })
+                androidx.compose.material3.FilterChip(false, { output.moveTo(if (isActive) null else d.id) }, { Text(if (isActive) "Move back" else "Move to", style = muted, maxLines = 1, softWrap = false) })
             }
         }
         for (p in paired.filter { p -> connected.none { it.id == p.id } }) {

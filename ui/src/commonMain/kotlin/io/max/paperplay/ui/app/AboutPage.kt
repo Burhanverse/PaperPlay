@@ -158,12 +158,13 @@ private fun UpdateHeader(
             }
             is UpdateState.Available -> {
                 Text("Version ${s.release.version} is available", style = MaterialTheme.typography.titleMedium)
-                ReleaseNotes(s.release.notes)
+                // The buttons come before the notes so a long list never pushes them under the bottom bar.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (s.asset != null) Button({ scope.launch { updates.download() } }) { Text("Download") }
                     else Button({ uri.openUri(s.release.pageUrl) }) { Text("Open release page") }
                     OutlinedButton({ updates.skip() }) { Text("Skip this version") }
                 }
+                ReleaseNotes(s.release.notes)
             }
             is UpdateState.Downloading -> {
                 Text("Downloading ${s.release.version}")
@@ -184,13 +185,39 @@ private fun UpdateHeader(
 @Composable
 private fun CheckButton(text: String, onClick: () -> Unit) = OutlinedButton(onClick) { Text(text) }
 
-/** The release notes as plain lines: markdown headings in bold, bullets as they are. */
+/** The release notes for people, not developers: no commit links, no maintenance section, headings bold, bullets as dots. */
 @Composable
 private fun ReleaseNotes(notes: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        notes.lines().filter { it.isNotBlank() }.take(40).forEach { line ->
-            if (line.startsWith("#")) Text(line.trimStart('#', ' '), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 6.dp))
-            else Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        userNotes(notes).take(30).forEach { (heading, text) ->
+            if (heading) Text(text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 6.dp))
+            else Text("•  $text", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+private val HIDDEN_SECTIONS = setOf("maintenance", "documentation")
+private val COMMIT_LINK = Regex("""\s*\(\[`?[0-9a-f]{7,40}`?]\([^)]*\)\)""")
+private val MD_LINK = Regex("""\[([^\]]*)]\([^)]*\)""")
+
+/** Markdown release notes as (isHeading, text) lines, with commit links, the compare link and internal sections left out. */
+internal fun userNotes(notes: String): List<Pair<Boolean, String>> {
+    val out = mutableListOf<Pair<Boolean, String>>()
+    var hidden = false
+    for (raw in notes.lines()) {
+        val line = raw.trim()
+        if (line.isEmpty() || line.startsWith("**Full changes")) continue
+        if (line.startsWith("#")) {
+            val heading = line.trimStart('#', ' ')
+            hidden = heading.lowercase() in HIDDEN_SECTIONS
+            if (!hidden) out += true to heading
+            continue
+        }
+        if (hidden) continue
+        val text = line.removePrefix("- ").removePrefix("* ")
+            .replace(COMMIT_LINK, "").replace(MD_LINK, "$1").replace("`", "").replace("**", "").trim()
+        if (text.isNotEmpty()) out += false to text
+    }
+    // A heading whose items were all removed is dropped too.
+    return out.filterIndexed { i, (h, _) -> !h || out.getOrNull(i + 1)?.first == false }
 }
