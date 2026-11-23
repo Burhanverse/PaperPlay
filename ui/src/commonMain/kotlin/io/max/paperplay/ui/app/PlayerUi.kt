@@ -256,6 +256,7 @@ private fun PlayerBody(
                             if (song.album.isNotBlank()) AlbumLink(song.album, MaterialTheme.typography.bodyMedium, scheme.onSurface.copy(alpha = 0.5f))
                         }
                     }
+                    PreviewCopyButton(song)
                     IconButton({ actions.setFavorite(song, !song.favorite) }) {
                         AppIcon(
                             if (song.favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
@@ -523,6 +524,7 @@ fun NowPlayingPanel(state: PlaybackUiState, backend: PlayerControls, actions: Li
                     ArtistLinks(song.artist, MaterialTheme.typography.bodyMedium, muted, Modifier.padding(top = 2.dp))
                     if (song.album.isNotBlank()) AlbumLink(song.album, MaterialTheme.typography.bodySmall, muted.copy(alpha = 0.8f))
                 }
+                PreviewCopyButton(song)
                 IconButton({ actions.setFavorite(song, !song.favorite) }) {
                     AppIcon(if (song.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (song.favorite) "Remove from favorites" else "Add to favorites")
                 }

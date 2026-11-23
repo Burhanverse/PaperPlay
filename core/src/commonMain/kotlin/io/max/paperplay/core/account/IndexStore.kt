@@ -372,15 +372,26 @@ class IndexStore(private val driver: SqlDriver) {
         IndexFilter.Wanted -> "wanted = 1 AND in_library = 0 AND unique_id NOT IN (SELECT unique_id FROM index_copied)"
     }
 
-    private fun search(q: String) = if (q.isBlank()) "" else " AND (title LIKE ?2 OR artist LIKE ?2 OR file_name LIKE ?2 OR album LIKE ?2)"
+    /** The words of a search, at most six: each must appear in the title, artist, album or file name, in any order. */
+    private fun words(q: String) = q.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }.distinct().take(6)
 
-    private fun like(q: String) = "%" + q.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    private fun search(q: String): String = words(q).indices.joinToString("") {
+        " AND (title LIKE ?${it + 2} ESCAPE '\\' OR artist LIKE ?${it + 2} ESCAPE '\\' OR file_name LIKE ?${it + 2} ESCAPE '\\' OR album LIKE ?${it + 2} ESCAPE '\\')"
+    }
+
+    private fun like(w: String) = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+    /** Binds the chat and the search words; the count is what [query] needs as `params`. */
+    private fun SqlPreparedStatement.bindSearch(chatId: Long, q: String) {
+        bindLong(0, chatId)
+        words(q).forEachIndexed { i, w -> bindString(i + 1, like(w)) }
+    }
 
     /** One page of a chat's posts, newest first, with their flags; [query] matches title, artist, album or file name. */
     fun page(chatId: Long, filter: IndexFilter, query: String, offset: Int, limit: Int, mainChat: Long?): List<IndexedSong> {
         val sql = "SELECT $postColumns, in_library, better, wanted, unique_id IN (SELECT unique_id FROM index_copied) FROM index_posts " +
-            "WHERE chat_id = ?1 AND ${where(filter)}${search(query).replace("LIKE ?2", "LIKE ?2 ESCAPE '\\'")} ORDER BY message_id DESC LIMIT $limit OFFSET $offset"
-        return query(sql, if (query.isBlank()) 1 else 2, { bindLong(0, chatId); if (query.isNotBlank()) bindString(1, like(query)) }) { c ->
+            "WHERE chat_id = ?1 AND ${where(filter)}${search(query)} ORDER BY message_id DESC LIMIT $limit OFFSET $offset"
+        return query(sql, 1 + words(query).size, { bindSearch(chatId, query) }) { c ->
             val p = post(c)
             val inLib = c.getLong(11)!! > 0
             val better = c.getString(12)
@@ -390,26 +401,28 @@ class IndexStore(private val driver: SqlDriver) {
 
     /** The posts a filter and search select, for "add all shown". */
     fun select(chatId: Long, filter: IndexFilter, query: String): List<ChatPost> {
-        val sql = "SELECT $postColumns FROM index_posts WHERE chat_id = ?1 AND ${where(filter)}${search(query).replace("LIKE ?2", "LIKE ?2 ESCAPE '\\'")} ORDER BY message_id DESC"
-        return query(sql, if (query.isBlank()) 1 else 2, { bindLong(0, chatId); if (query.isNotBlank()) bindString(1, like(query)) }, ::post)
+        val sql = "SELECT $postColumns FROM index_posts WHERE chat_id = ?1 AND ${where(filter)}${search(query)} ORDER BY message_id DESC"
+        return query(sql, 1 + words(query).size, { bindSearch(chatId, query) }, ::post)
     }
 
     /** How many posts each filter shows for a chat and search, in [IndexFilter] order. */
     fun counts(chatId: Long, query: String): List<Int> {
         val copied = "unique_id IN (SELECT unique_id FROM index_copied)"
         val sql = "SELECT COUNT(*), SUM(in_library = 0 AND NOT $copied), SUM(better IS NOT NULL), SUM(in_library > 0), SUM(wanted = 1 AND in_library = 0 AND NOT $copied) " +
-            "FROM index_posts WHERE chat_id = ?1${search(query).replace("LIKE ?2", "LIKE ?2 ESCAPE '\\'")}"
-        return query(sql, if (query.isBlank()) 1 else 2, { bindLong(0, chatId); if (query.isNotBlank()) bindString(1, like(query)) }) { c ->
+            "FROM index_posts WHERE chat_id = ?1${search(query)}"
+        return query(sql, 1 + words(query).size, { bindSearch(chatId, query) }) { c ->
             List(5) { (c.getLong(it) ?: 0L).toInt() }
         }.first()
     }
 
-    /** Posts of any chat whose title, artist or album match [query], for the search screen. */
+    /** Posts of any chat whose title, artist, album or file name hold every word of [query], for the search screen. */
     fun searchAll(query: String, limit: Int): List<ChatPost> {
-        if (query.isBlank()) return emptyList()
-        return query(
-            "SELECT $postColumns FROM index_posts WHERE title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\' OR album LIKE ?1 ESCAPE '\\' ORDER BY in_library, date DESC LIMIT $limit", 1,
-            { bindString(0, like(query)) }, ::post,
-        )
+        val w = words(query)
+        if (w.isEmpty()) return emptyList()
+        val clause = w.indices.joinToString(" AND ") {
+            "(title LIKE ?${it + 1} ESCAPE '\\' OR artist LIKE ?${it + 1} ESCAPE '\\' OR file_name LIKE ?${it + 1} ESCAPE '\\' OR album LIKE ?${it + 1} ESCAPE '\\')"
+        }
+        return query("SELECT $postColumns FROM index_posts WHERE $clause ORDER BY in_library, date DESC LIMIT $limit", w.size,
+            { w.forEachIndexed { i, x -> bindString(i, like(x)) } }, ::post)
     }
 }

@@ -141,6 +141,7 @@ private fun NowPlayingMain(
                 Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.headlineSmall, color = ink)
                 Text(song.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge, color = ink.copy(alpha = 0.7f))
             }
+            PreviewCopyButton(song)
             IconButton({ actions.setFavorite(song, !song.favorite) }) {
                 AppIcon(if (song.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (song.favorite) "Remove from favorites" else "Add to favorites", tint = ink)
             }

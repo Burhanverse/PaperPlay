@@ -362,6 +362,18 @@ class AppServices(
         )
     }
 
+    /** Plays indexed songs without adding them to the library; what was not kept is cleared after a while. */
+    val indexPreview: IndexPreview by lazy {
+        IndexPreview(
+            "${platform.dataDir.trimEnd('/')}/preview",
+            { library.songByUniqueId(it) != null },
+            { if (playbackLazy.isInitialized()) playback.nowPlaying.value.song?.unique_id else null },
+            { indexCopier.progress.value != null || recovery.progress.value.running },
+            { account.clearDownloads() },
+            scope, clock,
+        )
+    }
+
     /** The saved chat index tables (posts of the account's chats), shared by the index and device sync. */
     val indexStore: io.max.paperplay.core.account.IndexStore by lazy { io.max.paperplay.core.account.IndexStore(driver) }
 

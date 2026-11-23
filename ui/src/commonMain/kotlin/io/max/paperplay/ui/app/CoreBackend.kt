@@ -1590,6 +1590,24 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         withPlayer { it.setQueue(list, start) }
     }
 
+    /** Plays an indexed post on its own without adding it to the library; see [io.max.paperplay.core.app.IndexPreview]. */
+    fun previewPost(post: io.max.paperplay.core.account.ChatPost) {
+        scope.launch(Dispatchers.Default) {
+            val full = if (post.thumb == null) post.copy(thumb = services.chatIndex.thumb(post.chatId, post.messageId)) else post
+            val song = services.indexPreview.song(full)
+            withPlayer { it.setQueue(listOf(song), 0) }
+        }
+    }
+
+    fun isPreview(id: String): Boolean = services.indexPreview.isPreview(id)
+
+    /** Copies the song playing from the index to the main chat. Returns the message for the user. */
+    suspend fun copyPreview(id: String): String = withContext(Dispatchers.Default) {
+        val s = services.playback.nowPlaying.value.song?.takeIf { it.unique_id == id } ?: return@withContext "Nothing to copy"
+        val post = services.chatIndex.postsByIds(s.chat_id, listOf(s.message_id)).firstOrNull() ?: return@withContext "Not in the index"
+        runCatching { services.chatIndex.copyToMain(post) }.fold({ "Copying ${s.title} to your main chat" }, { "Could not copy: ${it.message}" })
+    }
+
     fun shuffleAll(songs: List<SongUi>) {
         val list = songs.mapNotNull { byId[it.id] }.shuffled()
         if (list.isEmpty()) return

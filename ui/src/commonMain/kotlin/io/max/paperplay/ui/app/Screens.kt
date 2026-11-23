@@ -29,6 +29,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.Delete
@@ -504,8 +506,12 @@ private fun SearchResults(
         if (fromIndex.isNotEmpty()) {
             item(key = "h-index") { SearchHeader("In your indexed chats", fromIndex.size) }
             items(fromIndex, key = { "x-${it.chatId}-${it.messageId}" }) { p ->
-                SearchGroupRow(p.title.ifBlank { p.fileName }, listOfNotNull(p.artist.ifBlank { null }, chatNames[p.chatId]).joinToString(" · "), null, "x${p.uniqueId}", circle = false) {
-                    indexed?.openSearch?.invoke(p.chatId, p.title.ifBlank { p.fileName })
+                SearchGroupRow(
+                    p.title.ifBlank { p.fileName }, listOfNotNull(p.artist.ifBlank { null }, chatNames[p.chatId]).joinToString(" · "), null, "x${p.uniqueId}", circle = false,
+                    leading = indexed?.let { ix -> { PostThumb(p.messageId, { ix.thumb(p.chatId, p.messageId) }, 44.dp) } },
+                    trailing = indexed?.let { ix -> { IconButton({ ix.openSearch(p.chatId, p.title.ifBlank { p.fileName }) }) { AppIcon(Icons.Rounded.Search, "Open in chat") } } },
+                ) {
+                    indexed?.play?.invoke(p)
                 }
             }
         }
@@ -521,16 +527,20 @@ private fun SearchHeader(title: String, count: Int) {
 }
 
 @Composable
-private fun SearchGroupRow(title: String, subtitle: String, cover: String?, key: String, circle: Boolean, onClick: () -> Unit) {
+private fun SearchGroupRow(
+    title: String, subtitle: String, cover: String?, key: String, circle: Boolean,
+    leading: (@Composable () -> Unit)? = null, trailing: (@Composable () -> Unit)? = null, onClick: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CoverImage(cover, key, size = 44.dp, radius = if (circle) 22.dp else 10.dp)
+        if (leading != null) leading() else CoverImage(cover, key, size = 44.dp, radius = if (circle) 22.dp else 10.dp)
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
             if (subtitle.isNotBlank()) Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        trailing?.invoke()
     }
 }
 

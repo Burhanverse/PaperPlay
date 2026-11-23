@@ -457,6 +457,7 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
             val r = remember(s) { s.toRow() }
             SongPostRow(r, r.id in selection.picked, thumb = { index.thumb(r.song.post.chatId, r.song.post.messageId) },
                 onToggle = { selection = selection.toggle(r.id) },
+                onPlay = { backend.previewPost(r.song.post) },
                 onCopy = { scope.launch {
                     status = if (own) runCatching { index.addToLibrary(r.song.post) }.fold({ "Added ${r.title} to your library" }, { "Could not add ${r.title}: ${it.message}" })
                     else runCatching { index.copyToMain(r.song.post) }.fold({ "Copied ${r.title} to your main chat" }, { "Could not copy ${r.title}: ${it.message}" })
@@ -485,14 +486,14 @@ private fun ChatLiveHeader(progress: State<IndexProgress?>, chatId: Long, total:
 /** The small cover Telegram keeps inside the post, decoded once per row and only when the row is on screen. */
 @OptIn(org.jetbrains.compose.resources.ExperimentalResourceApi::class)
 @Composable
-private fun PostThumb(key: Long, load: () -> ByteArray?) {
+internal fun PostThumb(key: Long, load: () -> ByteArray?, size: androidx.compose.ui.unit.Dp = 40.dp) {
     val img by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, key) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { load()?.decodeToImageBitmap() }.getOrNull()
         }
     }
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-    val m = Modifier.size(40.dp).clip(shape)
+    val m = Modifier.size(size).clip(shape)
     img?.let { androidx.compose.foundation.Image(it, null, m, contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
         ?: androidx.compose.foundation.layout.Box(m.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = androidx.compose.ui.Alignment.Center) {
             AppIcon(Icons.Rounded.MusicNote, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -500,14 +501,25 @@ private fun PostThumb(key: Long, load: () -> ByteArray?) {
 }
 
 @Composable
-private fun SongPostRow(r: PostRowModel, picked: Boolean, thumb: () -> ByteArray?, onToggle: () -> Unit, onCopy: () -> Unit) {
+private fun SongPostRow(r: PostRowModel, picked: Boolean, thumb: () -> ByteArray?, onToggle: () -> Unit, onCopy: () -> Unit, onPlay: () -> Unit) {
     // Song details are long, but they are facts, not an explanation to hide behind an info button.
     androidx.compose.runtime.CompositionLocalProvider(LocalSettingsInfo provides false) {
         SettingsRow(r.title, onClick = onToggle, subtitle = r.subtitle, leading = { PostThumb(r.song.post.messageId, thumb) }) {
+            IconButton(onPlay) { AppIcon(Icons.Rounded.PlayArrow, "Play without adding") }
             Checkbox(picked, { onToggle() })
             IconButton(onCopy, enabled = r.canAdd) { AppIcon(Icons.Rounded.Add, "Copy to main chat") }
         }
     }
+}
+
+/** In the player: a copy button, only for a song playing from an indexed chat that the library does not have yet. */
+@Composable
+internal fun PreviewCopyButton(song: io.max.paperplay.ui.state.SongUi) {
+    val ix = LocalIndexedChats.current ?: return
+    val scope = rememberCoroutineScope()
+    var state by remember(song.id) { mutableStateOf<String?>(null) }
+    if (!ix.isPreview(song.id) || state == "done") return
+    IconButton({ scope.launch { state = "done"; ix.copyPreview(song.id) } }) { AppIcon(Icons.Rounded.Add, "Copy to main chat") }
 }
 
 /** For a track a Spotify playlist still waits for: the best song the index has, with a plus button to copy it. */
@@ -545,7 +557,7 @@ internal fun SongPostRowPreview() {
         better = true,
         wanted = false,
     )
-    SongPostRow(r = sampleSong.toRow(), picked = true, thumb = { null }, onToggle = {}, onCopy = {})
+    SongPostRow(r = sampleSong.toRow(), picked = true, thumb = { null }, onToggle = {}, onCopy = {}, onPlay = {})
 }
 
 @Preview(name = "Progress text", showBackground = true)

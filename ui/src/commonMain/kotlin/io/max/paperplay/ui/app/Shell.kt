@@ -312,6 +312,10 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         IndexedChats(
             backend.chatIndex.chats, { c -> openChat(c.id, c.title, "") },
             search = { q, n -> backend.chatIndex.searchAll(q, n) },
+            thumb = { c, m -> backend.chatIndex.thumb(c, m) },
+            play = { backend.previewPost(it) },
+            isPreview = { backend.isPreview(it) },
+            copyPreview = { backend.copyPreview(it) },
             openSearch = { id, q -> openChat(id, backend.chatIndex.chats.value.firstOrNull { it.id == id }?.title ?: "Indexed chat", q) },
         )
     }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput, { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } }, { id -> backend.switchOutput(id, move = true) { m -> scope.launch { snack.showSnackbar(m) } } }) }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {

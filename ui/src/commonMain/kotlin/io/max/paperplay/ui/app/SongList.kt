@@ -84,6 +84,13 @@ internal class IndexedChats(
     val search: (query: String, limit: Int) -> List<io.max.paperplay.core.account.ChatPost> = { _, _ -> emptyList() },
     /** Opens a chat's songs page with a search already typed. */
     val openSearch: (chatId: Long, query: String) -> Unit = { _, _ -> },
+    /** The tiny cover Telegram keeps in a post. Reads the database: call off the main thread. */
+    val thumb: (chatId: Long, messageId: Long) -> ByteArray? = { _, _ -> null },
+    /** Plays a post without adding it to the library. */
+    val play: (io.max.paperplay.core.account.ChatPost) -> Unit = {},
+    /** Whether the song is playing from the index and not in the library, and a way to copy it to the main chat. */
+    val isPreview: (String) -> Boolean = { false },
+    val copyPreview: suspend (String) -> String = { "" },
 )
 internal val LocalIndexedChats = androidx.compose.runtime.staticCompositionLocalOf<IndexedChats?> { null }
 
