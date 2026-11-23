@@ -1,5 +1,6 @@
 package io.max.paperplay.core.app
 
+import kotlinx.coroutines.sync.withLock
 import io.max.paperplay.core.db.LibraryDatabase
 import io.max.paperplay.core.integrations.defaultHttpFetcher
 import io.max.paperplay.core.library.LibraryRepo
@@ -525,6 +526,15 @@ class AppServices(
         get() = platform.settings.get(Keys.API_ID)?.toIntOrNull() != null &&
             !platform.settings.get(Keys.API_HASH).isNullOrEmpty() && !platform.secrets.get(Keys.BOT_TOKEN).isNullOrEmpty()
 
+    private val namesLock = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun repairNames() = namesLock.withLock {
+        val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
+        if (fixed.isEmpty()) return@withLock
+        library.replaceSongs(fixed)
+        activityLog("Library", "Fixed the title and artist of ${fixed.size} songs")
+    }
+
     /**
      * Logs the bot in and then reads the library chats. Returns at once; watch [auth], [ready] and [error].
      * Does nothing when already connected.
@@ -539,14 +549,12 @@ class AppServices(
             return
         }
         _error.value = null
-        // Once: songs whose names were split badly ("Song - Lofi - Artist") get their title and artist right, and are looked up again.
+        // Songs whose names were split badly ("Song - Lofi - Artist", "Song - Artist" read the other way round) get their title and artist
+        // right, and are looked up again. Runs now and after every scan, because new uploads arrive split by the file name alone.
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            if (library.pref("split_names_v4") != "done") {
-                val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
-                if (fixed.isNotEmpty()) library.replaceSongs(fixed)
-                library.setPref("split_names_v4", "done")
-                activityLog("Library", "Fixed the title and artist of ${fixed.size} songs named like \"Song - Version - Artist\"")
-            }
+            scanner.progress.collect { if (it == null) repairNames() }
+        }
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             if (library.pref("forum_topics_id_fix_v1") != "done") {
                 val topics = library.repo.db.miscQueries.topics().executeAsList()
                 val songs = library.repo.db.songsQueries.allSongs().executeAsList()

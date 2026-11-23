@@ -43,7 +43,7 @@ val audioExtensions = setOf(
     "aifc", "wv", "mka", "webm", "dsf", "dff", "mpc", "tta", "tak", "amr", "ac3", "dts", "mp2", "caf", "3gp",
 )
 
-private val LEADING_NUMBER = Regex("^\\s*\\d{1,3}\\s*[.\\-)]\\s*")
+private val LEADING_NUMBER = Regex("""^\s*\d{1,3}\s*(?:[.)]|-(?=\s))\s*""") // "01 - ", "1. ", but not the "1-" of "1-800"
 
 private val VERSION_WORD = Regex(
     "(?i)\\b(lo-?fi|remix|edit|version|mix|live|cover|remaster(ed)?|instrumental|acoustic|flip|slowed|reverb|sped up|rework|bootleg|demo|" +
@@ -76,17 +76,45 @@ fun parseFileName(fileName: String): Pair<String, String> {
     return parseFileNameFirst(fileName)
 }
 
+private val ARTIST_SPLIT = Regex("""(?i)\s*(?:,|&|\band\b|\bx\b|\bfeat\.?|\bft\.?|\bwith\b)\s*""")
+private val FEAT = Regex("""(?i)\b(?:feat|ft)\.?\s""")
+private val PART = Regex("""(?i)^(?:pt|part|vol)\.?\s*\d|^\d+$""")
+private val BRACKETS = Regex("""\([^)]*\)|\[[^\]]*]""") // "Song (feat. A & B)" is a song, not a list of artists
+
+/**
+ * True for "A, B", "A & B" or "A feat. B": every part is a short name (a "Pt. 2" or a long phrase means a song title), and what sits in
+ * brackets is left out ("Song (feat. A & B)" is a song).
+ */
+private fun looksLikeArtistList(name: String): Boolean {
+    val plain = name.replace(BRACKETS, " ")
+    if (FEAT.containsMatchIn(plain)) return true
+    val parts = plain.split(",", " & ").map { it.trim() }
+    return parts.size >= 2 && parts.all { p -> p.isNotEmpty() && p.split(' ').size <= 4 && !PART.containsMatchIn(p) }
+}
+
+/** The single names in an artist field: "A, B & C feat. D" gives a, b, c, d. */
+private fun artistNames(s: String) = s.replace(BRACKETS, " ").lowercase().split(ARTIST_SPLIT).map { it.trim() }.filter { it.length >= 2 }
+
 /**
  * Songs saved with names split at the first " - " (song as the artist, "Version - Artists" as the title) are split again with the current
- * rule, and looked up again for covers and info. Songs edited by hand are left alone. Returns how many changed.
+ * rule, files named "Song - Artist" that were read as "Artist - Song" are turned round, and those are looked up again for covers and info.
+ * Songs edited by hand are left alone. Returns the songs that changed. Running it again changes nothing.
  */
 fun repairSplitNames(songs: List<Song>): List<Song> {
-    // Names read as "Artist - Title" but written "Song - Artist" come out swapped. The tie is broken by the library itself: the side that is
-    // already known as an artist from other songs (tags that are not just the file name) is the artist.
-    val known = HashMap<String, Int>()
-    for (s in songs) {
+    // Names taken only from "A - B" file names cannot say which side is the artist. The library can: an artist is tagged on other songs,
+    // and is often a list ("A, B"). How often a name repeats proves nothing: covers share a song name. Files with no evidence either way are
+    // left as they are: the online lookup tries both orders and writes the one that matched.
+    val fromName = songs.filter { s ->
         val (a, t) = parseFileNameFirst(s.file_name)
-        if (a.isEmpty() || !(s.artist == a && s.title == t)) known.merge(s.artist.lowercase(), 1, Int::plus)
+        a.isNotEmpty() && s.artist == a && s.title == t
+    }.toSet()
+    val tagged = HashMap<String, Int>()
+    for (s in songs) if (s !in fromName && s.artist != "Unknown artist") for (n in artistNames(s.artist)) tagged.merge(n, 1, Int::plus)
+    fun score(name: String) = 3 * artistNames(name).count { (tagged[it] ?: 0) > 0 } + (if (looksLikeArtistList(name)) 2 else 0)
+    val songFirst = HashSet<Song>() // file names that read "Song - Artist"
+    for (s in fromName) {
+        if (s.user_edited || parseFileName(s.file_name) != parseFileNameFirst(s.file_name)) continue
+        if (score(s.title) > score(s.artist)) songFirst += s
     }
     return songs.mapNotNull { s ->
         if (s.user_edited) return@mapNotNull null
@@ -94,9 +122,7 @@ fun repairSplitNames(songs: List<Song>): List<Song> {
         val (artist, title) = parseFileName(s.file_name)
         if (!((artist == oldArtist && title == oldTitle) || s.artist != oldArtist || s.title != oldTitle))
             return@mapNotNull s.copy(artist = artist, title = title, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
-        if (oldArtist.isNotEmpty() && s.artist == oldArtist && s.title == oldTitle &&
-            (known[oldTitle.lowercase()] ?: 0) > (known[oldArtist.lowercase()] ?: 0)
-        ) return@mapNotNull s.copy(artist = oldTitle, title = oldArtist, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
+        if (s in songFirst) return@mapNotNull s.copy(artist = oldTitle, title = oldArtist, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
         val (fa, ft) = fixSwappedTags(s.file_name, s.artist, s.title)
         if (fa == s.artist && ft == s.title) null else s.copy(artist = fa, title = ft, enrich_state = EnrichState.PENDING, tags_at = s.tags_at + 1)
     }
