@@ -263,7 +263,7 @@ class CoverService(
         ensureStarted()
         scope.launch {
             // Songs missing a cover (none, or the file is gone), then low-quality thumbnails with a full-size source. Good covers are left alone.
-            val missing = (repo.coverMissingIds() + repo.coverFileMissingIds { Fs.exists(it) }).distinct().filter { !gaveUpRecently(it) }
+            val missing = (repo.coverMissingIds() + runCatching { repo.coverFileMissingIds { Fs.exists(it) } }.getOrDefault(emptyList())).distinct().filter { !gaveUpRecently(it) }
             val lowQuality = repo.coverUpgradeIds().filter { !gaveUpRecently(it) }
             var enqueued = false
             queueMutex.withLock {

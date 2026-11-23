@@ -188,7 +188,8 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun coverUpgradeIds(): List<String> = songs.idsNeedingUpgrade().executeAsList()
     /** Songs that have a cover path but whose file is gone (cleared storage, a lost backup): a full pass fetches those again. */
     fun coverFileMissingIds(exists: (String) -> Boolean): List<String> =
-        songs.allSongs().executeAsList().filter { val c = it.cover_path; !c.isNullOrEmpty() && !exists(c) }.map { it.unique_id }
+        // Two small columns, not whole rows: a big read refills its cursor window while a delete writes, and crashed on a null row.
+        songs.coverPaths().executeAsList().filter { val c = it.cover_path; !c.isNullOrEmpty() && !exists(c) }.map { it.unique_id }
     /** Records which client owns a song's post, by changing its remote id. */
     fun claimRemote(s: Song, remote: String) = write(soft = true) { songs.refreshPost(remote, s.topic_id, s.chat_id, s.message_id) }
     fun updateCover(
