@@ -2,6 +2,31 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.18.0] - 2026-11-23
+
+### Added
+- A settings search result scrolls to its option and flashes it ([`8affbb0`](https://github.com/maxcodl/PaperPlay/commit/8affbb0296a7febc6362d334ca453747d52bd14d))
+
+**Full changes:** [v1.17.0...v1.18.0](https://github.com/maxcodl/PaperPlay/compare/v1.17.0...v1.18.0)
+
+## [1.17.0] - 2026-11-23
+
+### Added
+- Settings search also finds options inside pages ([`dc90f51`](https://github.com/maxcodl/PaperPlay/commit/dc90f5163a244871c22cd5bfbeb2b68c79ecf35e))
+
+**Full changes:** [v1.16.0...v1.17.0](https://github.com/maxcodl/PaperPlay/compare/v1.16.0...v1.17.0)
+
+## [1.16.0] - 2026-11-23
+
+### Added
+- Indexed songs without a saved cover show one read from Telegram, kept in memory only ([`4a83b89`](https://github.com/maxcodl/PaperPlay/commit/4a83b89e27cd37a2387e1b9f8af59b13f78de6d8))
+
+### Fixed
+- Search results stay on screen when the full player is closed ([`3df25df`](https://github.com/maxcodl/PaperPlay/commit/3df25dff5752505ae60ff5675ca6f5733d0a801d))
+- The search text stays when the full player is closed ([`2c517a4`](https://github.com/maxcodl/PaperPlay/commit/2c517a4cc5af804979905905e95a87deb879c35d))
+
+**Full changes:** [v1.15.0...v1.16.0](https://github.com/maxcodl/PaperPlay/compare/v1.15.0...v1.16.0)
+
 ## [1.15.0] - 2026-11-23
 
 ### Improved

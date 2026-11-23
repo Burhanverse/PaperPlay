@@ -190,7 +190,15 @@ private fun SettingsList(prefs: UiPrefs, stack: MutableList<String>) {
             if (withTour) SettingsCard(Icons.Rounded.MusicNote, "Welcome tour", "Show the introduction again", { tour!!.value = true })
             inGroup.forEach { c -> SettingsCard(c.icon, c.title, c.text, { stack.add(c.id) }) }
         }
-        if (shown.isEmpty() && !tourShown) Text("No settings match", Modifier.padding(24.dp))
+        val hits = if (q.isEmpty()) emptyList() else settingHits.filter { q in "${it.title} ${it.extra}".lowercase() }
+        if (hits.isNotEmpty()) {
+            SectionLabel("Options")
+            hits.forEach { x ->
+                val where = categories.firstOrNull { it.id == x.page }?.title ?: subTitles[x.page]
+                SettingsCard(Icons.Rounded.Tune, x.title, where.orEmpty(), { focusedSetting = x.title; stack.add(x.page) })
+            }
+        }
+        if (shown.isEmpty() && !tourShown && hits.isEmpty()) Text("No settings match", Modifier.padding(24.dp))
         if (q.isEmpty()) MadeBy()
     }
 }
