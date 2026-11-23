@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.18.1] - 2026-11-23
+
+### Fixed
+- Copying songs from the index on its own is off until it is switched on ([`35774b4`](https://github.com/maxcodl/PaperPlay/commit/35774b469e58f3d57cd9a892b8847d7150d8db0e))
+
+**Full changes:** [v1.18.0...v1.18.1](https://github.com/maxcodl/PaperPlay/compare/v1.18.0...v1.18.1)
+
 ## [1.18.0] - 2026-11-23
 
 ### Added
