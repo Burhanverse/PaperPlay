@@ -285,16 +285,23 @@ class IndexStore(private val driver: SqlDriver) {
             for (v in libraryIds) exec("INSERT OR IGNORE INTO idx_ids VALUES (?)", 1) { bindString(0, v) }
             for (v in libraryKeys) exec("INSERT OR IGNORE INTO idx_keys VALUES (?)", 1) { bindString(0, v) }
             for (v in wantedKeys) exec("INSERT OR IGNORE INTO idx_wanted VALUES (?)", 1) { bindString(0, v) }
-            exec(
-                "UPDATE index_posts SET in_library = CASE WHEN unique_id IN (SELECT v FROM idx_ids) THEN 1 ELSE 0 END, better = NULL, " +
-                    "wanted = CASE WHEN loose_key IN (SELECT v FROM idx_wanted) THEN 1 ELSE 0 END",
-            )
-            val sameKey = query("SELECT $postColumns FROM index_posts WHERE in_library = 0 AND loose_key IN (SELECT v FROM idx_keys)", read = ::post)
-            for (p in sameKey) {
+            // Only rows whose flags change are written: on a chat of 250,000 posts a full rewrite would cost seconds and tens of MB of
+            // disk writes every time the library changes.
+            exec("UPDATE index_posts SET in_library = 1, better = NULL WHERE unique_id IN (SELECT v FROM idx_ids) AND (in_library <> 1 OR better IS NOT NULL)")
+            exec("UPDATE index_posts SET in_library = 0, better = NULL WHERE in_library <> 0 AND unique_id NOT IN (SELECT v FROM idx_ids) AND loose_key NOT IN (SELECT v FROM idx_keys)")
+            exec("UPDATE index_posts SET wanted = 1 WHERE wanted = 0 AND loose_key IN (SELECT v FROM idx_wanted)")
+            exec("UPDATE index_posts SET wanted = 0 WHERE wanted = 1 AND loose_key NOT IN (SELECT v FROM idx_wanted)")
+            // Posts sharing a title with a library song are judged one by one (a few thousand at most).
+            val sameKey = query(
+                "SELECT $postColumns, in_library, better FROM index_posts WHERE unique_id NOT IN (SELECT v FROM idx_ids) AND loose_key IN (SELECT v FROM idx_keys)",
+            ) { c -> Triple(post(c), c.getLong(11)!!, c.getString(12)) }
+            for ((p, was, wasBetter) in sameKey) {
                 val (same, better) = judge(p)
-                if (!same) continue
-                exec("UPDATE index_posts SET in_library = 2, better = ? WHERE chat_id = ? AND message_id = ?", 3) {
-                    bindString(0, better); bindLong(1, p.chatId); bindLong(2, p.messageId)
+                val now = if (same) 2L else 0L
+                val why = if (same) better else null
+                if (now == was && why == wasBetter) continue
+                exec("UPDATE index_posts SET in_library = ?, better = ? WHERE chat_id = ? AND message_id = ?", 4) {
+                    bindLong(0, now); bindString(1, why); bindLong(2, p.chatId); bindLong(3, p.messageId)
                 }
             }
         }

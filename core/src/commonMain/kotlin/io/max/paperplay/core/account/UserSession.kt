@@ -266,6 +266,69 @@ class UserSession(
         return out
     }
 
+    /** The tiny cover Telegram puts inside an audio post (a JPEG of about 40 px), or null. Part of the message: no download. */
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    private fun miniCover(msg: JsonObject): ByteArray? {
+        val data = msg.obj("content")?.obj("audio")?.obj("album_cover_minithumbnail")?.str("data") ?: return null
+        return runCatching { kotlin.io.encoding.Base64.decode(data) }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
+    override suspend fun chatLinks(chatId: Long): ChatLinks? {
+        if (!_loggedIn.value) return null
+        val c = ready()
+        knowChat(c, chatId, loadList = false)
+        val type = call(c, request("getChat") { put("chat_id", chatId) }).obj("type") ?: return null
+        return when (type.str("@type")) {
+            "chatTypeSupergroup" -> {
+                val id = type.long("supergroup_id") ?: return null
+                val group = call(c, request("getSupergroup") { put("supergroup_id", id) })
+                val name = group.obj("usernames")?.let { u -> (u["active_usernames"] as? JsonArray)?.firstOrNull()?.jsonPrimitive?.content } ?: group.str("username").orEmpty()
+                // Only admins see the invite link; for everyone else this is empty and the public name has to do.
+                val invite = runCatching { call(c, request("getSupergroupFullInfo") { put("supergroup_id", id) }).obj("invite_link")?.str("invite_link") }.getOrNull().orEmpty()
+                ChatLinks(name, invite, type["is_channel"]?.jsonPrimitive?.content == "true")
+            }
+            "chatTypeBasicGroup" -> {
+                val id = type.long("basic_group_id") ?: return null
+                val invite = runCatching { call(c, request("getBasicGroupFullInfo") { put("basic_group_id", id) }).obj("invite_link")?.str("invite_link") }.getOrNull().orEmpty()
+                ChatLinks("", invite, false)
+            }
+            else -> null
+        }
+    }
+
+    override suspend fun joinChat(link: String): Long? {
+        if (!_loggedIn.value) return null
+        val c = ready()
+        val l = link.trim().removePrefix("https://").removePrefix("http://").removePrefix("t.me/").removePrefix("telegram.me/")
+        val chat = if (l.startsWith("+") || l.startsWith("joinchat/")) {
+            call(c, request("joinChatByInviteLink") { put("invite_link", link.trim()) })
+        } else {
+            val found = call(c, request("searchPublicChat") { put("username", l.substringBefore('/').removePrefix("@")) })
+            val id = found.long("id") ?: return null
+            runCatching { call(c, request("joinChat") { put("chat_id", id) }) }
+            found
+        }
+        return chat.long("id")
+    }
+
+    override suspend fun canSee(chatId: Long): Boolean {
+        if (!_loggedIn.value) return false
+        val c = ready()
+        return try {
+            knowChat(c, chatId, loadList = false)
+            val type = call(c, request("getChat") { put("chat_id", chatId) }).obj("type") ?: return false
+            if (type.str("@type") != "chatTypeSupergroup") return true
+            val sg = type.long("supergroup_id") ?: return false
+            val group = call(c, request("getSupergroup") { put("supergroup_id", sg) })
+            val status = group.obj("status")?.str("@type")
+            // A public channel can be read without joining; a private one only as a member.
+            val public = group.obj("usernames")?.let { (it["active_usernames"] as? JsonArray)?.isNotEmpty() } == true || group.str("username").orEmpty().isNotEmpty()
+            public || (status != "chatMemberStatusLeft" && status != "chatMemberStatusBanned")
+        } catch (e: TdError) {
+            false
+        }
+    }
+
     @kotlin.concurrent.Volatile override var lastReadNotes: String = ""
         private set
 
@@ -315,9 +378,11 @@ class UserSession(
                     batch += ChatPost(
                         chatId = chatId, messageId = id, uniqueId = song.unique_id, title = song.title, artist = song.artist,
                         durationSec = song.duration_sec.toInt(), size = song.size, mime = song.mime, fileName = song.file_name, date = song.date,
+                        thumb = miniCover(msg),
                     )
                 }
-                if (batch.isNotEmpty()) emit(batch)
+                // Sent even when empty, so the reader can stop between any two pages.
+                emit(batch)
                 val next = page.long("next_from_message_id") ?: 0L
                 // TDLib may answer a page with fewer posts than asked, even none, while more follow; only the end marker or several empty pages in a row stop the read.
                 emptyPages = if (messages.isEmpty()) emptyPages + 1 else 0
