@@ -2,6 +2,28 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.13.0] - 2026-11-23
+
+### Improved
+- Chat pages load from the index a page at a time; pause holds across restarts; posts keep their cover; chats keep their join links ([`47c3ca1`](https://github.com/maxcodl/PaperPlay/commit/47c3ca18d6b1a2a0a2aba151f7d8f75c1c00809c))
+
+### Added
+- Indexed chats in the library and search; copying runs as a task that can be paused and stopped ([`778d07b`](https://github.com/maxcodl/PaperPlay/commit/778d07b905ed807403d357c819e20619625b006d))
+- Linked devices share library rows and the chat index; the PC reads for the phone; pause holds on both ([`c04905d`](https://github.com/maxcodl/PaperPlay/commit/c04905dc94d66402cabee607846a11d6517f14a0))
+- Export and import the chat index as a file, with join links; an app backup imports too ([`ee9933f`](https://github.com/maxcodl/PaperPlay/commit/ee9933f15f8e7a4ba4917af06ab455471470c360))
+- Backups carry the chat index and a restore never loses it; index stored with links, counts and library flags ([`5550a7d`](https://github.com/maxcodl/PaperPlay/commit/5550a7d77ff822c27fbf091ae82f8cd028ffec3d))
+- Songs the bot can't reach show a red robot instead of being greyed out ([`d8a40ed`](https://github.com/maxcodl/PaperPlay/commit/d8a40edd5dfcd6293c6ca611bbf41f6e05848a0a))
+
+### Fixed
+- A deletion record from another device is not applied to songs still posted in the main chat ([`91e5c4d`](https://github.com/maxcodl/PaperPlay/commit/91e5c4d68cb1dc0d518359f9adc695c70d5e0b31))
+- Songs whose post is gone from a fully read chat leave the library; a deletion whose post is still in the main chat no longer blocks sync ([`4de5b3e`](https://github.com/maxcodl/PaperPlay/commit/4de5b3e7c57b54779e136027865d1b000459af5b))
+- Copying a song leaves the source post's caption behind ([`36e2cd3`](https://github.com/maxcodl/PaperPlay/commit/36e2cd31a9f782181a69f4b5fa1999bb8bf43873))
+- Saving the index to Saved Messages no longer parses it back into memory ([`7a64f27`](https://github.com/maxcodl/PaperPlay/commit/7a64f27ca536ed24e6f7c5db767a5f38279c193a))
+- Songs named Song - Artist get their artist back, checked after every scan ([`d822c16`](https://github.com/maxcodl/PaperPlay/commit/d822c16b69d4bc3ce7f5c55eccb8c22a3bc7c2ee))
+- Readable update notes, buttons above them, device chips on their own row ([`0b22f1b`](https://github.com/maxcodl/PaperPlay/commit/0b22f1b6921525d30d82e6fba29c19d5a7b526f9))
+
+**Full changes:** [v1.12.0...v1.13.0](https://github.com/maxcodl/PaperPlay/compare/v1.12.0...v1.13.0)
+
 ## [1.12.0] - 2026-11-22
 
 ### Added
