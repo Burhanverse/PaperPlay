@@ -49,6 +49,9 @@ import kotlin.time.Duration.Companion.seconds
 /** The pref that remembers a signed-in account, so a restart reconnects without a code. */
 const val USER_SESSION_PREF = "user_session"
 
+/** "true" lets a copy from a chat that blocks copying download the song and upload it again (uses data). Off by default. */
+const val COPY_REUPLOAD = "copy_reupload"
+
 private const val READING_RATE_PREF = "rate_reading"
 private const val DEFAULT_READING_RATE = 20
 private const val PAGE = 100
@@ -479,7 +482,11 @@ class UserSession(
         // Telegram answers with an empty entry for a post it will not copy, for example when the chat blocks saving content.
         val first = (sent.getOrNull()?.get("messages") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
         if (first is kotlinx.serialization.json.JsonObject) return
-        // Refused: the account downloads the song and sends it again as its own upload, which has no forward line either.
+        // Refused (the chat blocks copying): sending it again means downloading the whole file and uploading it, tens of MB each way
+        // for a FLAC, so it only happens when the owner turned it on.
+        if (pref(COPY_REUPLOAD) != "true") throw IllegalStateException(
+            "This chat does not allow copying. Turn on \"Send again when a chat blocks copying\" to download and upload it instead (uses data).",
+        )
         reupload(c, fromChat, messageId, toChat)
     }
 
@@ -487,6 +494,7 @@ class UserSession(
         val message = call(c, request("getMessage") { put("chat_id", fromChat); put("message_id", messageId) })
         val song = io.max.paperplay.core.app.songFromMessage(message)
             ?: throw IllegalStateException("Telegram did not copy this post, and it holds no song to send again.")
+        io.max.paperplay.player.PlayLog.log("copy", "Sending \"${song.title}\" again: the chat blocks copying, so it is downloaded and uploaded (${song.size / (1L shl 20)} MB each way)")
         val (path, fileId) = downloadPost(fromChat, messageId)
             ?: throw IllegalStateException("Telegram did not copy this post, and the file could not be downloaded to send it again.")
         try {

@@ -72,7 +72,7 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
     val scope = rememberCoroutineScope()
     val list = backend.myChats.collectAsState().value
     var auto by remember { mutableStateOf(backend.pref("index_auto") == "true") }
-    var autoCopy by remember { mutableStateOf(backend.pref("index_auto_copy") == "true") }
+    var autoCopy by remember { mutableStateOf(backend.pref("index_auto_copy") != "false") }
     var autoAdd by remember { mutableStateOf(backend.pref("index_auto_add") == "true") }
     var message by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
@@ -124,6 +124,9 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
                     "Adds songs of your main chat that the bot cannot see, such as posts by other bots, when the index refreshes")
                 SwitchRow("Fetch songs automatically", autoCopy, { autoCopy = it; backend.setPref("index_auto_copy", "$it") }, Icons.Rounded.ContentCopy,
                     "Copies songs found in the index into your main chat when a Spotify playlist still waits for them")
+                var reupload by remember { mutableStateOf(backend.pref(io.max.paperplay.core.account.COPY_REUPLOAD) == "true") }
+                SwitchRow("Send again when a chat blocks copying", reupload, { reupload = it; backend.setPref(io.max.paperplay.core.account.COPY_REUPLOAD, "$it") }, Icons.Rounded.CloudUpload,
+                    "Copying uses no data. A chat that blocks it can only be copied by downloading each song and uploading it again: tens of MB per song each way")
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     // A paused read keeps its place; the same button goes on from there.
                     val unfinished = chatRows.any { !it.complete }
