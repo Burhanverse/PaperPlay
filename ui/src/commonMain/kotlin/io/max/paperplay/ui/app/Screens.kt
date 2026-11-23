@@ -403,6 +403,8 @@ private fun DetailHero(detail: Detail, title: String, songs: List<SongUi>) {
 // ---- Search --------------------------------------------------------------------------------------------
 
 private var keptSearch = ""
+private var keptResults: List<SongUi> = emptyList()
+private var keptIndexResults: List<io.max.paperplay.core.account.ChatPost> = emptyList()
 
 @OptIn(FlowPreview::class)
 @Composable
@@ -413,7 +415,8 @@ fun SearchScreen(
     // The search is kept outside the screen: opening the full player removes this screen, and it must come back as it was.
     var query by remember { mutableStateOf(keptSearch) }
     LaunchedEffect(query) { keptSearch = query }
-    var results by remember { mutableStateOf<List<SongUi>>(emptyList()) }
+    var results by remember { mutableStateOf(keptResults) }
+    LaunchedEffect(results) { keptResults = results }
     val recent = remember { mutableStateListOf<String>() }
     LaunchedEffect(Unit) {
         // collectLatest: the result flow never completes (it follows the library), so a plain collect would block every later query.
@@ -471,10 +474,11 @@ private fun SearchResults(
     // Songs in the account's indexed chats that match, so a song not in the library yet can still be found and added.
     val indexed = LocalIndexedChats.current
     val chatNames = indexed?.chats?.collectAsState()?.value.orEmpty().associate { it.id to it.title }
-    val fromIndex by androidx.compose.runtime.produceState(emptyList<io.max.paperplay.core.account.ChatPost>(), query, indexed) {
+    val fromIndex by androidx.compose.runtime.produceState(keptIndexResults, query, indexed) {
         value = if (indexed == null || query.isBlank()) emptyList()
         else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { indexed.search(query.trim(), 30) }.getOrDefault(emptyList()) }
     }
+    LaunchedEffect(fromIndex) { keptIndexResults = fromIndex }
     if (results.isEmpty() && fromIndex.isEmpty()) {
         Text("No songs match \"${query.trim()}\".", modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
