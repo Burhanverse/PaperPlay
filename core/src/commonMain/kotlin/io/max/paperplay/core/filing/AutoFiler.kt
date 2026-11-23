@@ -230,6 +230,8 @@ class AutoFiler(
                 put("from_chat_id", s.chat_id)
                 put("message_ids", JsonArray(listOf(JsonPrimitive(s.message_id))))
                 put("send_copy", true)
+                // Only the song: the source post's caption stays behind.
+                put("remove_caption", true)
                 put("options", buildJsonObject { put("@type", "messageSendOptions"); put("disable_notification", true) })
             }, 60.seconds).let { r -> r["messages"]?.jsonArray?.firstOrNull() as? JsonObject ?: throw TdError(0, "Telegram gave no copy") }
         }

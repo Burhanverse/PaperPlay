@@ -465,14 +465,15 @@ class UserSession(
     override suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long) {
         val c = ready()
         knowChat(c, toChat, loadList = false)
-        // send_copy posts it as a new message with no "forwarded from" line.
+        // send_copy posts it as a new message with no "forwarded from" line; remove_caption leaves the other chat's text
+        // ("reQuest by ...", links, tags) behind, so only the song goes in.
         val sent = runCatching {
             call(c, request("forwardMessages") {
                 put("chat_id", toChat)
                 put("from_chat_id", fromChat)
                 put("message_ids", buildJsonArray { add(messageId) })
                 put("send_copy", true)
-                put("remove_caption", false)
+                put("remove_caption", true)
             })
         }
         // Telegram answers with an empty entry for a post it will not copy, for example when the chat blocks saving content.
