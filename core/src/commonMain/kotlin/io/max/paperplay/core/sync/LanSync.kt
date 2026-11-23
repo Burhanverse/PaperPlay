@@ -201,6 +201,9 @@ interface LanDataSync {
 
     /** This device's side: asks [peerId] for what it lacks through [ask] (a request and its answer) and stores it. Returns rows added. */
     suspend fun pull(peerId: String, ask: suspend (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject): Int
+
+    /** Which of [ids] (song unique ids) still have their post in the main chat, so a deletion of them is stale. */
+    fun stillPosted(ids: Set<String>): Set<String> = emptySet()
 }
 
 /** The song a linked device is playing. */

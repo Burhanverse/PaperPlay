@@ -161,7 +161,11 @@ fun writeLyricsMeta(library: LibraryRepository, m: Map<String, LyricsMeta>) {
 private const val GONE_KEEP_MS = 365L * 24 * 3600 * 1000
 
 /** Builds a snapshot from the database and applies a merged one back. Songs this device does not have are skipped. */
-class SnapshotStore(private val library: LibraryRepository) {
+/**
+ * [stillPosted] returns which of the given song ids still have their post in the main chat (by the chat index): a deletion entry for
+ * one of those is stale, because deleting a song deletes its post there, and it is neither applied nor kept.
+ */
+class SnapshotStore(private val library: LibraryRepository, private val stillPosted: (Set<String>) -> Set<String> = { emptySet() }) {
     private val db get() = library.repo.db
 
     /**
@@ -257,7 +261,9 @@ class SnapshotStore(private val library: LibraryRepository) {
             // Songs deleted on the other device go here too, unless the file was posted again after the deletion. Content keys
             // ("song:...") only stop a song coming back; they would also match the copy that was kept, so they remove nothing.
             val removed = HashSet<String>()
-            val due = merged.gone.filter { !it.key.startsWith("song:") }.mapNotNull { (key, at) -> rows[key]?.takeIf { it.date * 1000 <= at }?.let { key to it } }
+            val stale = runCatching { stillPosted(merged.gone.keys.filterTo(HashSet()) { !it.startsWith("song:") }) }.getOrDefault(emptySet())
+            if (stale.isNotEmpty()) io.max.paperplay.player.PlayLog.log("sync", "Ignored ${stale.size} deletion entries: those songs are still posted in the main chat")
+            val due = merged.gone.filter { !it.key.startsWith("song:") && it.key !in stale }.mapNotNull { (key, at) -> rows[key]?.takeIf { it.date * 1000 <= at }?.let { key to it } }
             // A brake against a wrong record: a sync that would remove more than 2% of the library (at least 5 songs) removes nothing
             // and says so in the log, so one mistake on one device cannot empty the other.
             val tooMany = due.size > maxOf(5, rows.size / 50)
@@ -270,7 +276,7 @@ class SnapshotStore(private val library: LibraryRepository) {
             }
             songsChanged += removed.size
             // A file that is here again (posted after it was deleted) is wanted: its entry leaves the record so it syncs like any song.
-            val record = merged.gone.filter { (key, at) -> rows[key]?.let { it.date * 1000 > at } != true }
+            val record = merged.gone.filter { (key, at) -> key !in stale && rows[key]?.let { it.date * 1000 > at } != true }
             if (record != local.state.gone) library.setPref(GONE_KEY, JsonObject(record.mapValues { JsonPrimitive(it.value) }).toString())
 
             val have = db.lanQueries.allPlaylistsWithUuid().executeAsList().associateBy { it.uuid }

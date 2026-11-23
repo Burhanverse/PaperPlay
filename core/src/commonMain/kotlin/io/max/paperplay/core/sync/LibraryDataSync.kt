@@ -97,6 +97,11 @@ class LibraryDataSync(
     private fun deleted(): Set<String> =
         runCatching { Json.parseToJsonElement(library.pref(GONE_KEY) ?: "{}").jsonObject.keys }.getOrDefault(emptySet())
 
+    override fun stillPosted(ids: Set<String>): Set<String> {
+        val main = mainChat() ?: return emptySet()
+        return index()?.posted(main, ids).orEmpty()
+    }
+
     private fun forget(ids: Set<String>) {
         val o = runCatching { Json.parseToJsonElement(library.pref(GONE_KEY) ?: "{}").jsonObject }.getOrNull() ?: return
         library.setPref(GONE_KEY, JsonObject(o.filterKeys { it !in ids }).toString())
@@ -109,8 +114,7 @@ class LibraryDataSync(
         // read) is stale: the song comes back, and the entry leaves the record so the next sync does not remove it again. Posts in
         // other chats are never deleted, so a song deleted here that is also posted there stays deleted.
         val gone = deleted()
-        val main = mainChat()
-        val stale = if (main == null) emptySet() else index()?.posted(main, theirs.filter { it !in mine && it in gone }).orEmpty()
+        val stale = stillPosted(theirs.filterTo(HashSet()) { it !in mine && it in gone })
         if (stale.isNotEmpty()) forget(stale)
         val missing = theirs.filter { it !in mine && (it !in gone || it in stale) }
         if (missing.isEmpty()) return 0
