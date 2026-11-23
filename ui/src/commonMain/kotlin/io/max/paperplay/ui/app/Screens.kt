@@ -402,13 +402,17 @@ private fun DetailHero(detail: Detail, title: String, songs: List<SongUi>) {
 
 // ---- Search --------------------------------------------------------------------------------------------
 
+private var keptSearch = ""
+
 @OptIn(FlowPreview::class)
 @Composable
 fun SearchScreen(
     search: (String) -> kotlinx.coroutines.flow.Flow<List<SongUi>>, songs: List<SongUi>, currentId: String?, actions: ListActions, onOpen: (Detail) -> Unit,
     bottomPadding: Dp, modifier: Modifier = Modifier,
 ) {
-    var query by remember { mutableStateOf("") }
+    // The search is kept outside the screen: opening the full player removes this screen, and it must come back as it was.
+    var query by remember { mutableStateOf(keptSearch) }
+    LaunchedEffect(query) { keptSearch = query }
     var results by remember { mutableStateOf<List<SongUi>>(emptyList()) }
     val recent = remember { mutableStateListOf<String>() }
     LaunchedEffect(Unit) {
