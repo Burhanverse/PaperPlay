@@ -44,7 +44,7 @@ class IndexCopier(private val index: ChatIndexApi, private val scope: CoroutineS
                     runCatching { if (libraryOnly) index.addToLibrary(post) else index.copyToMain(post) }
                         .onSuccess { p = p.copy(done = p.done + 1, paused = false) }
                         .onFailure {
-                            if (it.message?.contains("does not allow copying") == true) blocked += post.chatId
+                            if (it.message?.contains("restricts saving content") == true) blocked += post.chatId
                             p = p.copy(failed = p.failed + 1, why = p.why ?: it.message, paused = false)
                         }
                     _progress.value = p

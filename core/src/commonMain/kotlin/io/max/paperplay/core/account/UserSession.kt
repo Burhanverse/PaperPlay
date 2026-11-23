@@ -482,11 +482,19 @@ class UserSession(
         // Telegram answers with an empty entry for a post it will not copy, for example when the chat blocks saving content.
         val first = (sent.getOrNull()?.get("messages") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
         if (first is kotlinx.serialization.json.JsonObject) return
-        // Refused (the chat blocks copying): sending it again means downloading the whole file and uploading it, tens of MB each way
-        // for a FLAC, so it only happens when the owner turned it on.
-        if (pref(COPY_REUPLOAD) != "true") throw IllegalStateException(
-            "This chat does not allow copying. Turn on \"Send again when a chat blocks copying\" to download and upload it instead (uses data).",
-        )
+        // Refused. Sending it again means downloading the whole file and uploading it, tens of MB each way for a FLAC, so it only
+        // happens when the owner turned it on. The reason is Telegram's own: the chat's "restrict saving content", or its error.
+        if (pref(COPY_REUPLOAD) != "true") {
+            val protected = runCatching { call(c, request("getChat") { put("chat_id", fromChat) })["has_protected_content"]?.jsonPrimitive?.content == "true" }.getOrNull()
+            val why = sent.exceptionOrNull()?.message
+            throw IllegalStateException(
+                when {
+                    protected == true -> "This chat does not allow copying (it restricts saving content)."
+                    why != null -> "Telegram refused the copy: $why."
+                    else -> "Telegram did not copy this post and gave no reason."
+                } + " Turn on \"Send again when a chat blocks copying\" to download and upload it instead (uses data).",
+            )
+        }
         reupload(c, fromChat, messageId, toChat)
     }
 
