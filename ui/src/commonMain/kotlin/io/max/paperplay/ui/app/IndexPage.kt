@@ -402,6 +402,7 @@ internal fun ChatSongsPage(backend: CoreBackend, chatId: Long, stack: MutableLis
                         OutlinedButton({ copier.setPaused(!p.paused) }) { Text(if (p.paused) "Resume" else "Pause") }
                         TextButton({ copier.stop() }) { Text("Stop") }
                     }
+                    p.why?.let { Text(it, pad, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
                 }
                 if (!copying) copyResult?.let { Text(it, pad, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Column(pad) {

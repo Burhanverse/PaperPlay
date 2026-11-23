@@ -34,16 +34,29 @@ class IndexCopier(private val index: ChatIndexApi, private val scope: CoroutineS
         job = scope.launch {
             var p = Progress(0, 0, 0, posts.size, false, null, libraryOnly)
             _progress.value = p
+            // A chat that refuses one copy refuses them all: the rest of its songs fail at once instead of asking Telegram each time.
+            val blocked = HashSet<Long>()
             try {
                 posts.forEachIndexed { i, post ->
                     while (paused) { _progress.value = p.copy(paused = true); delay(300) }
                     if (index.alreadyHave(post)) { p = p.copy(skipped = p.skipped + 1); _progress.value = p; return@forEachIndexed }
+                    if (post.chatId in blocked) { p = p.copy(failed = p.failed + 1); _progress.value = p; return@forEachIndexed }
                     runCatching { if (libraryOnly) index.addToLibrary(post) else index.copyToMain(post) }
                         .onSuccess { p = p.copy(done = p.done + 1, paused = false) }
-                        .onFailure { p = p.copy(failed = p.failed + 1, why = p.why ?: it.message, paused = false) }
+                        .onFailure {
+                            if (it.message?.contains("does not allow copying") == true) blocked += post.chatId
+                            p = p.copy(failed = p.failed + 1, why = p.why ?: it.message, paused = false)
+                        }
                     _progress.value = p
-                    if (!libraryOnly && i < posts.size - 1) delay(60_000L / perMinute().coerceIn(5, 120))
+                    if (!libraryOnly && post.chatId !in blocked && i < posts.size - 1) delay(60_000L / perMinute().coerceIn(5, 120))
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                io.max.paperplay.player.PlayLog.log("copy", "Copy run stopped after ${p.done + p.skipped + p.failed} of ${p.total}: ${e.message ?: "stopped"}")
+                throw e
+            } catch (e: Throwable) {
+                // Anything that ends the run early is logged and shown, so a run that stops halfway says why.
+                io.max.paperplay.player.PlayLog.log("copy", "Copy run ended early after ${p.done + p.skipped + p.failed} of ${p.total}: $e")
+                p = p.copy(why = "Stopped early: ${e.message ?: e::class.simpleName}")
             } finally {
                 val verb = if (libraryOnly) "Added" else "Copied"
                 lastResult.value = "$verb ${p.done} of ${p.total}" + (if (p.skipped > 0) ", ${p.skipped} already there" else "") +
