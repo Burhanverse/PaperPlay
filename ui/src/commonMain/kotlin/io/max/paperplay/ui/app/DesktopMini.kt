@@ -61,12 +61,10 @@ object DesktopMini {
     fun toggle() { visible.value = !visible.value }
 }
 
-/** Keeps the mini window in step with the main window's playback. Place once in the desktop shell. */
+/** Hands the mini window its settings; what plays comes from the backend, which goes on without the main window. Place once in the desktop shell. */
 @Composable
-fun PublishMiniState(state: PlaybackUiState, backend: PlayerControls, showFormat: Boolean = true) {
+fun PublishMiniState(showFormat: Boolean = true) {
     LaunchedEffect(showFormat) { DesktopMini.showFormat.value = showFormat }
-    LaunchedEffect(state) { DesktopMini.state.value = state }
-    LaunchedEffect(backend) { DesktopMini.controls.value = backend }
 }
 
 /** The button for the desktop player bar that shows or hides the mini player window. */

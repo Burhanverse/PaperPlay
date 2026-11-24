@@ -193,9 +193,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     private val scope = CoroutineScope(backendJob + Dispatchers.Default)
     private val repo = services.library
 
-    fun close() {
-        backendJob.cancel()
-    }
+    /** False once the services it belongs to were shut down. */
+    val alive: Boolean get() = backendJob.isActive
 
     @Volatile private var byId: Map<String, Song> = emptyMap()
     @Volatile private var byGroupKey: Map<String, Song> = emptyMap()
@@ -1963,6 +1962,11 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     // Last in the class on purpose: the coroutine reads playbackMeta, playerStarted and the player, and one started before they are assigned reaches them as null (it crashed the app).
     init {
+        // The desktop's mini player and tray menu go on while the main window is hidden.
+        if (!io.max.paperplay.ui.isPhone) {
+            DesktopMini.controls.value = this
+            scope.launch { playbackMeta.collect { DesktopMini.state.value = it } }
+        }
         scope.launch(Dispatchers.Default) {
             var first = true
             val activeFlow = combine(io.max.paperplay.ui.AppForegroundState.isVisibleFlow, playbackMeta.map { it.playing }) { visible, playing ->

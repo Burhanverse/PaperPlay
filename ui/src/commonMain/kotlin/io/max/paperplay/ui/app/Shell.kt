@@ -478,7 +478,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 val backKey = Modifier.onPreviewKeyEvent { e ->
                     if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.isAltPressed && e.key == androidx.compose.ui.input.key.Key.DirectionLeft) { handleBack(); true } else false
                 }
-                PublishMiniState(pb, backend, prefs.miniFormat)
+                PublishMiniState(prefs.miniFormat)
                 // The saved song comes back a few seconds after the window shows; the panel's room is kept from the first frame so the page does not re-lay out.
                 var waitingForSong by remember { mutableStateOf(prefs.songExpected) }
                 LaunchedEffect(Unit) { kotlinx.coroutines.delay(25_000); waitingForSong = false }

@@ -102,6 +102,12 @@ fun App(env: AppEnv) {
     } }
 }
 
+/**
+ * The one backend of the running services. It outlives the window: the sleep timer, bulk jobs, scrobbling, the equalizer of each output
+ * and the log go on while the window is in the tray or the phone app was swiped away and music plays. It ends with the services.
+ */
+private val backends = io.max.paperplay.ui.logic.OnePerOwner<io.max.paperplay.core.app.AppServices, CoreBackend>()
+
 @Composable
 private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onRestore: () -> Unit, onErased: () -> Unit) {
     var closing by remember { mutableStateOf(false) }
@@ -113,14 +119,11 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
                 val sv = env.createServices()
                 // The last page is read while the backend is still being built, so it is ready as soon as the screen is.
                 val saved = sv.scope.async { runCatching { io.max.paperplay.ui.app.loadSavedHome(sv) }.getOrNull() }
-                CoreBackend(sv).also { it.preloadedHome = saved; it.warmUp() }
+                backends.of(sv, alive = { it.alive }) { CoreBackend(sv).also { it.preloadedHome = saved; it.warmUp() } }
             }
         }
         value = b
         env.mark("services ready")
-        awaitDispose {
-            b.close()
-        }
     }
     val backend = built
     if (backend == null || closing) {
