@@ -140,9 +140,15 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [x] Back from a page opened from Profile returns to Profile, not the Settings list
 - [~] Profile "Your listening" card (`ProfileStats.kt`): total and today/7/30 day time, streak and best streak, 17 week heatmap, week bars, personality label, milestone badges, recently played row, top artist and song of the last 30 days; data from `listen_stats` via `CoreBackend.profileStats()`; `ProfileStatsTest` passes; installed on both phones, not yet looked at
 - [x] Desktop top bar: the search box that did nothing is removed (Search stays in the sidebar; Home sits next to Back
-- [~] Profile: Songs, Favorites and Playlists moved into the identity card as a slim row; listening card capped at 560 dp with smaller heatmap cells and bars
+- [~] Profile: Songs, Favorites and Playlists moved into the identity card as a slim row; listening card is two columns from 720 dp wide (one stack below), heatmap capped at 480 dp, smaller cells and thin week bars
 - [~] Removing a chat from the index syncs: a removed/added-back mark per chat (`index_removed`, newest change wins) goes to linked devices, which delete the chat and ignore its posts; adding it again later brings it back (`RemovedChatsTest`). Not tried with two devices
 - [~] No account login, no account work: reading a chat, indexing by hand and copying to the main chat stop at once; a read that loses the login is left unfinished instead of marked complete
+- [~] Lyrics controls (source chip, translation toggle, Aa) sit together on the left, 40 dp tall (`LyricsView.kt`); not seen on screen
+- [x] Playlist match: a tag after a dash ("Song (feat. X) - Radio Edit") now matches the bracket forms; `LooseTitleKeyTest`
+- [x] LAN address book no longer rewrites the `lan_addresses` pref when nothing changed (was every 15 s)
+- [x] `:core:jvmTest` green (236): four stale tests brought in line (copy keeps `remove_caption`, empty pages are sent, word-based search, best of three for the 20 ms FTS budget)
+- [x] `ReleaseNotesTest` rewritten against `ChangelogParser.parseReleaseBody`; `:ui:jvmTest` green
+- [~] PRs #16 (lyrics redesign, EQ UI split, USB claiming) and #17 (modern full-screen player with backdrop blur) merged; not tried on screen
 - [~] Desktop player bar: themed seek bar (cover colours) with a switch in Settings > Appearance > Player bar (`themedSeek`)
 - [~] PC True Audio: after a burst of fast seeks the output is reopened once playback restarts (`MpvPlayerEngine`, `seekBursts`); the static after fast seeking is not confirmed gone, check by ear
 - [x] Phone and desktop Back return to the previous page or tab through a history stack (needs a device check)
