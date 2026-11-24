@@ -117,6 +117,7 @@ fun FullPlayer(
     state: PlaybackUiState, error: String?, backend: PlayerControls, actions: ListActions, onClose: () -> Unit, modifier: Modifier = Modifier,
     onOpenSettings: ((String) -> Unit)? = null,
     onOpenEq: (() -> Unit)? = null,
+    onOpenLyrics: (() -> Unit)? = null,
 ) {
     val song = state.current ?: return
     val base = MaterialTheme.colorScheme
@@ -154,7 +155,7 @@ fun FullPlayer(
                                 AppIcon(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, if (fullscreen) "Exit full screen" else "Full screen", Modifier.size(28.dp))
                             }
                         }
-                        PlayerBody(song, state, error, backend, actions, onClose, grabber = false, Modifier.weight(1f), contentMax = 720.dp, onOpenEq = onOpenEq)
+                        PlayerBody(song, state, error, backend, actions, onClose, grabber = false, Modifier.weight(1f), contentMax = 720.dp, onOpenEq = onOpenEq, onOpenLyrics = { showLyrics = true })
                     }
                     Column(Modifier.weight(1f).fillMaxHeight().padding(end = 16.dp)) {
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -183,7 +184,7 @@ fun FullPlayer(
                             Spacer(Modifier.width(12.dp))
                         }
                         QueueList(state, backend, Modifier.weight(1f))
-                    } else PlayerBody(song, state, error, backend, actions, onClose, grabber = true, Modifier.fillMaxSize(), onQueue = { showQueue = true }, onStandby = openStandby, onDevices = onOpenSettings?.let { open -> { id: String -> onClose(); open(id) } }, onOpenEq = onOpenEq)
+                    } else PlayerBody(song, state, error, backend, actions, onClose, grabber = true, Modifier.fillMaxSize(), onQueue = { showQueue = true }, onStandby = openStandby, onDevices = onOpenSettings?.let { open -> { id: String -> onClose(); open(id) } }, onOpenEq = onOpenEq, onOpenLyrics = onOpenLyrics)
                 }
             }
         }
@@ -196,6 +197,7 @@ private fun PlayerBody(
     grabber: Boolean, modifier: Modifier = Modifier, onQueue: (() -> Unit)? = null, onDevices: ((String) -> Unit)? = null,
     contentMax: androidx.compose.ui.unit.Dp = 560.dp, onStandby: (() -> Unit)? = null,
     onOpenEq: (() -> Unit)? = null,
+    onOpenLyrics: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     var outputInfoOpen by remember { mutableStateOf(false) }
@@ -271,7 +273,7 @@ private fun PlayerBody(
                 }
                 Column(Modifier.padding(horizontal = 12.dp)) {
                     if (error != null) Text(error, color = scheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp))
-                    Progress(song, state, backend, onBadge = { outputInfoOpen = true })
+                    PlayerProgress(song, state, backend, onBadge = { outputInfoOpen = true })
                 }
                 if (outputInfoOpen) OutputInfoDialog(song, backend) { outputInfoOpen = false }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -319,9 +321,9 @@ private fun PlayerBody(
                 }
                 if (devicesOpen && onDevices != null) PhoneDevicesDialog(onDevices, switchOutput, if (remoteDevice == null) song else null) { devicesOpen = false }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    var showLyrics by remember { mutableStateOf(false) }
-                    IconButton({ showLyrics = true }, enabled = state.current != null) { AppIcon(Icons.Outlined.Lyrics, "Lyrics") }
-                    if (showLyrics) state.current?.let { LyricsDialog(it.id, it.title, backend) { showLyrics = false } }
+                    if (onOpenLyrics != null) {
+                        IconButton(onOpenLyrics, enabled = state.current != null) { AppIcon(Icons.Outlined.Lyrics, "Lyrics") }
+                    }
                     IconButton(backend::toggleShuffle) {
                         AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) toggleOnColor() else scheme.onSurface)
                     }
@@ -397,7 +399,7 @@ private fun PlayPauseButton(playing: Boolean, onToggle: () -> Unit) {
 }
 
 @Composable
-private fun Progress(song: SongUi, state: PlaybackUiState, backend: PlayerControls, onBadge: () -> Unit) {
+internal fun PlayerProgress(song: SongUi, state: PlaybackUiState, backend: PlayerControls, onBadge: (() -> Unit)? = null) {
     val scheme = MaterialTheme.colorScheme
     val muted = MaterialTheme.typography.labelMedium.copy(color = scheme.onSurface.copy(alpha = 0.65f))
     val total = if (state.durationMs > 0) state.durationMs else song.durationSec * 1000L
@@ -425,7 +427,9 @@ private fun Progress(song: SongUi, state: PlaybackUiState, backend: PlayerContro
     Spacer(Modifier.height(8.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(formatDuration(pos.positionMs / 1000), Modifier.weight(1f), style = muted)
-        io.max.paperplay.ui.components.AudioBadge(song, Modifier.clip(RoundedCornerShape(8.dp)).background(scheme.onSurface.copy(alpha = 0.12f)).clickable(onClick = onBadge).padding(horizontal = 10.dp, vertical = 4.dp))
+        if (onBadge != null) {
+            io.max.paperplay.ui.components.AudioBadge(song, Modifier.clip(RoundedCornerShape(8.dp)).background(scheme.onSurface.copy(alpha = 0.12f)).clickable(onClick = onBadge).padding(horizontal = 10.dp, vertical = 4.dp))
+        }
         Text("-" + formatDuration(((total - pos.positionMs) / 1000).coerceAtLeast(0)), Modifier.weight(1f), style = muted, textAlign = TextAlign.End)
     }
 }
@@ -579,46 +583,6 @@ private fun SongInfoDialogPreview() {
     SongInfoDialog(song = previewPlayerSong, onDismiss = {})
 }
 
-
-/** The song's lyrics. Timed lyrics follow the song; plain ones just scroll. */
-@Composable
-internal fun LyricsDialog(id: String, title: String, backend: PlayerControls, onClose: () -> Unit) {
-    var text by remember(id) { mutableStateOf<String?>(null) }
-    var loaded by remember(id) { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(id) { text = backend.lyricsFor(id); loaded = true }
-    val lines = remember(text) { text?.let { io.max.paperplay.core.metadata.parseLrc(it) }.orEmpty() }
-    val pos = backend.position.collectAsState()
-    val current by remember(lines) { androidx.compose.runtime.derivedStateOf { lines.indexOfLast { it.timeMs <= pos.value.positionMs } } }
-    val list = androidx.compose.foundation.lazy.rememberLazyListState()
-    androidx.compose.runtime.LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem(maxOf(0, current - 2)) }
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onClose,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClose) { AppIcon(Icons.Rounded.KeyboardArrowDown, "Back") }
-                Text(title, Modifier.padding(start = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
-            }
-            val big = MaterialTheme.typography.headlineSmall
-            when {
-                !loaded -> Text("Looking for lyrics", Modifier.padding(24.dp), style = big)
-                text == null -> Text("No lyrics found for this song.", Modifier.padding(24.dp), style = big)
-                lines.isEmpty() -> Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(24.dp)) { Text(text.orEmpty(), style = big) }
-                else -> LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 24.dp, vertical = 24.dp)) {
-                    itemsIndexed(lines) { i, l ->
-                        Text(
-                            l.text.ifBlank { " " }, Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { backend.seekToMs(l.timeMs) }.padding(vertical = 10.dp),
-                            style = big.copy(fontWeight = if (i == current) FontWeight.Bold else FontWeight.Medium),
-                            color = if (i == current) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 private val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
 private fun speedLabel(s: Float) = (if (s % 1f == 0f) s.toInt().toString() else s.toString().trimEnd('0')) + "x"
@@ -719,7 +683,7 @@ private fun FullPlayerDesktopPreview() = io.max.paperplay.ui.PreviewFrame(dark =
 @Preview(name = "Progress", widthDp = 390, showBackground = true)
 @Composable
 private fun ProgressPreview() = io.max.paperplay.ui.PreviewFrame {
-    Column(Modifier.padding(16.dp)) { Progress(io.max.paperplay.ui.previewSongs[0], io.max.paperplay.ui.previewPlayback(), io.max.paperplay.ui.FakePlayerControls(), onBadge = {}) }
+    Column(Modifier.padding(16.dp)) { PlayerProgress(io.max.paperplay.ui.previewSongs[0], io.max.paperplay.ui.previewPlayback(), io.max.paperplay.ui.FakePlayerControls(), onBadge = {}) }
 }
 
 @Preview(name = "Queue", widthDp = 390, heightDp = 500, showBackground = true)
@@ -732,12 +696,6 @@ private fun QueueListPreview() = io.max.paperplay.ui.PreviewFrame {
 @Composable
 private fun NowPlayingPanelPreview() = io.max.paperplay.ui.PreviewFrame {
     NowPlayingPanel(io.max.paperplay.ui.previewPlayback(), io.max.paperplay.ui.FakePlayerControls(), io.max.paperplay.ui.previewActions(), onOpen = {}, onHide = {})
-}
-
-@Preview(name = "Lyrics dialog")
-@Composable
-private fun LyricsDialogPreview() = io.max.paperplay.ui.PreviewFrame {
-    LyricsDialog("1", "Supermassive Black Hole", io.max.paperplay.ui.FakePlayerControls(), onClose = {})
 }
 
 @Preview(name = "Sleep timer dialog")

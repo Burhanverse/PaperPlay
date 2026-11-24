@@ -167,12 +167,25 @@ interface PlayerControls {
     /** The versions of this song's lyrics the sources have (original, romanized, translation, other records). */
     suspend fun lyricsChoices(songId: String): List<LyricsChoiceUi> = emptyList()
 
+    /** Optional romanized and translated LRC tracks for [songId] when available from NetEase. */
+    suspend fun lyricsSecondary(songId: String): LyricsSecondaryUi? = null
+
     /** Keeps [text] as this song's lyrics, chosen by hand (it then wins over what other devices found); null goes back to automatic. */
     fun chooseLyrics(songId: String, text: String?) {}
 }
 
 /** One lyrics version in the picker: its source and script, a two line preview, and the text. */
-data class LyricsChoiceUi(val label: String, val preview: String, val text: String)
+data class LyricsChoiceUi(
+    val label: String,
+    val preview: String,
+    val text: String,
+    val romanized: String? = null,
+    val translation: String? = null,
+    val source: String = label.substringBefore(',').trim(),
+)
+
+/** Optional romanized and translated LRC tracks associated with a song's lyrics. */
+data class LyricsSecondaryUi(val romanized: String? = null, val translation: String? = null)
 
 class CoreBackend(val services: AppServices) : PlayerControls {
     private val backendJob = SupervisorJob(services.scope.coroutineContext.job)
@@ -427,8 +440,20 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }.getOrDefault(emptyList())
         return found.map { c ->
             val lines = io.max.paperplay.core.metadata.parseLrc(c.text).map { it.text }.ifEmpty { c.text.lines() }.map { it.trim() }.filter { it.isNotEmpty() }
-            LyricsChoiceUi(c.label, lines.take(2).joinToString("\n"), c.text)
+            LyricsChoiceUi(c.label, lines.take(2).joinToString("\n"), c.text, c.romanized, c.translation, c.source)
         }
+    }
+
+    override suspend fun lyricsSecondary(songId: String): LyricsSecondaryUi? {
+        val song = byId[songId] ?: return null
+        if (!taste.value.lookups) return null
+        val bundle = runCatching {
+            io.max.paperplay.core.integrations.fetchNeteaseLyricBundle(
+                http, song.title, song.artist, song.album, song.duration_sec.toInt(),
+            )
+        }.getOrNull() ?: return null
+        if (bundle.romanized == null && bundle.translation == null) return null
+        return LyricsSecondaryUi(bundle.romanized, bundle.translation)
     }
 
     override fun chooseLyrics(songId: String, text: String?) {
