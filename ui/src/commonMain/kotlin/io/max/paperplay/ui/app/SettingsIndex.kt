@@ -9,6 +9,7 @@ private fun h(title: String, page: String, extra: String = "") = SettingHit(titl
 internal val settingHits = listOf(
     h("True black", "style", "amoled dark"), h("Reduce motion", "style", "animation"), h("Home animation", "style"),
     h("All corners", "style", "corner radius round shape"),
+    h("Full-screen player", "style", "player style modern default glass"),
     h("Blur the background", "glass"), h("Refraction", "glass", "lens"), h("Tint", "glass"), h("Colour saturation", "glass"),
     h("Depth effect", "glass"), h("Colour fringing", "glass", "chromatic"), h("Edge line width", "glass", "edge brightness"),
     h("Outer shadow size", "glass"), h("Inner glow size", "glass"),

@@ -50,6 +50,10 @@ enum class ProgressBarStyle(val label: String) {
     SQUIGGLY_WAVE("Squiggly Wave"),
     AURORA_WAVE("Aurora Wave"),
 }
+enum class PlayerStyle(val label: String) {
+    Default("Default"),
+    Modern("Modern"),
+}
 enum class LyricsTextSize(val label: String, val scale: Float) {
     Small("Small", 0.85f),
     Medium("Medium", 1.0f),
@@ -166,6 +170,12 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
         ProgressBarStyle.entries.firstOrNull { it.name.equals(read("progress_bar_style"), ignoreCase = true) } ?: ProgressBarStyle.SQUIGGLY_WAVE
     )
         private set
+    var playerStyle by mutableStateOf(
+        PlayerStyle.entries.firstOrNull { it.name.equals(read("player_style"), ignoreCase = true) } ?: PlayerStyle.Default
+    )
+        private set
+    var modernPlayerBlur by mutableStateOf(flt("modern_player_blur", 24f).coerceIn(0f, 40f))
+        private set
     var lyricsTextSize by mutableStateOf(
         LyricsTextSize.entries.firstOrNull { it.name.equals(read("lyrics_text_size"), ignoreCase = true) } ?: LyricsTextSize.Medium
     )
@@ -261,6 +271,8 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
     fun putProfilePhoto(path: String?) { profilePhoto = path; write("profile_photo", path.orEmpty()) }
     fun putIconSet(set: IconSet) { iconSet = set; write("icon_set", set.name.lowercase()) }
     fun putProgressBarStyle(style: ProgressBarStyle) { progressBarStyle = style; write("progress_bar_style", style.name.lowercase()) }
+    fun putPlayerStyle(style: PlayerStyle) { playerStyle = style; write("player_style", style.name.lowercase()) }
+    fun putModernPlayerBlur(blur: Float) { val c = blur.coerceIn(0f, 40f); modernPlayerBlur = c; write("modern_player_blur", "$c") }
     fun putLyricsTextSize(size: LyricsTextSize) { lyricsTextSize = size; write("lyrics_text_size", size.name.lowercase()) }
     fun putLyricsSecondary(on: Boolean) { lyricsSecondary = on; write("lyrics_secondary", "$on") }
     fun putLyricsSecondaryKind(kind: String) { lyricsSecondaryKind = kind; write("lyrics_secondary_kind", kind) }

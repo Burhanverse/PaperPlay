@@ -2,6 +2,18 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.20.1] - 2026-11-24
+
+### Other changes
+- Playlist match: a radio edit tag after a dash matches the bracket forms ([`b17ddce`](https://github.com/maxcodl/PaperPlay/commit/b17ddcef498e8a1be01f08e183bb86efc502490b))
+- Lyrics controls grouped on the left, slimmer chips ([`5e25164`](https://github.com/maxcodl/PaperPlay/commit/5e25164b76abacf2fdf790a81ca4c8e6900e6761))
+- Profile stats row in the identity card, tighter listening card, themed seek bar option, Home next to Back, reopen output after fast seeks ([`4569f11`](https://github.com/maxcodl/PaperPlay/commit/4569f112385b4abbe6c6f6da5f6daa5a6557cb42))
+
+### Maintenance
+- Checklist note for downloadable player skins ([`63cd17d`](https://github.com/maxcodl/PaperPlay/commit/63cd17d3b4531ef31147b58d768cff90b26b0b60))
+
+**Full changes:** [v1.20.0...v1.20.1](https://github.com/maxcodl/PaperPlay/compare/v1.20.0...v1.20.1)
+
 ## [1.20.0] - 2026-11-24
 
 ### Added
