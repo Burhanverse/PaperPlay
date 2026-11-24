@@ -137,13 +137,14 @@ object IndexFile {
             if (progress) {
                 val now2 = store.chat(id) ?: continue
                 // Fewer posts here than the other side has: some did not come along, so its "read in full" does not hold here.
-                if (now2.postCount < (o.l("count") ?: 0L)) continue
+                // An older build does not say how many it has.
+                if (now2.postCount < (o.l("count") ?: continue)) continue
                 val newest = o.l("newest") ?: 0L
                 val complete = o.b("complete")
                 store.setState(id, 0L, o.l("refreshed") ?: 0L, now2.complete)
                 // "Complete" means nothing is missing up to its own newest post; the newest post of a read that never finished says nothing.
                 when {
-                    complete == now2.complete -> store.setRead(id, maxOf(newest, now2.newestMessageId), complete)
+                    complete && now2.complete -> store.setRead(id, maxOf(newest, now2.newestMessageId), true)
                     complete -> store.setRead(id, newest, true)
                 }
             }

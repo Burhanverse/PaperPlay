@@ -17,6 +17,7 @@ import io.max.paperplay.core.telegram.TdError
 import io.max.paperplay.core.telegram.TdRuntime
 import io.max.paperplay.core.telegram.documentContent
 import io.max.paperplay.core.telegram.request
+import io.max.paperplay.core.telegram.sendAndWait
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -482,23 +483,37 @@ class UserSession(
         knowChat(c, toChat, loadList = false)
         // send_copy posts it as a new message with no "forwarded from" line; remove_caption leaves the other chat's text
         // ("reQuest by ...", links, tags) behind, so only the song goes in.
-        val sent = runCatching {
-            call(c, request("forwardMessages") {
-                put("chat_id", toChat)
-                put("from_chat_id", fromChat)
-                put("message_ids", buildJsonArray { add(messageId) })
-                put("send_copy", true)
-                put("remove_caption", true)
-            })
+        var accepted = false
+        var refused: Exception? = null
+        try {
+            // TDLib accepts the copy long before Telegram has it. Callers delete the original once this returns, so it returns only
+            // when Telegram has confirmed the new post.
+            c.sendAndWait(COPY_CONFIRM) {
+                val answer = call(c, request("forwardMessages") {
+                    put("chat_id", toChat)
+                    put("from_chat_id", fromChat)
+                    put("message_ids", buildJsonArray { add(messageId) })
+                    put("send_copy", true)
+                    put("remove_caption", true)
+                })
+                // Telegram answers with an empty entry for a post it will not copy, for example when the chat blocks saving content.
+                val first = (answer["messages"] as? JsonArray)?.firstOrNull() as? JsonObject ?: throw IllegalStateException()
+                accepted = true
+                first
+            }
+            return
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            refused = e
         }
-        // Telegram answers with an empty entry for a post it will not copy, for example when the chat blocks saving content.
-        val first = (sent.getOrNull()?.get("messages") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
-        if (first is kotlinx.serialization.json.JsonObject) return
+        // Accepted but not confirmed: it may still arrive, so it is not sent a second time, and the original must stay.
+        if (accepted) throw IllegalStateException("The copy was not confirmed by Telegram, so the original post was kept: ${refused?.message}.")
         // Refused. Sending it again means downloading the whole file and uploading it, tens of MB each way for a FLAC, so it only
         // happens when the owner turned it on. The reason is Telegram's own: the chat's "restrict saving content", or its error.
         if (pref(COPY_REUPLOAD) != "true") {
             val protected = runCatching { call(c, request("getChat") { put("chat_id", fromChat) })["has_protected_content"]?.jsonPrimitive?.content == "true" }.getOrNull()
-            val why = sent.exceptionOrNull()?.message
+            val why = refused?.message
             throw IllegalStateException(
                 when {
                     protected == true -> "This chat does not allow copying (it restricts saving content)."
@@ -541,19 +556,26 @@ class UserSession(
             ?: throw IllegalStateException("Telegram did not copy this post, and the file could not be downloaded to send it again.")
         try {
             val newApi = c.newApi()
-            val sentAgain = call(c, request("sendMessage") {
-                put("chat_id", toChat)
-                put("input_message_content", io.max.paperplay.core.telegram.audioContent(
-                    kotlinx.serialization.json.buildJsonObject { put("@type", "inputFileLocal"); put("path", path) },
-                    newApi, song.title, song.artist, song.duration_sec.toInt(),
-                ))
-            }, 600)
-            if (sentAgain.long("id") == null) throw IllegalStateException("Telegram did not accept the song.")
-            // The message is only queued: the file uploads now. The download is kept until the upload has finished, or it would be
-            // deleted from under it.
-            val upId = sentAgain.obj("content")?.let { it.obj("audio")?.obj("audio") ?: it.obj("document")?.obj("document") }?.long("id")?.toInt()
-            if (upId != null) kotlinx.coroutines.withTimeoutOrNull(30 * 60_000L) {
-                watchFile(c, upId, song.title, upload = true) { f -> f.obj("remote")?.str("is_uploading_completed") == "true" || f.obj("remote")?.str("is_uploading_active") == "false" && (f.obj("remote")?.long("uploaded_size") ?: 0L) > 0 }
+            kotlinx.coroutines.coroutineScope {
+                var watcher: kotlinx.coroutines.Job? = null
+                try {
+                    // The message is only queued at first: the file uploads now. The download is kept until Telegram has confirmed the post,
+                    // or it would be deleted from under the upload.
+                    c.sendAndWait(REUPLOAD_CONFIRM) {
+                        val queued = call(c, request("sendMessage") {
+                            put("chat_id", toChat)
+                            put("input_message_content", io.max.paperplay.core.telegram.audioContent(
+                                kotlinx.serialization.json.buildJsonObject { put("@type", "inputFileLocal"); put("path", path) },
+                                newApi, song.title, song.artist, song.duration_sec.toInt(),
+                            ))
+                        }, 600)
+                        val upId = queued.obj("content")?.let { it.obj("audio")?.obj("audio") ?: it.obj("document")?.obj("document") }?.long("id")?.toInt()
+                        if (upId != null) watcher = launch { watchFile(c, upId, song.title, upload = true) }
+                        queued
+                    }
+                } finally {
+                    watcher?.cancel()
+                }
             }
         } finally {
             _transfer.value = null
@@ -749,3 +771,7 @@ class UserAccountDeleter(private val session: UserSession) : io.max.paperplay.co
         return ids.filter { it in alive }
     }
 }
+
+/** How long Telegram has to confirm a copied post, and one that is uploaded again. */
+private val COPY_CONFIRM = 5.minutes
+private val REUPLOAD_CONFIRM = 30.minutes

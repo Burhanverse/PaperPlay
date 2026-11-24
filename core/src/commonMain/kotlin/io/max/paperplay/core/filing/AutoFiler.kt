@@ -9,6 +9,7 @@ import io.max.paperplay.core.telegram.TdClient
 import io.max.paperplay.core.telegram.TdError
 import io.max.paperplay.core.telegram.audioContent
 import io.max.paperplay.core.telegram.request
+import io.max.paperplay.core.telegram.sendAndWait
 import io.max.paperplay.core.telegram.topicField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -272,28 +273,7 @@ class AutoFiler(
         }
     }
 
-    /** Runs [send] (which returns the pending message) and waits for Telegram to confirm it; returns the confirmed message. */
-    private suspend fun sendAndWait(c: TdClient, send: suspend () -> JsonObject): JsonObject {
-        val sentId = CompletableDeferred<Long>()
-        val outcome = scope.async(start = CoroutineStart.UNDISPATCHED) {
-            c.updates.first { u ->
-                val t = u["@type"]?.jsonPrimitive?.content
-                (t == "updateMessageSendSucceeded" || t == "updateMessageSendFailed") && u.long("old_message_id") == sentId.await()
-            }
-        }
-        try {
-            val pending = send()
-            sentId.complete(pending.long("id") ?: throw TdError(0, "Telegram did not accept the post"))
-            val done = withTimeoutOrNull(30.minutes) { outcome.await() } ?: throw TdError(408, "Posting timed out")
-            if (done["@type"]?.jsonPrimitive?.content == "updateMessageSendFailed") {
-                val err = done.obj("error")
-                throw TdError(err?.long("code")?.toInt() ?: 0, err?.str("message") ?: "Telegram refused the post")
-            }
-            return done.obj("message") ?: throw TdError(0, "The new post was not confirmed")
-        } finally {
-            outcome.cancel()
-        }
-    }
+    private suspend fun sendAndWait(c: TdClient, send: suspend () -> JsonObject): JsonObject = c.sendAndWait(30.minutes, send)
 
     private fun JsonObject.obj(k: String) = this[k] as? JsonObject
     private fun JsonObject.long(k: String) = (this[k] as? JsonPrimitive)?.longOrNull

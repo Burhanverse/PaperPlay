@@ -461,7 +461,9 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             "sync-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }
             "data" -> {
                 val rid = m.str("rid") ?: return
-                val answer = runCatching { env.data?.answer(p.info.id, m.obj("q") ?: JsonObject(emptyMap())) }.getOrNull()
+                val q = m.obj("q") ?: JsonObject(emptyMap())
+                // Steering this device's account is for paired devices only, like "indexctl".
+                val answer = if (q.str("k") == "startindex" && !p.info.paired) null else runCatching { env.data?.answer(p.info.id, q) }.getOrNull()
                 p.send(buildJsonObject { put("t", "data-reply"); put("rid", rid); if (answer != null) put("a", answer) else put("error", true) })
             }
             "data-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }

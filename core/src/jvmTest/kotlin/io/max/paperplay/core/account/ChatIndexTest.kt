@@ -132,9 +132,23 @@ class ChatIndexTest {
         assertFalse(index.indexedChats.value.isEmpty())
         // Restored once per install: opening the account page again must not download and read it all again.
         account.loads = 0
+        library.setPref("cloud_restored", "0")
         assertTrue(cloud.restoreOnce())
         assertFalse(cloud.restoreOnce())
         assertEquals(1, account.loads)
+    }
+
+    @Test
+    fun aSavedIndexIsTakenInBeforeANewOneHidesIt() = runBlocking {
+        account.batches = listOf(listOf(post(20, "u2", "Two")))
+        index.indexChat(ChatInfo(-5, "Chat", true), false)
+        IndexCloud(account, index, library).save()
+        // Another login on an empty index: the first save must keep what the account had.
+        index.forget(-5)
+        library.setPref("cloud_restored", "0"); library.setPref("index_cloud_at", "0"); library.setPref("index_cloud_sig", "")
+        account.batches = listOf(listOf(post(30, "u3", "Three").copy(chatId = -6)))
+        IndexCloud(account, index, library).save()
+        assertEquals("Chat", index.indexedChats.value[-5])
     }
 
     @Test

@@ -603,9 +603,15 @@ class AppServices(
      */
     private suspend fun removeIfDeleted(song: io.max.paperplay.core.library.Song): Boolean {
         if (song.chat_id > -1_000_000_000_000L || song.remote_id == NETPLAY_REMOTE || !account.loggedIn.value) return false
-        val alive = account.existingPosts(song.chat_id, listOf(song.message_id)) ?: return false
-        if (song.message_id in alive) return false
+        // A post the account may not see (history hidden from new members) looks deleted too, so an older post of the same chat has to be
+        // visible in the same answer.
+        val older = library.songsInChat(song.chat_id).map { it.message_id }.filter { it < song.message_id }.takeLast(5)
+        if (older.isEmpty()) return false
+        val alive = account.existingPosts(song.chat_id, older + song.message_id) ?: return false
+        if (song.message_id in alive || alive.isEmpty()) return false
         library.removePost(song.chat_id, song.message_id)
+        // Listed through another post of the same file, or moved: the song lives on.
+        if (library.songByUniqueId(song.unique_id) != null) return false
         activityLog("Library", "Removed \"${song.title}\": its post was deleted in Telegram")
         return true
     }
@@ -1028,6 +1034,8 @@ class AppServices(
         if (!account.loggedIn.value) return
         runCatching { indexCloud.save(force = true) }
         account.logOut()
+        // The next login may be another account with its own saved index.
+        library.setPref("cloud_restored", "0")
     }
 
     /** Logs the account out if there is one, then forgets the main bot. */

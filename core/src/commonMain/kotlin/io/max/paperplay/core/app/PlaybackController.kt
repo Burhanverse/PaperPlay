@@ -268,6 +268,7 @@ class PlaybackController(
     /** Replaces the queue with [songs] and plays [startIndex]. */
     fun setQueue(songs: List<Song>, startIndex: Int = 0) = command {
         if (songs.isEmpty()) return@command
+        pausedByHand = false
         val start = startIndex.coerceIn(songs.indices)
         original = songs
         val order = if (meta.value.shuffle) {
@@ -300,11 +301,13 @@ class PlaybackController(
         val m = meta.value
         if (index !in m.queue.indices) return@command
         playIntent = true
+        pausedByHand = false
         apply(m.queue, index, 0)
         engine.play()
     }
 
     fun play() {
+        pausedByHand = false
         if (!engine.bypassSoftwareFade && engine.state.value == PlayerState.Paused && baseVolume > 0f) {
             fadeJob?.cancel()
             engine.setVolume(0f)
@@ -321,6 +324,7 @@ class PlaybackController(
 
     /** Pausing a playing song fades out over a fifth of a second, then pauses. */
     fun pause() {
+        pausedByHand = true
         saveSession()
         if (!engine.bypassSoftwareFade && engine.state.value == PlayerState.Playing && baseVolume > 0f) {
             fade(0f, baseVolume) { engine.pause(); engine.setVolume(baseVolume) }
@@ -361,6 +365,9 @@ class PlaybackController(
     @kotlin.concurrent.Volatile
     var isDeleted: (suspend (Song) -> Boolean)? = null
 
+    /** The listener paused; a song that then turns out to be deleted must not start the next one. */
+    @kotlin.concurrent.Volatile private var pausedByHand = false
+
     /** Takes [song], which cannot be played any more, out of the queue and plays the one after it. */
     private fun dropDeleted(song: Song) {
         val idx = engine.currentIndex.value
@@ -372,7 +379,7 @@ class PlaybackController(
             if (order.isEmpty()) return@command
             apply(order, idx.coerceAtMost(order.lastIndex), 0)
             // When the last song of the queue failed nothing comes after it: the one before is shown but not started.
-            if (idx <= order.lastIndex) engine.play() else engine.pause()
+            if (idx <= order.lastIndex && !pausedByHand) engine.play() else engine.pause()
         }
     }
 
@@ -457,6 +464,7 @@ class PlaybackController(
 
     fun next() = command {
         playIntent = true
+        pausedByHand = false
         val m = meta.value
         if (m.repeat == Repeat.ALL && engine.currentIndex.value == m.queue.lastIndex) apply(m.queue, 0, 0)
         else engine.next()
@@ -491,6 +499,7 @@ class PlaybackController(
      */
     fun previous() = command {
         playIntent = true
+        pausedByHand = false
         val now = clock()
         val again = lastPreviousAt != 0L && now - lastPreviousAt in 0..PREVIOUS_AGAIN_MS
         lastPreviousAt = now

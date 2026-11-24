@@ -253,7 +253,8 @@ class ChatIndex(
                         found += batch.size
                         // A full read goes through the audio posts first and the files after: a song posted in between lies below the newest
                         // file but was not read, so only the audio pass counts and the next catch-up read gets the rest.
-                        if (cp == null || cp.filter == 0) newest = maxOf(newest, batch.maxOf { it.messageId })
+                        // A chat with no audio post at all has only its files to go by.
+                        if (cp == null || cp.filter == 0 || (store.chat(chatId)?.newestMessageId ?: 0L) == 0L) newest = maxOf(newest, batch.maxOf { it.messageId })
                         // A full read saves newest at once but only counts as complete when the whole read ends. A catch-up read comes newest
                         // first, so its newest is saved at the end: stopped half way, the posts in between would never be asked for again
                         // and their songs would look deleted.
@@ -547,12 +548,21 @@ class ChatIndex(
     /** Merges someone else's (or another device's) file: copied marks stay theirs, and chats this account cannot see are marked to join. */
     override suspend fun importFrom(json: JsonStream): IndexImport {
         val fresh = ArrayList<Long>()
-        val r = IndexFile.read(json, store, clock(), own = false, fresh)
-        // A chat the account is already in needs no joining.
-        var notJoined = r.notJoined
-        for (id in fresh) if (runCatching { account.canSee(id) }.getOrDefault(false)) { store.setJoined(id, true); notJoined-- }
-        chatsChanged()
-        return r.copy(notJoined = notJoined)
+        try {
+            val r = IndexFile.read(json, store, clock(), own = false, fresh)
+            joinSeen()
+            return r.copy(notJoined = fresh.count { store.chat(it)?.joined == false })
+        } catch (e: IllegalArgumentException) {
+            joinSeen() // a file cut short has added chats too
+            throw e
+        } finally {
+            chatsChanged()
+        }
+    }
+
+    /** Chats marked to join that the account is already in need no joining. */
+    private suspend fun joinSeen() {
+        for (c in store.chats()) if (!c.joined && runCatching { account.canSee(c.id) }.getOrDefault(false)) store.setJoined(c.id, true)
     }
 }
 
@@ -571,6 +581,9 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
         if (!account.loggedIn.value) return
         val sig = index.chats.value.joinToString(";") { "${it.id}:${it.postCount}:${it.newestMessageId}:${it.complete}" }
         val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        // A newer file hides the older ones, so what this account saved before is taken in first; when that cannot be read nothing is sent.
+        if (library.pref("cloud_restored") != "1") restoreOnce()
+        if (library.pref("cloud_restored") != "1") return
         val last = library.pref("index_cloud_at")?.toLongOrNull() ?: 0L
         if (sig == library.pref("index_cloud_sig") || (!force && now - last < 24 * 3600_000L)) return
         // Written to a file as it is read from the database: the text of 250,000 posts is about 40 MB, and built in memory (twice, as

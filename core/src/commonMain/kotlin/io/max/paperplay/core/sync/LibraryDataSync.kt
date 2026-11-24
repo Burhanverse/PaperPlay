@@ -205,14 +205,15 @@ class LibraryDataSync(
     private fun chatsJson(store: IndexStore) = buildJsonArray {
         for (c in store.chats()) add(buildJsonObject {
             put("id", c.id); put("title", c.title); put("username", c.username); put("link", c.publicLink ?: ""); put("channel", c.isChannel)
-            put("newest", c.newestMessageId); put("refreshed", c.lastRefreshAt); put("complete", c.complete)
+            put("newest", c.newestMessageId); put("refreshed", c.lastRefreshAt); put("complete", c.complete); put("count", c.postCount)
         })
     }
 
     private fun indexPage(peerId: String, q: JsonObject): JsonObject {
         val store = index() ?: return buildJsonObject { put("none", true) }
         fun l(k: String) = (q[k] as? JsonPrimitive)?.longOrNull ?: 0L
-        val page = store.changedAfter(l("at"), l("chat"), l("msg"), peerId, INDEX_PAGE)
+        val all = (q["all"] as? JsonPrimitive)?.contentOrNull == "true"
+        val page = store.changedAfter(l("at"), l("chat"), l("msg"), if (all) NOBODY else peerId, INDEX_PAGE)
         return buildJsonObject {
             if ((q["first"] as? JsonPrimitive)?.contentOrNull == "true") {
                 put("chats", chatsJson(store))
@@ -234,16 +235,16 @@ class LibraryDataSync(
         }
     }
 
-    private suspend fun pullIndex(peerId: String, ask: suspend (JsonObject) -> JsonObject) {
+    private suspend fun pullIndex(peerId: String, ask: suspend (JsonObject) -> JsonObject, all: Boolean = false) {
         val store = index() ?: return
         val key = "index_sync:$peerId"
         // The cursor is (change time, chat, message) of the last post taken from this device; -1 takes everything.
-        val saved = library.pref(key)?.split(':')?.mapNotNull { it.toLongOrNull() }?.takeIf { it.size == 3 } ?: listOf(-1L, 0L, 0L)
+        val saved = library.pref(key)?.split(':')?.mapNotNull { it.toLongOrNull() }?.takeIf { it.size == 3 && !all } ?: listOf(-1L, 0L, 0L)
         var at = saved[0]; var chat = saved[1]; var msg = saved[2]
         var first = true
         var chats = JsonArray(emptyList())
         while (true) {
-            val a = ask(buildJsonObject { put("k", "index"); put("at", at); put("chat", chat); put("msg", msg); put("first", first) })
+            val a = ask(buildJsonObject { put("k", "index"); put("at", at); put("chat", chat); put("msg", msg); put("first", first); if (all) put("all", true) })
             if (a["none"] != null) return
             if (first) {
                 // Removed chats first, so a chat the owner removed on either device is not added back by the list below.
@@ -280,12 +281,28 @@ class LibraryDataSync(
             // How far the chats are read counts only now that their last post is here; a pull that is cut off leaves it as it was.
             if (done) IndexFile.mergeChats(chats, store, 0, own = true, progress = true)
             onIndexChanged()
+            if (done) {
+                // A chat removed and added back here has lost posts the cursor is already past (and ones that first came from here are never
+                // sent back). Everything is read again, once for the same chats, so a difference that stays does not repeat it every sync.
+                val short = chats.mapNotNull { c ->
+                    val o = c as? JsonObject ?: return@mapNotNull null
+                    val id = (o["id"] as? JsonPrimitive)?.longOrNull ?: return@mapNotNull null
+                    id.takeIf { ((o["count"] as? JsonPrimitive)?.longOrNull ?: 0L) > store.count(id) }
+                }.sorted().joinToString(",")
+                val resync = "index_resync:$peerId"
+                if (library.pref(resync).orEmpty() != short) {
+                    library.setPref(resync, short)
+                    if (short.isNotEmpty() && !all) pullIndex(peerId, ask, all = true)
+                }
+            }
             if (done || posts.isEmpty()) return
         }
     }
 
     private companion object {
         const val MAX_ROWS = 500
+        /** A sender no post has: nothing is left out. */
+        const val NOBODY = "*"
         const val INDEX_PAGE = 2000
         /** Columns that only mean something on this device: a cover file path and how much of the song is cached here. */
         val LOCAL_ONLY = setOf("cover_path", "cached_bytes")

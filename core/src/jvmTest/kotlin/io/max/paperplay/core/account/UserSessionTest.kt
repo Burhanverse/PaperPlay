@@ -37,6 +37,8 @@ private fun answer(req: JsonObject, json: String = """{"@type":"ok"}""") =
 private fun state(type: String, extra: String = "") =
     Json.parseToJsonElement("""{"@type":"updateAuthorizationState","authorization_state":{"@type":"$type"$extra}}""").jsonObject
 
+private fun update(json: String) = Json.parseToJsonElement(json).jsonObject
+
 private fun failure(req: JsonObject, code: Int, message: String) = answer(req, """{"@type":"error","code":$code,"message":"$message"}""")
 
 private fun audio(id: Long) = """{"@type":"message","id":$id,"chat_id":-100,"date":5,"content":{"@type":"messageAudio",
@@ -191,15 +193,48 @@ class UserSessionTest {
         assertEquals(3000L, pauses.first())
     }
 
+    @Test fun aCopyThatTelegramRefusesAfterAcceptingItIsAFailure() = runBlocking {
+        // TDLib takes the copy at once; the server refuses it a moment later. The caller deletes the original only after a real copy.
+        val fake = connected { req ->
+            if (req.type == "forwardMessages") listOf(
+                answer(req, """{"@type":"messages","total_count":1,"messages":[{"@type":"message","id":5}]}"""),
+                update("""{"@type":"updateMessageSendSucceeded","old_message_id":4,"message":{"@type":"message","id":901}}"""),
+                update("""{"@type":"updateMessageSendFailed","old_message_id":5,"message":{"@type":"message","id":5},"error":{"@type":"error","code":403,"message":"CHAT_WRITE_FORBIDDEN"}}"""),
+            ) else listOf(answer(req))
+        }
+        prefs[COPY_REUPLOAD] = "true"
+        val s = session(fake, loggedIn = true)
+        val failed = runCatching { s.copyPost(-1009L, 77L, -1001234567890L) }.exceptionOrNull()
+        assertTrue(failed is IllegalStateException && failed.message!!.contains("CHAT_WRITE_FORBIDDEN"), "$failed")
+        // Not sent a second time either: the first one may still arrive.
+        assertFalse(fake.sent.any { it.type == "sendMessage" || it.type == "downloadFile" })
+    }
+
+    @Test fun recoveryKeepsTheOriginalWhenTheCopyWasNotConfirmed() = runBlocking {
+        for (ok in listOf(false, true)) {
+            val fake = connected { req ->
+                if (req.type == "forwardMessages") listOf(
+                    answer(req, """{"@type":"messages","total_count":1,"messages":[{"@type":"message","id":5}]}"""),
+                    if (ok) update("""{"@type":"updateMessageSendSucceeded","old_message_id":5,"message":{"@type":"message","id":900}}""")
+                    else update("""{"@type":"updateMessageSendFailed","old_message_id":5,"message":{"@type":"message","id":5},"error":{"@type":"error","code":429,"message":"FLOOD"}}"""),
+                ) else listOf(answer(req))
+            }
+            val s = session(fake, loggedIn = true)
+            val copied = runCatching { s.copyPost(-1009L, 77L, -1001234567890L) }.isSuccess
+            assertEquals(ok, copied)
+        }
+    }
+
     @Test fun copyPostMakesTargetKnownAndForwardsACopy() = runBlocking {
         val fake = connected { req ->
-            listOf(
-                when (req.type) {
-                    "getChat" -> failure(req, 400, "Chat not found")
-                    "forwardMessages" -> answer(req, """{"@type":"messages","total_count":1,"messages":[{"@type":"message","id":5}]}""")
-                    else -> answer(req)
-                },
-            )
+            when (req.type) {
+                "getChat" -> listOf(failure(req, 400, "Chat not found"))
+                "forwardMessages" -> listOf(
+                    answer(req, """{"@type":"messages","total_count":1,"messages":[{"@type":"message","id":5}]}"""),
+                    update("""{"@type":"updateMessageSendSucceeded","old_message_id":5,"message":{"@type":"message","id":900}}"""),
+                )
+                else -> listOf(answer(req))
+            }
         }
         val s = session(fake, loggedIn = true)
         s.copyPost(-1009L, 77L, -1001234567890L)

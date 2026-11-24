@@ -139,6 +139,27 @@ class LibraryDataSyncTest {
     }
 
     @Test
+    fun aChatRemovedAndAddedBackGetsItsPostsAgainOnce() = runBlocking {
+        val pc = Device("pc")
+        val phone = Device("phone")
+        pc.index.saveChat(-5, "Big"); pc.index.setChatInfo(-5, "", "", true, true, 1)
+        pc.index.upsertPosts((1L..2500L).map { post(-5, it) }, 7)
+        pc.index.setState(-5, 2500, 1, true)
+        pull(phone, pc)
+        assertEquals(2500, phone.index.count(-5))
+        // Removed and added back before the PC heard of it: the cursor is already past all of its posts.
+        phone.index.deleteChat(-5); phone.index.saveChat(-5, "Big")
+        pull(phone, pc)
+        assertEquals(2500, phone.index.count(-5))
+        assertEquals(true, phone.index.chat(-5)!!.complete)
+        // A difference that stays is not asked for again at every sync.
+        pc.index.upsertPosts(listOf(post(-5, 2501)), 1)
+        var pages = 0
+        repeat(3) { phone.sync.pull("pc") { q -> if (q["k"].toString() == "\"index\"") pages++; pc.sync.answer("phone", q) } }
+        assertEquals(true, pages <= 8, "$pages pages")
+    }
+
+    @Test
     fun theLaterPauseDecisionWins() = runBlocking {
         val pc = Device("pc")
         val phone = Device("phone")

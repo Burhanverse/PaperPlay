@@ -144,11 +144,21 @@ class PlaybackControllerTest {
             await { engine.mutableCurrentIndex.value == 1 && controller.nowPlayingStatic.value.song?.unique_id == "u2" }
             engine.mutableState.value = PlayerState.Error
             await { engine.lastQueue.map { it.uri } == listOf("tg-u1", "tg-u3", "tg-u4") && controller.nowPlayingStatic.value.song?.unique_id == "u3" }
+            // Paused by hand: the deleted song leaves, the next one does not start.
+            controller.isDeleted = { it.unique_id == "u3" }
+            controller.pause()
+            delay(400)
+            val plays = engine.playCalls
+            engine.mutableState.value = PlayerState.Error
+            await { engine.lastQueue.map { it.uri } == listOf("tg-u1", "tg-u4") }
+            delay(150)
+            assertEquals(plays, engine.playCalls)
+            controller.isDeleted = { it.unique_id == "u2" }
             // A failure for any other reason leaves the queue alone.
             delay(150)
             engine.mutableState.value = PlayerState.Error
             delay(300)
-            assertEquals(3, engine.lastQueue.size)
+            assertEquals(2, engine.lastQueue.size)
         } finally {
             controller.release()
             scope.cancel()
