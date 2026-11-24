@@ -223,14 +223,15 @@ class SnapshotStore(private val library: LibraryRepository, private val stillPos
 
     /** Merges [remote] into the database (one transaction) and returns what changed. */
     fun apply(remote: Snapshot): ApplyResult {
-        val local = build(onlyWithState = false)
-        val merged = mergeLibrary(local.state, remote.state)
         var songsChanged = 0
         var playlistsChanged = 0
         val wantCovers = ArrayList<String>()
-        val metaNow = lyricsMetaOf()
         val metaNew = HashMap<String, LyricsMeta>()
         library.batch(soft = false) {
+            // Read inside the transaction: what the listener changes while a long list is merged must not be written over with older values.
+            val local = build(onlyWithState = false)
+            val merged = mergeLibrary(local.state, remote.state)
+            val metaNow = lyricsMetaOf()
             val rows = db.allSongsNow().associateBy { it.unique_id }
             val changed = ArrayList<io.max.paperplay.core.library.Song>()
             for ((id, m) in merged.songs) {
@@ -277,7 +278,9 @@ class SnapshotStore(private val library: LibraryRepository, private val stillPos
             }
             songsChanged += removed.size
             // A file that is here again (posted after it was deleted) is wanted: its entry leaves the record so it syncs like any song.
-            val record = merged.gone.filter { (key, at) -> key !in stale && rows[key]?.let { it.date * 1000 > at } != true }
+            // Entries the brake refused are not taken over: kept, they would make every later sync too big as well, and block the deletions after them.
+            val refused = if (tooMany) due.mapTo(HashSet()) { it.first } - local.state.gone.keys else emptySet()
+            val record = merged.gone.filter { (key, at) -> key !in stale && key !in refused && rows[key]?.let { it.date * 1000 > at } != true }
             if (record != local.state.gone) library.setPref(GONE_KEY, JsonObject(record.mapValues { JsonPrimitive(it.value) }).toString())
 
             val have = db.lanQueries.allPlaylistsWithUuid().executeAsList().associateBy { it.uuid }
