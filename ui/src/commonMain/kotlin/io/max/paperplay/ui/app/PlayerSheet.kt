@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -69,6 +71,33 @@ class PlayerSheetState {
 
 /** The sheet the full player is in. Outside a [PlayerSheetHost] (previews) it is a stand-alone one that moves nothing. */
 val LocalPlayerSheet = staticCompositionLocalOf { PlayerSheetState() }
+
+internal const val COVERED_ENTER_PROGRESS = 0.999f
+internal const val COVERED_EXIT_PROGRESS = 0.98f
+
+/** Hysteresis rule for whether the full player completely covers the underlying page. */
+internal fun nextCoveredState(
+    wasCovered: Boolean,
+    showPlayer: Boolean,
+    progress: Float,
+    pulled: Float = 0f,
+): Boolean {
+    if (!showPlayer || pulled > 0f) return false
+    return if (wasCovered) progress >= COVERED_EXIT_PROGRESS else progress >= COVERED_ENTER_PROGRESS
+}
+
+@Composable
+internal fun rememberSheetCovered(showPlayer: Boolean, sheet: PlayerSheetState): State<Boolean> {
+    val openState = rememberUpdatedState(showPlayer)
+    val last = remember { booleanArrayOf(false) }
+    return remember(sheet) {
+        derivedStateOf {
+            val next = nextCoveredState(last[0], openState.value, sheet.progress.value, sheet.pulled)
+            last[0] = next
+            next
+        }
+    }
+}
 
 /**
  * Slides [content] up from the bottom when [open] turns true and back down when it turns false, following a drag in

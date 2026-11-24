@@ -55,6 +55,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
@@ -111,8 +112,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     androidx.compose.runtime.LaunchedEffect(inForeground) {
         if (!inForeground) { kotlinx.coroutines.delay(10_000); SharedCovers.loader.clear(); System.gc() }
     }
-    // While the full player has covered the screen, the page under it is not composed, so it holds no lists, covers or animations. It returns the moment the sheet starts to close.
-    val covered by remember { androidx.compose.runtime.derivedStateOf { showPlayer && sheet.progress.value >= 1f } }
+    // While the full player has covered the screen, the underlying page stays mounted but skips drawing (with hysteresis so it never flickers).
+    val coveredState = rememberSheetCovered(showPlayer, sheet)
     // Where the phone came from, so Back returns there instead of jumping to Home or Settings.
     val history = remember { mutableStateListOf<NavSnapshot>() }
     fun snapshot() = NavSnapshot(tab, libraryTab, profilePage, detail, settings, settingsStack.toList(), settingsDeep, page)
@@ -328,8 +329,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
-            Box(if (anyGlass) Modifier.fillMaxSize().layerBackdrop(pageBackdrop) else Modifier.fillMaxSize()) {
-                AppBackground(prefs, pb.current?.coverUri, base, playing = pb.playing)
+            Box((if (anyGlass) Modifier.fillMaxSize().layerBackdrop(pageBackdrop) else Modifier.fillMaxSize()).drawWithContent { if (!coveredState.value) drawContent() }) {
+                AppBackground(prefs, pb.current?.coverUri, base, playing = pb.playing && !coveredState.value)
             }
             if (isPhone) {
                 val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -338,7 +339,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 val barsHeight = (if (pb.current != null) 70.dp + 8.dp else 0.dp) + navHeight + (if (prefs.floatingNav) 24.dp else 0.dp) + bottomInset + 40.dp // extra scroll room so the last item clears the bar
                 // The layer the nav bar blurs: the page colour (a still copy, so it costs no animation) with the page on top. Without the colour there
                 // would be almost nothing under the bar to blur or refract.
-                Box(if (navGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()) {
+                Box((if (navGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()).drawWithContent { if (!coveredState.value) drawContent() }) {
                 // The second copy of the background (for the glass bar to blur) joins after the page has animated in: drawing two blurred
                 // backgrounds in the first frames was a large part of their cost.
                 var navBackground by remember { mutableStateOf(false) }
@@ -349,7 +350,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
                     // A tab remembers where its list was scrolled to while you are on another page.
                     val tabStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-                    if (!covered) AnimatedContent(
+                    AnimatedContent(
                         targetState = PageKey(settings, detail, tab, tab == 3 && profilePage == "tasks"),
                         modifier = Modifier.fillMaxSize(),
                         transitionSpec = { pageTransition(navMove(initialState.level, targetState.level), reduceMotion) },
@@ -397,7 +398,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 }
                 }
                 Column(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().blockTouchesBehind().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().drawWithContent { if (!coveredState.value) drawContent() }.blockTouchesBehind().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),
                 ) {
                     // Toasts sit above the mini player and the bar, where they cover the least; swipe one sideways to dismiss it.
                     AppSnackbarHost(snack, Modifier.fillMaxWidth().padding(bottom = 8.dp), tint)
@@ -601,7 +602,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         })
                         shell()
                     }
-                } else if (!covered) shell()
+                } else Box(Modifier.fillMaxSize().drawWithContent { if (!coveredState.value) drawContent() }) { shell() }
                 PlayerSheetHost(showPlayer, sheet) { FullPlayer(pb, pbError, backend, actions, { showPlayer = false }) }
                 AppSnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp), tint)
                 ShortcutsOverlay(keys, Modifier.fillMaxSize())

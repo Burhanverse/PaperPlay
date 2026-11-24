@@ -107,4 +107,32 @@ class PlayerSheetTest {
             t += stepNs
         }
     }
+
+    @Test
+    fun coveredHysteresisPreventsFlicker() {
+        var covered = false
+        // Entering requires >= 0.999
+        covered = nextCoveredState(covered, showPlayer = true, progress = 0.985f)
+        assertFalse(covered)
+        covered = nextCoveredState(covered, showPlayer = true, progress = 0.999f)
+        assertTrue(covered)
+
+        // Jitter between 0.98 and 0.999 stays covered
+        covered = nextCoveredState(covered, showPlayer = true, progress = 0.985f)
+        assertTrue(covered)
+        covered = nextCoveredState(covered, showPlayer = true, progress = 0.98f)
+        assertTrue(covered)
+
+        // Dropping below 0.98 (e.g., predictive back) uncovers
+        covered = nextCoveredState(covered, showPlayer = true, progress = 0.979f)
+        assertFalse(covered)
+
+        // Pulling down uncovers immediately even near 1.0
+        covered = nextCoveredState(true, showPlayer = true, progress = 0.999f, pulled = 12f)
+        assertFalse(covered)
+
+        // Closing uncovers immediately
+        covered = nextCoveredState(true, showPlayer = false, progress = 1f)
+        assertFalse(covered)
+    }
 }
