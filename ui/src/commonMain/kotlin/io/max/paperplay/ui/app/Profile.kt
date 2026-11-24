@@ -89,7 +89,14 @@ fun ProfileScreen(
     /** How many background tasks are running (song info, covers, uploads and so on), for the Tasks row. */
     runningTasks: Int = 0,
     updates: io.max.paperplay.core.update.UpdateService? = null,
+    backend: CoreBackend? = null,
+    recents: List<io.max.paperplay.ui.state.SongUi> = emptyList(),
+    onPlay: (List<io.max.paperplay.ui.state.SongUi>, Int) -> Unit = { _, _ -> },
 ) {
+    var stats by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ProfileStats?>(null) }
+    androidx.compose.runtime.LaunchedEffect(backend, recents.firstOrNull()?.id) {
+        if (backend != null) stats = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { backend.profileStats() }
+    }
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding + 32.dp)) {
         item {
             TopBar("Profile") { IconButton({ onSettings(null) }) { AppIcon(Icons.Rounded.Settings, "Settings") } }
@@ -113,6 +120,7 @@ fun ProfileScreen(
                 Stat(Icons.Rounded.PlaylistPlay, playlists, "Playlists", Modifier.weight(1f)) { onLibraryTab(3) }
             }
         }
+        if (backend != null) item { ListeningSection(stats, recents, prefs, onPlay) { onSettings("stats") } }
         item {
             ProfileSection("library", "Library", Icons.Rounded.LibraryMusic, prefs) {
                 NavRow(if (conn.chats.size == 1) "1 channel" else "${conn.chats.size} channels", icon = Icons.Rounded.Forum, subtitle = mainChatTitle?.let { "Main chat: $it" } ?: "No chat added yet") {
@@ -121,7 +129,6 @@ fun ProfileScreen(
                 NavRow("Scan library", icon = Icons.Rounded.Sync, subtitle = "Read the chats with the bots and account you pick") { onSettings("repair") }
                 NavRow("Tasks", icon = Icons.Rounded.TaskAlt, subtitle = scan?.value?.text ?: if (runningTasks > 0) "$runningTasks running" else "Nothing running", onClick = onTasks)
                 NavRow("Upload songs", icon = Icons.Rounded.Upload, subtitle = "Send songs or a folder to a chat, with speed and queue") { onSettings("uploadhub") }
-                NavRow("Listening", icon = Icons.Rounded.BarChart, subtitle = "Time listened, top songs and artists") { onSettings("stats") }
                 NavRow("Duplicates", icon = Icons.Rounded.ContentCopy, subtitle = "Find repeated songs and remove the extras") { onSettings("dupes") }
                 NavRow("Song info left", icon = Icons.Rounded.Rule, subtitle = "See which songs still lack info or a cover") { onSettings("missing") }
             }
@@ -184,7 +191,7 @@ private fun Stat(icon: ImageVector, n: Int, label: String, modifier: Modifier, o
 
 /** A card whose body folds away. It always starts collapsed; the state is not saved. */
 @Composable
-private fun ProfileSection(
+internal fun ProfileSection(
     key: String, title: String, icon: ImageVector, prefs: UiPrefs, defaultOpen: Boolean = false,
     content: @Composable () -> Unit,
 ) {

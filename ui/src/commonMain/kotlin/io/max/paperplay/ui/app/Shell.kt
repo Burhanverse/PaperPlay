@@ -385,6 +385,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                             scan = scan,
                             runningTasks = runningTasks,
                             updates = backend.services.updates,
+                            backend = backend, recents = recents, onPlay = actions.play,
                         )
                     }
                     }
@@ -553,6 +554,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                     scan = scan,
                                     runningTasks = runningTasks,
                                     updates = backend.services.updates,
+                                    backend = backend, recents = recents, onPlay = actions.play,
                                 )
                                 k.page == "tasks" -> TasksScreen(backend.tasks, onBack = ::goBack, onOpen = { kd -> openLive(kd) })
                                 k.page == "upload" -> Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) { TopBar("Upload"); UploadsPage(backend); androidx.compose.foundation.layout.Spacer(Modifier.height(120.dp)) }
