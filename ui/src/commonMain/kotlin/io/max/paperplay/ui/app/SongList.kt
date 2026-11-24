@@ -171,7 +171,7 @@ fun SongList(
         if (sortable) sortSongs(found, sort, reverse) else found
     }
     val rowActions = remember(actions, onRemove) { actions.rowActions(onRemove) }
-    val picked = remember(selection, songs) { if (selection.ids.isEmpty()) selection else selection.retain(songs.mapTo(HashSet()) { it.id }) }
+    val picked = remember(selection, songs) { if (selection.ids.isEmpty()) selection else selection.retain(songs.mapTo(HashSet()) { it.rowKey }) }
 
     val songCovers = remember(shown) {
         val map = mutableMapOf<String, String>()
@@ -211,24 +211,28 @@ fun SongList(
                         overflow = TextOverflow.Ellipsis
                     )
                     IconButton(onClick = {
-                        actions.play(shown.filter { it.id in picked }, 0)
+                        actions.play(shown.filter { it.rowKey in picked }, 0)
                         selection = Selection()
                     }) { AppIcon(Icons.Rounded.PlayArrow, "Play picked") }
                     IconButton(onClick = {
-                        actions.addToPlaylist(picked.ids)
+                        actions.addToPlaylist(shown.filter { it.rowKey in picked }.mapTo(LinkedHashSet()) { it.id })
                         selection = Selection()
                     }) { AppIcon(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to playlist") }
                     IconButton(onClick = {
-                        val songsPicked = shown.filter { it.id in picked }
+                        val songsPicked = shown.filter { it.rowKey in picked }
                         val makeFavorite = songsPicked.any { !it.favorite }
                         songsPicked.forEach { actions.setFavorite(it, makeFavorite) }
                         selection = Selection()
                     }) { AppIcon(Icons.Rounded.FavoriteBorder, "Favorite picked") }
                     IconButton(onClick = {
-                        actions.copyToChat(shown.filter { it.id in picked })
+                        actions.copyToChat(shown.filter { it.rowKey in picked })
                         selection = Selection()
                     }) { AppIcon(Icons.Rounded.ContentCopy, "Copy to chat") }
-                    IconButton(onClick = { confirmBulkDelete = true }) {
+                    IconButton(onClick = {
+                        // Only repeats picked: nothing to confirm, the action says where those are deleted.
+                        if (deletableRows(shown, picked).isEmpty()) { actions.deleteSongs(shown.filter { it.rowKey in picked }); selection = Selection() }
+                        else confirmBulkDelete = true
+                    }) {
                         AppIcon(Icons.Rounded.Delete, "Delete from Telegram", tint = MaterialTheme.colorScheme.error)
                     }
                     IconButton(onClick = { selection = Selection() }) {
@@ -323,10 +327,10 @@ fun SongList(
                     ?: (if (song.artist.isNotBlank()) songCovers["artist:${song.artist}"] else null)
                 SongRow(
                     song = song,
-                    onClick = { if (picked.active) selection = picked.toggle(song.id) else actions.play(shown, i) },
-                    onLongClick = { selection = picked.toggle(song.id) },
+                    onClick = { if (picked.active) selection = picked.toggle(song.rowKey) else actions.play(shown, i) },
+                    onLongClick = { selection = picked.toggle(song.rowKey) },
                     current = song.id == currentId,
-                    selected = song.id in picked,
+                    selected = song.rowKey in picked,
                     coverUriOverride = songCoverUri,
                     actions = if (picked.active) null else rowActions,
                     modifier = motionItem().padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
@@ -358,9 +362,9 @@ fun SongList(
         }
         if (confirmBulkDelete) androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmBulkDelete = false },
-            title = { Text("Delete ${picked.size} ${if (picked.size == 1) "song" else "songs"} from Telegram?") },
+            title = { deletableRows(shown, picked).size.let { n -> Text("Delete $n ${if (n == 1) "song" else "songs"} from Telegram?") } },
             text = {
-                val onlyLocal = shown.filter { it.id in picked }.all { it.botCantReach }
+                val onlyLocal = deletableRows(shown, picked).all { it.botCantReach }
                 Text(
                     if (onlyLocal) "They are only in this library, not in Telegram, so nothing is deleted there. This cannot be undone."
                     else "They are removed from your main chat and from this library. Repeats of the same files in that chat go too. Progress shows on the Tasks page. This cannot be undone.",
@@ -369,7 +373,7 @@ fun SongList(
             confirmButton = {
                 TextButton({
                     confirmBulkDelete = false
-                    actions.deleteSongs(shown.filter { it.id in picked })
+                    actions.deleteSongs(shown.filter { it.rowKey in picked })
                     selection = Selection()
                 }) { Text("Delete") }
             },
@@ -391,7 +395,7 @@ fun SongList(
                     // duplicates (the same song is already in your chat) or copy the rest to the chat first.
                     val unreachable = songs.filter { it.botCantReach }
                     TextButton(
-                        onClick = { selection = Selection(unreachable.mapTo(HashSet()) { it.id }); sortSheet = false },
+                        onClick = { selection = Selection(unreachable.mapTo(HashSet()) { it.rowKey }); sortSheet = false },
                         enabled = unreachable.isNotEmpty(), modifier = Modifier.fillMaxWidth(),
                     ) { Text("Select songs the bot can't read (${unreachable.size})", Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start) }
                     val readable = songs.filter { !it.botCantReach }.groupBy { io.max.paperplay.core.integrations.looseTitleKey(it.title, it.artist) }
@@ -399,7 +403,7 @@ fun SongList(
                         readable[io.max.paperplay.core.integrations.looseTitleKey(u.title, u.artist)].orEmpty().any { kotlin.math.abs(it.durationSec - u.durationSec) <= 3 }
                     }
                     TextButton(
-                        onClick = { selection = Selection(duplicates.mapTo(HashSet()) { it.id }); sortSheet = false },
+                        onClick = { selection = Selection(duplicates.mapTo(HashSet()) { it.rowKey }); sortSheet = false },
                         enabled = duplicates.isNotEmpty(), modifier = Modifier.fillMaxWidth(),
                     ) { Text("Select only those already in your chat (${duplicates.size})", Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start) }
                     Text("Sort songs", style = MaterialTheme.typography.titleLarge)
@@ -496,3 +500,9 @@ private fun ClickableRowPreview() {
 @Preview(name = "Gap", showBackground = true)
 @Composable
 private fun GapPreview() = io.max.paperplay.ui.PreviewFrame { Gap(24) }
+
+/** One row of a list: a file posted twice has two rows with the same song id, and picking the extra one must not pick the song. */
+internal val SongUi.rowKey: String get() = copyKey ?: id
+
+/** The picked rows a delete may act on: the songs themselves, never the rows of their extra posts. */
+internal fun deletableRows(rows: List<SongUi>, picked: Selection): List<SongUi> = rows.filter { it.copyKey == null && it.rowKey in picked }
