@@ -2,6 +2,23 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.20.0] - 2026-11-24
+
+### Added
+- Redesign lyrics view with full-screen support and multi-source pairing ([`2d65194`](https://github.com/maxcodl/PaperPlay/commit/2d6519436396ddfc816b9f14acb1468bf7daa7b9))
+
+### Fixed
+- Optimize usb audio device claiming, timeouts, and error handling policies ([`0caee5f`](https://github.com/maxcodl/PaperPlay/commit/0caee5fad6e69b6053a1590d0c608611ece1c51b))
+
+### Other changes
+- Profile listening dashboard with streak, heatmap, week, top of month; remove desktop top search box ([`56c92d4`](https://github.com/maxcodl/PaperPlay/commit/56c92d4c5b0983e40bf0e072d6187e5325f12e12))
+
+### Maintenance
+- Checklist for the Profile dashboard ([`965842a`](https://github.com/maxcodl/PaperPlay/commit/965842ada3c1e2251365b1319429d96d5f02417b))
+- Checklist for search, settings search, auto copy and PR 15 ([`8220aa5`](https://github.com/maxcodl/PaperPlay/commit/8220aa5e32ad0f7d36092cb1d373ecda29b0f8df))
+
+**Full changes:** [v1.19.0...v1.20.0](https://github.com/maxcodl/PaperPlay/compare/v1.19.0...v1.20.0)
+
 ## [1.19.0] - 2026-11-23
 
 ### Added
