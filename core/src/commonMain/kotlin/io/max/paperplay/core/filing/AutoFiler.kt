@@ -190,6 +190,11 @@ class AutoFiler(
                 return
             }
         }
+        // Another file of the same song: its row is a new one, and the playlists, favorite, plays and edits hang on the old one. Both stay.
+        if (!sameFile && sameSong) {
+            log("Auto filing: \"${now.title}\" $how to ${topic.name}; the original is kept, because the new post is another file")
+            return
+        }
         if (!sameFile && !sameSong) {
             log("Auto filing: \"${now.title}\" $how to ${topic.name}, but the new post does not match the original; the original is kept")
             return
