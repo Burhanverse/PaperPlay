@@ -87,6 +87,7 @@ class CoverService(
     private val json = Json { ignoreUnknownKeys = true }
     private val sources = CoverSources(http, clock)
     private val upgradeAsked = HashSet<String>()
+    private val deferredUpgrades = HashSet<String>()
     private val albumLocks = HashMap<String, Mutex>()
     private val albumLocksMutex = Mutex()
     private val giveUpMutex = Mutex()
@@ -161,8 +162,7 @@ class CoverService(
             delay(startDelayMs)
             // Songs given up on before your account could read thumbnails are tried once more.
             if (accountClient() != null && repo.pref(ACCOUNT_RETRY_KEY) != "2") {
-                val gm = giveUpMap()
-                giveUpMutex.withLock { gm.clear(); giveUpDirty++ }
+                giveUpMutex.withLock { giveUpMapLocked().clear(); giveUpDirty++ }
                 persistGiveUps()
                 repo.setPref(ACCOUNT_RETRY_KEY, "2")
             }
@@ -197,8 +197,8 @@ class CoverService(
                         if (highPriority.add(uid)) enqueued = true
                     }
                 }
+                refreshQueued()
             }
-            refreshQueued()
             if (enqueued) wake.trySend(Unit)
         }
     }
@@ -207,8 +207,10 @@ class CoverService(
     fun retrySongs(songs: Collection<Song>) {
         ensureStarted()
         scope.launch {
-            val map = giveUpMap()
-            giveUpMutex.withLock { songs.forEach { map.remove(it.unique_id) } }
+            giveUpMutex.withLock {
+                val map = giveUpMapLocked()
+                songs.forEach { map.remove(it.unique_id) }
+            }
             queueMutex.withLock {
                 songs.forEach { attempted.remove(it.unique_id); rateLimited.remove(it.unique_id) }
             }
@@ -217,7 +219,7 @@ class CoverService(
         }
     }
 
-    private suspend fun giveUpMap(): MutableMap<String, Long> = giveUpMutex.withLock {
+    private fun giveUpMapLocked(): MutableMap<String, Long> =
         giveUps ?: HashMap<String, Long>().also { m ->
             runCatching {
                 (json.parseToJsonElement(repo.pref(GIVE_UP_KEY) ?: "{}") as? JsonObject)?.forEach { (k, v) ->
@@ -226,16 +228,15 @@ class CoverService(
             }
             giveUps = m
         }
-    }
 
-    private suspend fun gaveUpRecently(uid: String): Boolean {
-        val at = giveUpMap()[uid] ?: return false
-        return clock() - at < GIVE_UP_MS
+    private suspend fun gaveUpRecently(uid: String): Boolean = giveUpMutex.withLock {
+        val at = giveUpMapLocked()[uid] ?: return@withLock false
+        clock() - at < GIVE_UP_MS
     }
 
     private suspend fun recordGiveUp(uid: String, found: Boolean) {
-        val map = giveUpMap()
         val flush = giveUpMutex.withLock {
+            val map = giveUpMapLocked()
             if (found) { if (map.remove(uid) != null) giveUpDirty++ } else { map[uid] = clock(); giveUpDirty++ }
             giveUpDirty >= 25
         }
@@ -253,8 +254,7 @@ class CoverService(
 
     /** Forgets which songs no source had a cover for, so the next [kick] asks for all of them again. */
     suspend fun forgetGiveUps() {
-        val gm = giveUpMap()
-        giveUpMutex.withLock { gm.clear(); giveUpDirty++ }
+        giveUpMutex.withLock { giveUpMapLocked().clear(); giveUpDirty++ }
         persistGiveUps()
         queueMutex.withLock { attempted.clear() }
     }
@@ -314,7 +314,20 @@ class CoverService(
             } catch (_: Throwable) {
                 // Keep workers alive across unexpected IO/parse issues on one track.
             } finally {
-                queueMutex.withLock { inFlight.remove(uid); if (upgradeWork.remove(uid)) finishedLow++ else finished++; publishProgress() }
+                val wakeUpgrade = queueMutex.withLock {
+                    inFlight.remove(uid)
+                    if (upgradeWork.remove(uid)) finishedLow++ else finished++
+                    val requeue = deferredUpgrades.remove(uid) && uid !in background && uid !in highPriority
+                    if (requeue) {
+                        background.add(uid)
+                        upgradeWork.add(uid)
+                        refreshQueued()
+                    } else {
+                        publishProgress()
+                    }
+                    requeue
+                }
+                if (wakeUpgrade) wake.trySend(Unit)
             }
         }
     }
@@ -530,8 +543,10 @@ class CoverService(
             // Nobody could read the post (the chat is not known to the client yet, a timeout): that proves nothing, so the song is asked
             // about again after a few hours instead of being given up on for good.
             !answered -> {
-                val gm = giveUpMap()
-                giveUpMutex.withLock { gm[uid] = clock() - GIVE_UP_MS + 6L * 60 * 60 * 1000; giveUpDirty++ }
+                giveUpMutex.withLock {
+                    giveUpMapLocked()[uid] = clock() - GIVE_UP_MS + 6L * 60 * 60 * 1000
+                    giveUpDirty++
+                }
                 // Not marked as attempted: the song is queued again once the six hours are over.
                 markDone(uid, Outcome.Defer)
             }
@@ -547,10 +562,15 @@ class CoverService(
         val added = queueMutex.withLock {
             attempted.remove(uid)
             upgradeAsked.add(uid)
-            val ok = uid !in inFlight && background.add(uid)
-            if (ok) upgradeWork.add(uid)
-            refreshQueued()
-            ok
+            if (uid in inFlight) {
+                deferredUpgrades.add(uid)
+                false
+            } else {
+                val ok = background.add(uid)
+                if (ok) upgradeWork.add(uid)
+                refreshQueued()
+                ok
+            }
         }
         if (added) wake.trySend(Unit)
     }
@@ -589,7 +609,7 @@ class CoverService(
         }
         deleteLater(song.cover_path, outPath)
         recordGiveUp(uid, found = true)
-        shareToAlbum(song, img.bytes, img.url, match)
+        shareToAlbum(song, outPath, img.url, match)
         notifyWake.trySend(Unit)
         return true
     }
@@ -615,8 +635,7 @@ class CoverService(
             val p = s.cover_path
             s.cover_hi_res && !p.isNullOrEmpty() && Fs.exists(p) && s.cover_at == 0L
         } ?: return false
-        val bytes = runCatching { readWholeFile(donor.cover_path!!) }.getOrNull() ?: return false
-        val out = writeCoverFile(song.unique_id, bytes) ?: return false
+        val out = donor.cover_path ?: return false
         repo.updateCover(uniqueId = song.unique_id, coverPath = out, coverUrl = donor.cover_url, coverHiRes = true, notify = false)
         deleteLater(song.cover_path, out)
         notifyWake.trySend(Unit)
@@ -627,12 +646,12 @@ class CoverService(
      * Gives the other tracks of the album the same cover when they lack one or hold only a thumbnail
      * (never a cover someone chose), and fills the album's year and genre where they are blank.
      */
-    private suspend fun shareToAlbum(song: Song, bytes: ByteArray, url: String, match: ExternalMatch?) {
+    private suspend fun shareToAlbum(song: Song, coverPath: String, url: String, match: ExternalMatch?) {
         val album = song.album.ifBlank { match?.album.orEmpty() }
         for (s in siblings(song, album)) {
             val wants = needsCover(s) || coverWorkFor(s) == CoverWork.Upgrade
             val free = !s.user_edited && s.cover_at == 0L
-            val out = if (wants && free) writeCoverFile(s.unique_id, bytes) else null
+            val out = if (wants && free) coverPath else null
             val year = if (!s.user_edited && s.year == null) match?.year?.toLong() else null
             val genre = if (!s.user_edited && s.genre.isNullOrBlank()) match?.genre?.takeIf { it.isNotBlank() } else null
             if (out == null && year == null && genre == null) continue
