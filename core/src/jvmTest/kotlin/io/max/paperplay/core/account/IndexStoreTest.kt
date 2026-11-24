@@ -25,8 +25,9 @@ class IndexStoreTest {
         assertEquals(800L, store.page(-5, IndexFilter.All, "", 200, 200, null).first().post.messageId)
         assertEquals(10, store.page(-5, IndexFilter.All, "special", 0, 200, null).size)
         assertEquals(listOf(10, 10, 0, 0, 0), store.counts(-5, "special"))
-        // A search for a LIKE wildcard matches it literally.
-        assertEquals(0, store.counts(-5, "%")[0])
+        // Search is word based: punctuation is not a word, so a wildcard never reaches LIKE and a query of only punctuation filters nothing.
+        assertEquals(1000, store.counts(-5, "%")[0])
+        assertEquals(0, store.counts(-5, "nothing like this")[0])
     }
 
     @Test

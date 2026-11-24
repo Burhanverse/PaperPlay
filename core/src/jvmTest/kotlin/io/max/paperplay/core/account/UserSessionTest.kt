@@ -166,7 +166,8 @@ class UserSessionTest {
         }
         val s = session(fake, loggedIn = true)
         val all = s.songsIn(-100).toList()
-        assertEquals(listOf(listOf(400L, 300L), listOf(200L, 100L), listOf(150L, 130L)), all.map { b -> b.map { it.messageId } })
+        // Empty pages are sent too, so the reader can stop between any two pages; only the posts are compared here.
+        assertEquals(listOf(listOf(400L, 300L), listOf(200L, 100L), listOf(150L, 130L)), all.map { b -> b.map { it.messageId } }.filter { it.isNotEmpty() })
         assertEquals("A", all[0][0].artist)
         assertEquals(listOf(3000L, 3000L), pauses)
 
@@ -210,7 +211,8 @@ class UserSessionTest {
         assertEquals("-1009", fwd.str("from_chat_id"))
         assertEquals("77", fwd["message_ids"]!!.jsonArray.single().jsonPrimitive.content)
         assertEquals("true", fwd.str("send_copy"))
-        assertEquals("false", fwd.str("remove_caption"))
+        // Only the song goes in: the other chat's caption is left behind.
+        assertEquals("true", fwd.str("remove_caption"))
     }
 
     @Test fun copyPostFailsWhenTelegramRefusesToCopy() = runBlocking {
