@@ -2,6 +2,19 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.21.3] - 2026-11-24
+
+### Other changes
+- Checklist: desktop memory test, seek and Home button ([`9b65294`](https://github.com/maxcodl/PaperPlay/commit/9b6529491c5c8d76558cda426e76787f32682234))
+- Desktop: remove the window while hidden in the tray, reuse the running services on reopen ([`832f4f8`](https://github.com/maxcodl/PaperPlay/commit/832f4f85e0bd99a14aed485e9ab3bcdc67832d19))
+- Desktop top bar: Home button without a background ([`8ce44ec`](https://github.com/maxcodl/PaperPlay/commit/8ce44ec4f2b6df57bb00ca36ebd15baf315b56b5))
+- Bit-perfect seek: pause, seek, reopen the device, resume (no static) ([`1265fd6`](https://github.com/maxcodl/PaperPlay/commit/1265fd68afa9bceb0a1b1fe24e60c26cda1fd2e0))
+
+### Maintenance
+- Checklist catches up with merges, fixes and tests ([`021b823`](https://github.com/maxcodl/PaperPlay/commit/021b8230da85714426581fe41bffe157ee92ce02))
+
+**Full changes:** [v1.21.2...v1.21.3](https://github.com/maxcodl/PaperPlay/compare/v1.21.2...v1.21.3)
+
 ## [1.21.2] - 2026-11-24
 
 ### Other changes
