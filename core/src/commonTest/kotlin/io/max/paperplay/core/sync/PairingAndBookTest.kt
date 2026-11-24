@@ -95,4 +95,19 @@ class PairingAndBookTest {
         again.record("10.0.0.8:47872", AddressState.Unreachable)
         assertEquals(AddressState.Unreachable, again.entries.value.first { it.host == "10.0.0.8" }.lastResult)
     }
+
+    @Test fun addressBookThrottlesRepeatedSeenWrites() {
+        var writes = 0
+        var saved: String? = null
+        val b = AddressBook({ saved }, { saved = it; writes++ }, { now })
+        now = 10_000
+        b.learn("10.0.0.9", lanPort, "dev2", "Phone", AddressState.Seen)
+        assertEquals(1, writes)
+        now = 40_000 // 30 s later (discovery announce interval): must not rewrite
+        b.learn("10.0.0.9", lanPort, "dev2", "Phone", AddressState.Seen)
+        assertEquals(1, writes)
+        now = 10_000 + 11 * 60_000L // past 10 min: refreshes lastSeen
+        b.learn("10.0.0.9", lanPort, "dev2", "Phone", AddressState.Seen)
+        assertEquals(2, writes)
+    }
 }

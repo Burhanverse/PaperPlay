@@ -99,4 +99,10 @@ class PlaybackNetplayPlayer(
     override fun seek(positionMs: Long) = playback().seek(positionMs)
     override fun next() = playback().next()
     override fun previous() = playback().previous()
+
+    override fun clearExternal() {
+        for (old in externalIds) resolver.setExternalSource(old, null)
+        externalIds = emptySet()
+        loaded = emptyMap()
+    }
 }
