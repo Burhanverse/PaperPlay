@@ -880,8 +880,12 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         val cutoff = env.clock() - 3 * 60_000
         val known = bk { forDevice(d.id).isNotEmpty() } || d.paired
         // Announcing is not trying: the address is only marked as seen, so it is not shown as "Trying now" for ever.
-        if (known) bk { learn(d.host, d.port, d.id, d.name, AddressState.Seen) }
-        _discovered.value = (listOf(d) + _discovered.value.filter { it.id != d.id && it.lastSeen >= cutoff }).sortedByDescending { it.lastSeen }
+        // Anyone can send an announcement with a known device's id. A few addresses of one device are enough; more would push the real ones
+        // out of the book.
+        if (known && bk { forDevice(d.id).let { l -> l.any { it.host == d.host && it.port == d.port } || l.size < MAX_SEEN_ADDRESSES } }) {
+            bk { learn(d.host, d.port, d.id, d.name, AddressState.Seen) }
+        }
+        _discovered.value = (listOf(d) + _discovered.value.filter { it.id != d.id && it.lastSeen >= cutoff }).sortedByDescending { it.lastSeen }.take(MAX_DISCOVERED)
         // A paired device that shows up, at its old address or a new one, is linked at once instead of at the next 20 second round.
         if (d.paired && _listening.value && !peers.containsKey(d.id) && !autoBlocked(d.id) && autoDialing.add(d.id)) {
             io.launch {
@@ -998,3 +1002,5 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
 private const val OUT_QUEUE = 512
 private const val STALLED_NS = 60_000_000_000L
 private const val QUIET_MS = 90_000
+private const val MAX_SEEN_ADDRESSES = 8
+private const val MAX_DISCOVERED = 50
