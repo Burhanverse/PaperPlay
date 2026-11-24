@@ -218,6 +218,7 @@ class LibraryDataSync(
             if ((q["first"] as? JsonPrimitive)?.contentOrNull == "true") {
                 put("chats", chatsJson(store))
                 put("removed", buildJsonArray { for ((id, gone, at) in store.removedRows()) add(buildJsonArray { add(JsonPrimitive(id)); add(JsonPrimitive(gone)); add(JsonPrimitive(at)) }) })
+                put("gonePosts", buildJsonArray { for ((c, m, at) in store.gonePosts()) add(buildJsonArray { add(JsonPrimitive(c)); add(JsonPrimitive(m)); add(JsonPrimitive(at)) }) })
                 put("copied", buildJsonArray {
                     for (c in store.copiedRows()) add(buildJsonArray { add(JsonPrimitive(c.uniqueId)); add(JsonPrimitive(c.chatId)); add(JsonPrimitive(c.messageId)); add(JsonPrimitive(c.at)) })
                 })
@@ -253,6 +254,11 @@ class LibraryDataSync(
                     runCatching { Triple((r[0] as JsonPrimitive).content.toLong(), (r[1] as JsonPrimitive).content == "true", (r[2] as JsonPrimitive).content.toLong()) }.getOrNull()
                 }
                 store.mergeRemoved(removed)
+                val known = store.gonePosts().mapTo(HashSet()) { it.first to it.second }
+                val goneNow = (a["gonePosts"] as? JsonArray).orEmpty().mapNotNull { e ->
+                    runCatching { val r = e as JsonArray; Triple((r[0] as JsonPrimitive).content.toLong(), (r[1] as JsonPrimitive).content.toLong(), (r[2] as JsonPrimitive).content.toLong()) }.getOrNull()
+                }.filter { (it.first to it.second) !in known }
+                for ((at2, rows) in goneNow.groupBy { it.third }) store.markGonePosts(rows.map { it.first to it.second }, at2)
                 chats = JsonArray((a["chats"] as? JsonArray).orEmpty().filterNot { c -> ((c as? JsonObject)?.get("id") as? JsonPrimitive)?.longOrNull?.let(store::isGone) == true })
                 IndexFile.mergeChats(chats, store, 0, own = true, progress = false)
                 for (e in (a["copied"] as? JsonArray).orEmpty()) {
@@ -287,7 +293,7 @@ class LibraryDataSync(
                 val short = chats.mapNotNull { c ->
                     val o = c as? JsonObject ?: return@mapNotNull null
                     val id = (o["id"] as? JsonPrimitive)?.longOrNull ?: return@mapNotNull null
-                    id.takeIf { ((o["count"] as? JsonPrimitive)?.longOrNull ?: 0L) > store.count(id) }
+                    id.takeIf { ((o["count"] as? JsonPrimitive)?.longOrNull ?: 0L) > store.count(id) + store.goneCount(id) }
                 }.sorted().joinToString(",")
                 val resync = "index_resync:$peerId"
                 if (library.pref(resync).orEmpty() != short) {

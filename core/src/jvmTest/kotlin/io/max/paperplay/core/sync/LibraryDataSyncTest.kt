@@ -160,6 +160,30 @@ class LibraryDataSyncTest {
     }
 
     @Test
+    fun aPostDeletedOnOneDeviceStaysDeletedOnBoth() = runBlocking {
+        val pc = Device("pc")
+        val phone = Device("phone")
+        for (d in listOf(pc, phone)) {
+            d.song("a", 1); d.song("b", 2)
+            d.index.saveChat(-1, "Main"); d.index.upsertPosts(listOf(post(-1, 1).copy(uniqueId = "a"), post(-1, 2).copy(uniqueId = "b")), 1)
+        }
+        // Deleted on the phone: the post is gone in Telegram, the deletion is recorded, and the PC knows nothing of it yet.
+        phone.driver.execute(null, "DELETE FROM songs WHERE unique_id = 'b'", 0)
+        phone.library.setPref(io.max.paperplay.core.filing.GONE_KEY, """{"b":5}""")
+        phone.index.markGonePosts(listOf(-1L to 2L), 9)
+        repeat(2) { pull(phone, pc) }
+        assertEquals(0L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'b'"))
+        assertEquals("""{"b":5}""", phone.library.pref(io.max.paperplay.core.filing.GONE_KEY))
+        // The PC hears of it and its index no longer says the post is there.
+        pull(pc, phone)
+        assertEquals(emptySet(), pc.sync.stillPosted(setOf("b")))
+        assertEquals(setOf("a"), pc.sync.stillPosted(setOf("a", "b")))
+        // Telegram showing the post again takes the mark back.
+        pc.index.upsertPosts(listOf(post(-1, 2).copy(uniqueId = "b")), 20)
+        assertEquals(setOf("b"), pc.sync.stillPosted(setOf("b")))
+    }
+
+    @Test
     fun theLaterPauseDecisionWins() = runBlocking {
         val pc = Device("pc")
         val phone = Device("phone")

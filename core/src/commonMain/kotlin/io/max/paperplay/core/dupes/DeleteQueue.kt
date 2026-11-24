@@ -102,6 +102,8 @@ class DeleteQueue(
     private val extraCallers: () -> List<Pair<Long, TdCaller>> = { emptyList() },
     /** True for a song saved only as an account song: no bot can see its post, so no bot may say it is gone. */
     private val accountOnly: (chat: Long, message: Long) -> Boolean = { _, _ -> false },
+    /** Told of posts that are deleted in Telegram now, or were found to be. */
+    private val onPostsGone: (chat: Long, ids: List<Long>) -> Unit = { _, _ -> },
 ) {
     private val _jobs = MutableStateFlow<List<DeleteJob>>(emptyList())
 
@@ -150,7 +152,7 @@ class DeleteQueue(
         // Posts in other chats stay in Telegram and only leave the library. Say so, so "deleted" is not taken to mean every copy is gone.
         var kept = 0
         for ((chat, ids) in byChat) {
-            if (chat == main) { deletePosts(chat, ids); log("Deleted ${ids.size} post(s) of \"${s.title}\" from the main chat") }
+            if (chat == main) { deletePosts(chat, ids); onPostsGone(chat, ids); log("Deleted ${ids.size} post(s) of \"${s.title}\" from the main chat") }
             else { kept += ids.size; log("Kept ${ids.size} post(s) of \"${s.title}\" in chat $chat: only the main chat is changed in Telegram") }
         }
         keptElsewhere = kept
@@ -292,6 +294,7 @@ class DeleteQueue(
     /** Drops posts Telegram no longer has from the library, so they stop showing as repeats. */
     suspend fun dropGonePosts(posts: Collection<Pair<Long, Long>>): Int {
         val gone = missingPosts(posts)
+        for ((chat, ids) in gone.groupBy({ it.first }, { it.second })) onPostsGone(chat, ids)
         for ((chat, id) in gone) store.removePost(chat, id)
         if (gone.isNotEmpty()) {
             log("${gone.size} listed post${if (gone.size == 1) " was" else "s were"} already gone from Telegram and left the library")
@@ -401,7 +404,7 @@ class DeleteQueue(
                 val byId = entries.associateBy { it.post.messageId }
                 // Each post is marked as it goes, so the page counts up one by one.
                 val left = deletePostsBest(chat, entries.map { it.post.messageId }) { id ->
-                    byId[id]?.let { e -> store.removePost(e.post.chatId, e.post.messageId); set(e.key, DeleteStatus.Done) }
+                    byId[id]?.let { e -> store.removePost(e.post.chatId, e.post.messageId); onPostsGone(chat, listOf(id)); set(e.key, DeleteStatus.Done) }
                 }.toSet()
                 for (e in entries) {
                     if (e.post.messageId in left) {

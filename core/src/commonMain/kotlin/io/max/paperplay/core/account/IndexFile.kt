@@ -138,7 +138,7 @@ object IndexFile {
                 val now2 = store.chat(id) ?: continue
                 // Fewer posts here than the other side has: some did not come along, so its "read in full" does not hold here.
                 // An older build does not say how many it has.
-                if (now2.postCount < (o.l("count") ?: continue)) continue
+                if (now2.postCount + store.goneCount(id) < (o.l("count") ?: continue)) continue
                 val newest = o.l("newest") ?: 0L
                 val complete = o.b("complete")
                 store.setState(id, 0L, o.l("refreshed") ?: 0L, now2.complete)

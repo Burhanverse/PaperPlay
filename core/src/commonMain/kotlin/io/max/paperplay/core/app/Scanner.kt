@@ -266,6 +266,8 @@ class Scanner(
 ) {
     private var td: TdClient? = null
     private var listener: Job? = null
+    /** Told of posts Telegram says were deleted. */
+    @Volatile var onPostsGone: (chat: Long, ids: List<Long>) -> Unit = { _, _ -> }
     private var pause = minPause
     private val caughtUp = MutableStateFlow<Set<Long>>(emptySet())
     /** Who is reading, shown in front of the progress during a full scan ("Bot 1", "Bot 2", "Your account"). Null for the normal background scan. */
@@ -345,7 +347,9 @@ class Scanner(
         if (u["is_permanent"]?.jsonPrimitive?.booleanOrNull != true || u["from_cache"]?.jsonPrimitive?.booleanOrNull == true) return
         val chatId = u.long("chat_id") ?: return
         if (repo.chat(chatId) == null) return
-        for (id in u["message_ids"] as? JsonArray ?: return) id.jsonPrimitive.longOrNull?.let { repo.removePost(chatId, it) }
+        val ids = (u["message_ids"] as? JsonArray ?: return).mapNotNull { it.jsonPrimitive.longOrNull }
+        onPostsGone(chatId, ids)
+        for (id in ids) repo.removePost(chatId, id)
     }
 
     /** The content changed: re-read the post; if it no longer holds audio the song goes. */

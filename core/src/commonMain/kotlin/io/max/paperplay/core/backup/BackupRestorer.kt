@@ -345,7 +345,7 @@ class BackupRestorer {
     }
 
     private val KEPT_TABLES = listOf(
-        "index_chats", "index_posts", "index_copied", "index_removed", "listen_stats", "play_events", "eq_presets", "eq_device_map", "audio_features",
+        "index_chats", "index_posts", "index_copied", "index_removed", "index_gone_posts", "listen_stats", "play_events", "eq_presets", "eq_device_map", "audio_features",
     )
 
     private class IndexKeepFailed(cause: Throwable) : RuntimeException(cause)

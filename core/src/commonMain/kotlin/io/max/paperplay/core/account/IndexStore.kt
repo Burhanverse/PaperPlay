@@ -60,6 +60,8 @@ class IndexStore(private val driver: SqlDriver) {
         )
         // One row per chat the owner removed from the index (gone = 1) or added back (0); the later change wins on every linked device.
         exec("CREATE TABLE IF NOT EXISTS index_removed (chat_id INTEGER NOT NULL PRIMARY KEY, gone INTEGER NOT NULL, at INTEGER NOT NULL)")
+        // Posts proven deleted in Telegram: a linked device that still has one must not bring its song back.
+        exec("CREATE TABLE IF NOT EXISTS index_gone_posts (chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (chat_id, message_id))")
         exec("CREATE TABLE IF NOT EXISTS index_copied (unique_id TEXT NOT NULL PRIMARY KEY, chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, copied_at INTEGER NOT NULL)")
         addColumns(
             "index_chats",
@@ -176,6 +178,8 @@ class IndexStore(private val driver: SqlDriver) {
         var changed = 0
         db.transaction {
             for (p in posts) {
+                // Telegram shows the post, so it is not gone after all.
+                exec("DELETE FROM index_gone_posts WHERE chat_id = ? AND message_id = ?", 2) { bindLong(0, p.chatId); bindLong(1, p.messageId) }
                 exec(
                     "INSERT INTO index_posts (chat_id, message_id, unique_id, title, artist, duration_sec, size, mime, file_name, date, album, thumb, loose_key, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_id, message_id) DO UPDATE SET " +
@@ -249,6 +253,7 @@ class IndexStore(private val driver: SqlDriver) {
         var changed = 0
         db.transaction {
             for ((p, at) in posts) {
+                if (isGonePost(p.chatId, p.messageId)) continue
                 exec(
                     "INSERT INTO index_posts (chat_id, message_id, unique_id, title, artist, duration_sec, size, mime, file_name, date, album, loose_key, updated_at, src) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_id, message_id) DO UPDATE SET " +
@@ -279,8 +284,31 @@ class IndexStore(private val driver: SqlDriver) {
     /** Message ids saved for [chatId]. */
     fun messageIds(chatId: Long): Set<Long> = query("SELECT message_id FROM index_posts WHERE chat_id = ?", 1, { bindLong(0, chatId) }) { it.getLong(0)!! }.toHashSet()
 
-    /** True when [chatId] was read in full up to this post and the post was not there: it is deleted in Telegram. */
+    private fun isGonePost(chatId: Long, messageId: Long): Boolean =
+        query("SELECT 1 FROM index_gone_posts WHERE chat_id = ? AND message_id = ?", 2, { bindLong(0, chatId); bindLong(1, messageId) }) { 1 }.isNotEmpty()
+
+    /** Records posts Telegram said are deleted (never a guess): they leave the index here and, through [gonePosts], on linked devices. */
+    fun markGonePosts(posts: Collection<Pair<Long, Long>>, at: Long) {
+        if (posts.isEmpty()) return
+        db.transaction {
+            for ((chat, msg) in posts) {
+                exec("INSERT OR IGNORE INTO index_gone_posts (chat_id, message_id, at) VALUES (?, ?, ?)", 3) { bindLong(0, chat); bindLong(1, msg); bindLong(2, at) }
+                exec("DELETE FROM index_posts WHERE chat_id = ? AND message_id = ?", 2) { bindLong(0, chat); bindLong(1, msg) }
+            }
+            for (chat in posts.map { it.first }.toSet()) recount(chat)
+        }
+        touch()
+    }
+
+    /** The newest posts proven deleted, as (chat, message, when). */
+    fun gonePosts(limit: Int = 5_000): List<Triple<Long, Long, Long>> =
+        query("SELECT chat_id, message_id, at FROM index_gone_posts ORDER BY at DESC LIMIT $limit") { Triple(it.getLong(0)!!, it.getLong(1)!!, it.getLong(2)!!) }
+
+    fun goneCount(chatId: Long): Int = query("SELECT COUNT(*) FROM index_gone_posts WHERE chat_id = ?", 1, { bindLong(0, chatId) }) { it.getLong(0)!!.toInt() }.first()
+
+    /** True when [chatId] was read in full up to this post and the post was not there, or it was seen being deleted. */
     fun isDeletedPost(chatId: Long, messageId: Long): Boolean {
+        if (isGonePost(chatId, messageId)) return true
         val c = chat(chatId) ?: return false
         if (!c.complete || !c.joined || c.postCount == 0 || messageId > c.newestMessageId) return false
         return query("SELECT 1 FROM index_posts WHERE chat_id = ? AND message_id = ?", 2, { bindLong(0, chatId); bindLong(1, messageId) }) { 1 }.isEmpty()

@@ -566,6 +566,7 @@ class AppServices(
                     t.substringBefore(':').toLongOrNull()?.let { id -> id to (io.max.paperplay.core.dupes.BotApi({ t }, io.max.paperplay.core.dupes.defaultHttpPoster()) as io.max.paperplay.core.dupes.BotDeleter) }
                 }
             },
+            onPostsGone = ::postsGone,
             accountOnly = { chat, message -> library.repo.db.songsQueries.song(chat, message).executeAsOneOrNull()?.remote_id == ACCOUNT_REMOTE },
             ownerOf = { chat, message -> library.repo.db.songsQueries.song(chat, message).executeAsOneOrNull()?.let { botOwnerOf(it.remote_id) } },
         )
@@ -611,6 +612,7 @@ class AppServices(
         val alive = account.existingPosts(song.chat_id, older + song.message_id) ?: return false
         if (song.message_id in alive || alive.isEmpty()) return false
         library.removePost(song.chat_id, song.message_id)
+        postsGone(song.chat_id, listOf(song.message_id))
         // Listed through another post of the same file, or moved: the song lives on.
         if (library.songByUniqueId(song.unique_id) != null) return false
         activityLog("Library", "Removed \"${song.title}\": its post was deleted in Telegram")
@@ -642,6 +644,11 @@ class AppServices(
     /** The one TDLib runtime; two at once would receive each other's answers. */
     private fun tdRuntime(): TdRuntime = synchronized(runtimeLock) {
         runtime ?: TdRuntime(platform.native, scope, platform.receiveDispatcher).also { runtime = it }
+    }
+
+    /** Posts proven deleted leave the index here and on linked devices, so a sync does not bring their songs back. Only where message ids are the same for all. */
+    private fun postsGone(chat: Long, ids: List<Long>) {
+        if (chat <= -1_000_000_000_000L) runCatching { indexStore.markGonePosts(ids.map { chat to it }, clockMs()) }
     }
 
     private val connecting = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -742,6 +749,7 @@ class AppServices(
                 )
                 client = c
                 mine = c
+                scanner.onPostsGone = ::postsGone
                 scanner.attach(c)
                 launch { c.auth.collect { _auth.value = it } }
                 launch { c.authError.collect { _error.value = it } }
