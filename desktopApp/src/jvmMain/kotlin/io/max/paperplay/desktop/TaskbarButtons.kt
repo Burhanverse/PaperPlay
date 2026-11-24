@@ -167,6 +167,9 @@ internal object TaskbarButtons {
         }
     }
 
+    /** The window was destroyed; forget its handle so the next window can install again. */
+    fun release() { hwnd = null; added = false }
+
     /** The play button shows pause while a song plays. Safe from any thread. */
     fun setPlaying(now: Boolean) {
         if (playing == now) return

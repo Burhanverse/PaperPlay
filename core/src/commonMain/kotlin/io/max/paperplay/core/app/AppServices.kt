@@ -754,12 +754,17 @@ class AppServices(
         runCatching { driver.close() }
     }
 
+    /** True once [shutdown] ran; a platform that keeps services across windows builds new ones after this. */
+    @Volatile var isShutDown = false
+        private set
+
     /**
      * Stops everything that holds the library file, a socket or TDLib's receive loop, then closes the file, so a restore
      * can replace it while the app runs. Use it instead of [close] once connected. The receive loop is awaited because
      * TDLib aborts when a new runtime receives while the old one still does.
      */
     suspend fun shutdown() {
+        isShutDown = true
         try {
             lanSync?.let { lan ->
                 val on = library.pref("lan_on") // stop() records "off"; the restore keeps this device's own choice

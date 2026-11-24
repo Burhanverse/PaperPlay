@@ -216,7 +216,8 @@ fun main() {
                 restore = { source, pw -> BackupRestorer().restore(source, target, RestoreOptions(password = pw)) },
             ),
             libraryExists = { File(dir, "library.sqlite").exists() },
-            createServices = { AppServices(DesktopPlatform(dir)).also { liveServices = it; shutdownTarget.set(it) } },
+            // The window is removed while hidden in the tray, so a reopened window reuses the running services.
+            createServices = { liveServices?.takeUnless { it.isShutDown } ?: AppServices(DesktopPlatform(dir)).also { liveServices = it; shutdownTarget.set(it) } },
             mark = { mark(dir, it) },
             pickImage = { onPicked ->
                 val file = NativeDialogs.openFiles("Choose a picture", PICTURES).firstOrNull()
@@ -349,7 +350,8 @@ fun main() {
                 }
             }
         }
-        Window(
+        // Hidden to the tray the window is removed, not just hidden, so its UI, textures and caches are freed.
+        if (mainVisible) Window(
             onCloseRequest = {
                 if (trayOk && liveServices?.library?.pref("keep_running") != "false") {
                     mainVisible = false
@@ -369,10 +371,12 @@ fun main() {
             androidx.compose.runtime.LaunchedEffect(window) {
                 kotlinx.coroutines.delay(1_500)
                 if (liveServices?.platform?.settings?.get("taskbar_buttons") != "off") TaskbarButtons.install(window, ::handleMediaKey)
-                while (true) {
-                    kotlinx.coroutines.delay(400)
-                    liveServices?.let { TaskbarButtons.setPlaying(it.playback.nowPlayingStatic.value.isPlaying) }
-                }
+                try {
+                    while (true) {
+                        kotlinx.coroutines.delay(400)
+                        liveServices?.let { TaskbarButtons.setPlaying(it.playback.nowPlayingStatic.value.isPlaying) }
+                    }
+                } finally { TaskbarButtons.release() }
             }
             androidx.compose.runtime.DisposableEffect(window, mainVisible, mainState.isMinimized) {
                 fun update() {
