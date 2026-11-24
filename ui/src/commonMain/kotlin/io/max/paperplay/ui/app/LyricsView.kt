@@ -462,15 +462,14 @@ private fun LyricsControlsStrip(
     var sizeMenuOpen by remember { mutableStateOf(false) }
 
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Source / version picker chip
         Row(
             modifier = Modifier
-                .weight(1f, fill = false)
-                .heightIn(min = 48.dp)
+                .heightIn(min = 40.dp)
                 .clip(chipShape)
                 .background(scheme.onSurface.copy(alpha = 0.10f))
                 .clickable(role = Role.Button, onClick = onOpenVersions)
@@ -488,12 +487,10 @@ private fun LyricsControlsStrip(
             AppIcon(Icons.Rounded.ExpandMore, "Choose lyrics version", Modifier.size(18.dp), tint = scheme.onSurfaceVariant)
         }
 
-        Spacer(Modifier.weight(1f))
-
         if (showSecondaryToggle) {
             Row(
                 modifier = Modifier
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 40.dp)
                     .clip(chipShape)
                     .background(if (secondaryActive) scheme.secondaryContainer else Color.Transparent)
                     .then(if (secondaryActive) Modifier else Modifier.border(1.dp, scheme.outlineVariant, chipShape))
@@ -521,7 +518,7 @@ private fun LyricsControlsStrip(
         Box {
             Box(
                 modifier = Modifier
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 40.dp)
                     .clip(chipShape)
                     .background(scheme.onSurface.copy(alpha = 0.10f))
                     .semantics { contentDescription = "Lyrics text size: ${textSize.label}" }

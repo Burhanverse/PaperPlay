@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.components.AppIcon
 
 /**
- * The desktop's bar over the pages: back, home, a search box that opens Search, and the profile picture with its menu
+ * The desktop's bar over the pages: back, home, and the profile picture with its menu
  * (profile, recently played, settings and a private session that leaves no trace in Recently played or in what mixes learn).
  */
 @Composable
@@ -48,16 +48,7 @@ internal fun DesktopTopBar(
     var menu by remember { mutableStateOf(false) }
     Row(modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         IconButton(onBack, enabled = canBack, modifier = Modifier.size(40.dp)) { AppIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-        Box(Modifier.weight(1f))
         IconButton({ onGo("home") }, Modifier.size(40.dp).clip(CircleShape).background(scheme.surfaceContainerHigh)) { AppIcon(Icons.Rounded.Home, "Home") }
-        Row(
-            Modifier.weight(3f).widthIn(max = 460.dp).height(40.dp).clip(RoundedCornerShape(50)).background(scheme.surfaceContainerHigh)
-                .clickable { onGo("search") }.padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            AppIcon(Icons.Rounded.Search, null, Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
-            Text("What do you want to play?", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
         Box(Modifier.weight(1f))
         Box {
             Box(Modifier.size(40.dp).clip(CircleShape).clickable { menu = true }, contentAlignment = Alignment.Center) {

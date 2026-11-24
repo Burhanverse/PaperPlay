@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -89,7 +91,14 @@ fun ProfileScreen(
     /** How many background tasks are running (song info, covers, uploads and so on), for the Tasks row. */
     runningTasks: Int = 0,
     updates: io.max.paperplay.core.update.UpdateService? = null,
+    backend: CoreBackend? = null,
+    recents: List<io.max.paperplay.ui.state.SongUi> = emptyList(),
+    onPlay: (List<io.max.paperplay.ui.state.SongUi>, Int) -> Unit = { _, _ -> },
 ) {
+    var stats by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ProfileStats?>(null) }
+    androidx.compose.runtime.LaunchedEffect(backend, recents.firstOrNull()?.id) {
+        if (backend != null) stats = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { backend.profileStats() }
+    }
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding + 32.dp)) {
         item {
             TopBar("Profile") { IconButton({ onSettings(null) }) { AppIcon(Icons.Rounded.Settings, "Settings") } }
@@ -97,22 +106,25 @@ fun ProfileScreen(
         item {
             Column(
                 Modifier.padding(horizontal = 16.dp).fillMaxWidth()
-                    .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(36.dp))
-                    .clickable { onSettings("profile") }
-                    .padding(vertical = 40.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(36.dp)),
             ) {
-                Avatar(prefs.profilePhoto, prefs.profileName, 150.dp)
-                Text(prefs.profileName, Modifier.padding(top = 16.dp), style = MaterialTheme.typography.headlineMedium)
+                Column(
+                    Modifier.fillMaxWidth().clickable { onSettings("profile") }.padding(top = 28.dp, bottom = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Avatar(prefs.profilePhoto, prefs.profileName, 112.dp)
+                    Text(prefs.profileName, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.headlineMedium)
+                }
+                Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Stat(Icons.Rounded.MusicNote, songs, "Songs", Modifier.weight(1f)) { onLibraryTab(0) }
+                    StatDivider()
+                    Stat(Icons.Rounded.Favorite, favorites, "Favorites", Modifier.weight(1f)) { onLibraryTab(4) }
+                    StatDivider()
+                    Stat(Icons.Rounded.PlaylistPlay, playlists, "Playlists", Modifier.weight(1f)) { onLibraryTab(3) }
+                }
             }
         }
-        item {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Stat(Icons.Rounded.MusicNote, songs, "Songs", Modifier.weight(1f)) { onLibraryTab(0) }
-                Stat(Icons.Rounded.Favorite, favorites, "Favorites", Modifier.weight(1f)) { onLibraryTab(4) }
-                Stat(Icons.Rounded.PlaylistPlay, playlists, "Playlists", Modifier.weight(1f)) { onLibraryTab(3) }
-            }
-        }
+        if (backend != null) item { ListeningSection(stats, recents, prefs, onPlay) { onSettings("stats") } }
         item {
             ProfileSection("library", "Library", Icons.Rounded.LibraryMusic, prefs) {
                 NavRow(if (conn.chats.size == 1) "1 channel" else "${conn.chats.size} channels", icon = Icons.Rounded.Forum, subtitle = mainChatTitle?.let { "Main chat: $it" } ?: "No chat added yet") {
@@ -121,7 +133,6 @@ fun ProfileScreen(
                 NavRow("Scan library", icon = Icons.Rounded.Sync, subtitle = "Read the chats with the bots and account you pick") { onSettings("repair") }
                 NavRow("Tasks", icon = Icons.Rounded.TaskAlt, subtitle = scan?.value?.text ?: if (runningTasks > 0) "$runningTasks running" else "Nothing running", onClick = onTasks)
                 NavRow("Upload songs", icon = Icons.Rounded.Upload, subtitle = "Send songs or a folder to a chat, with speed and queue") { onSettings("uploadhub") }
-                NavRow("Listening", icon = Icons.Rounded.BarChart, subtitle = "Time listened, top songs and artists") { onSettings("stats") }
                 NavRow("Duplicates", icon = Icons.Rounded.ContentCopy, subtitle = "Find repeated songs and remove the extras") { onSettings("dupes") }
                 NavRow("Song info left", icon = Icons.Rounded.Rule, subtitle = "See which songs still lack info or a cover") { onSettings("missing") }
             }
@@ -168,23 +179,26 @@ private fun AboutCard(updates: io.max.paperplay.core.update.UpdateService, onOpe
 }
 
 @Composable
+private fun StatDivider() {
+    Box(Modifier.width(1.dp).height(40.dp).background(MaterialTheme.colorScheme.outlineVariant))
+}
+
+/** A count with a small icon above it and its label below; sits in the identity card, not in a box of its own. */
+@Composable
 private fun Stat(icon: ImageVector, n: Int, label: String, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        modifier.partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(32.dp))
-            .clickable(onClick = onClick).padding(vertical = 20.dp),
+        modifier.clip(appShape(20.dp)).clickable(onClick = onClick).padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-            AppIcon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
-        Text("$n", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        AppIcon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+        Text("$n", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 /** A card whose body folds away. It always starts collapsed; the state is not saved. */
 @Composable
-private fun ProfileSection(
+internal fun ProfileSection(
     key: String, title: String, icon: ImageVector, prefs: UiPrefs, defaultOpen: Boolean = false,
     content: @Composable () -> Unit,
 ) {

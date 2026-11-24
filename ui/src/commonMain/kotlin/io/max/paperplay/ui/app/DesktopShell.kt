@@ -340,7 +340,7 @@ fun PlayerBar(
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                ElapsedSeek(backend, state.durationMs, muted, Modifier.weight(1f), enabled = song != null)
+                ElapsedSeek(backend, state.durationMs, muted, Modifier.weight(1f), enabled = song != null, coverUri = song?.coverUri)
                 Text(formatDuration(state.durationMs / 1000), style = muted)
             }
         }
@@ -372,15 +372,17 @@ fun PlayerBar(
 
 /** Elapsed time and the thin seek bar; the only part of the player bar that follows the position. */
 @Composable
-private fun ElapsedSeek(backend: PlayerControls?, durationMs: Long, style: androidx.compose.ui.text.TextStyle, modifier: Modifier, enabled: Boolean) {
+private fun ElapsedSeek(backend: PlayerControls?, durationMs: Long, style: androidx.compose.ui.text.TextStyle, modifier: Modifier, enabled: Boolean, coverUri: String? = null) {
     val pos = backend?.position?.collectAsState()?.value ?: io.max.paperplay.ui.state.PositionUi(0, 0)
     Text(formatDuration(pos.positionMs / 1000), style = style)
-    ThinSeek({ pos.progress(durationMs) }, { backend?.seekTo(it) }, modifier.padding(horizontal = 10.dp), enabled = enabled)
+    val palette = auroraPalette(coverUri, MaterialTheme.colorScheme.primary)
+    val themed = LocalUiPrefs.current?.themedSeek == true && coverUri != null
+    ThinSeek({ pos.progress(durationMs) }, { backend?.seekTo(it) }, modifier.padding(horizontal = 10.dp), enabled = enabled, colors = if (themed) palette else null)
 }
 
-/** A thin seek bar: tap or drag; the seek is sent when the drag ends. */
+/** A thin seek bar: tap or drag; the seek is sent when the drag ends. With [colors] the played part is a gradient of the cover's colours. */
 @Composable
-fun ThinSeek(progress: () -> Float, onSeek: (Float) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun ThinSeek(progress: () -> Float, onSeek: (Float) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, colors: List<Color>? = null) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val scheme = MaterialTheme.colorScheme
     BoxWithConstraints(modifier.height(20.dp)) {
@@ -397,7 +399,11 @@ fun ThinSeek(progress: () -> Float, onSeek: (Float) -> Unit, modifier: Modifier 
         ) {
             Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(scheme.onSurface.copy(alpha = 0.2f)))
             val fill = scheme.onSurface
-            Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).drawBehind { drawRect(fill, size = androidx.compose.ui.geometry.Size(size.width * (dragging ?: progress()).coerceIn(0f, 1f), size.height)) })
+            Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).drawBehind {
+                val played = androidx.compose.ui.geometry.Size(size.width * (dragging ?: progress()).coerceIn(0f, 1f), size.height)
+                if (colors != null && colors.size >= 2) drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(colors, 0f, size.width), size = played)
+                else drawRect(fill, size = played)
+            })
         }
     }
 }

@@ -138,6 +138,11 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [x] Profile sections collapse with a chevron and always start collapsed (state not saved)
 - [x] Profile rows fixed: Duplicates goes to the right page, new rows for Upload songs, Sort General, Connection and Devices
 - [x] Back from a page opened from Profile returns to Profile, not the Settings list
+- [~] Profile "Your listening" card (`ProfileStats.kt`): total and today/7/30 day time, streak and best streak, 17 week heatmap, week bars, personality label, milestone badges, recently played row, top artist and song of the last 30 days; data from `listen_stats` via `CoreBackend.profileStats()`; `ProfileStatsTest` passes; installed on both phones, not yet looked at
+- [x] Desktop top bar: the search box that did nothing is removed (Search stays in the sidebar; Home sits next to Back
+- [~] Profile: Songs, Favorites and Playlists moved into the identity card as a slim row; listening card capped at 560 dp with smaller heatmap cells and bars
+- [~] Desktop player bar: themed seek bar (cover colours) with a switch in Settings > Appearance > Player bar (`themedSeek`)
+- [~] PC True Audio: after a burst of fast seeks the output is reopened once playback restarts (`MpvPlayerEngine`, `seekBursts`); the static after fast seeking is not confirmed gone, check by ear
 - [x] Phone and desktop Back return to the previous page or tab through a history stack (needs a device check)
 - [x] Nav bar polish: outlined Search icon, 24dp icons, shadow and outline, 16dp side margin (compiles, not tried)
 - [x] Permission checker: Settings > Devices > Permissions lists notifications, Bluetooth (permission and on/off), battery and Wi-Fi with Allow / Open settings buttons, refreshed every second (`PermissionsPage.kt`, `Permissions.kt`, hooks in `MainActivity.kt`; compiles, not tried)
@@ -248,6 +253,7 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [ ] GitHub builds TDLib and the app downloads it, in-app update from Releases
       (skipped for now because the bot needs TDLib too)
 - [ ] Parts in Rust (tags, cover resize, mix scoring, search), only if a profile shows they are slow
+- [ ] Player skins, on a separate branch later. Skins are data only (JSON plus images/fonts in a `.zip`), built on GitHub in a `PaperPlay-Skins` repo (Action builds release assets and an `index.json` with id, name, version, size, `sha256`, preview). Settings > Appearance > Skins fetches the index only when opened, downloads on tap, checks `sha256`, unpacks to the app data folder; Apply overrides `UiPrefs` values (look, radii, cover shape, seek style, lyrics style, now playing layout); Remove deletes it; nothing in the background; a bad index or zip fails once, no retry loop. Works on phone and desktop. Skinnable screens: home, full player and lyrics, mini player, settings. Clean-room: StreamX (`StreamXProject/Skins`, skins are Android APKs against StreamX's own extension API) is GPL-3.0, so no code or assets from it; its skins cannot load here. Needs the owner's friend's OK to mirror the looks
 
 
 ---
@@ -856,3 +862,7 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Index preview: play indexed songs without adding them (`IndexPreview`, `CoreBackend.previewPost`), play button on index rows, thumbnails and tap-to-play in Search "In your indexed chats", copy-to-main button in the player for previewed songs, temporary files cleared after 10 minutes idle, word-based index search (`IndexStore.words`). Debug build installed; `[~]` pending on-device check (play, copy, cleanup, search).
 - [ ] "Bot can't reach" count differs per device (`remote_id` is not synced). Idea: carry the bot owner in LAN sync or claim account songs in the background.
 - [ ] Duplicate detection needs work (cases not yet given).
+- [~] Search keeps its text and results when the full player is closed (`keptSearch` in `Screens.kt`); indexed results show a temporary cover read from Telegram (memory only, `CoreBackend.postThumb`). `[~]` not checked on a device.
+- [~] Settings search lists options inside pages (`SettingsIndex.kt`, hand-kept list); tapping one opens the page, scrolls to the row and flashes it (`searchFocus`, non-lazy pages only). `[~]` not checked on a device; new options need an entry in `settingHits`.
+- [~] Copying songs from the index on its own (`index_auto_copy`) is off by default; was on, which re-added songs after a duplicate delete. `[~]` cause not confirmed on a device.
+- [~] PR #15 (UAC 1.0 composite DAC) merged as `1f8a873`; USB tests and debug build pass; not installed, not tried with a DAC.

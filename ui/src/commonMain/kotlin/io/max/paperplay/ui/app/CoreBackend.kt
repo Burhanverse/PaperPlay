@@ -584,6 +584,13 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         return repo.repo.listenTotals(from) to repo.repo.listenPerDay(from)
     }
 
+    /** What the Profile page shows: streaks, heatmap, week, top of the last 30 days. Call off the main thread. */
+    internal fun profileStats(): ProfileStats {
+        val now = nowMoment().epochMs
+        val from = io.max.paperplay.core.app.dayOf(now - 29 * 86_400_000L)
+        return computeProfileStats(repo.repo.listenPerDay(), repo.repo.listenTotals(from), repo.repo.listenTotals(), now.floorDiv(86_400_000L))
+    }
+
     val account get() = services.account
     val chatIndex get() = services.chatIndex
 

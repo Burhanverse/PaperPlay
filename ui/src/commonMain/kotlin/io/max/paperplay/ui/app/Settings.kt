@@ -805,6 +805,7 @@ private fun PlayerBarSettings(prefs: UiPrefs) {
         prefs.putPlayerCard(b == BarBackground.Card)
     })
     SwitchRow("Format in mini player", prefs.miniFormat, prefs::putMiniFormat, null, "Shows FLAC, Hi-Res or Dolby next to the controls")
+    SwitchRow("Themed seek bar", prefs.themedSeek, prefs::putThemedSeek, null, "Colours the seek bar from the song's cover; off keeps it plain")
     SliderRow("Bar corners: ${prefs.playerRadius.toInt()}%", prefs.playerRadius, 0f..100f, { prefs.putPlayerRadius(it) })
     listOf(
         "favorite" to "Favorite", "sleep" to "Sleep timer", "panel" to "Now playing panel", "queue" to "Queue",
