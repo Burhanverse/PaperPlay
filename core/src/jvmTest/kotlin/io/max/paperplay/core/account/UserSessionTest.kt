@@ -193,6 +193,24 @@ class UserSessionTest {
         assertEquals(3000L, pauses.first())
     }
 
+    @Test fun aSessionEndedElsewhereCanBeLoggedInAgain() = runBlocking {
+        var starts = 0
+        val fake = FakeTdNative { _, req ->
+            when (req.type) {
+                "getOption" -> { starts++; listOf(state("authorizationStateWaitTdlibParameters")) }
+                "setTdlibParameters" -> listOf(answer(req), state("authorizationStateReady"))
+                "getChat" -> listOf(answer(req), state("authorizationStateClosed"))
+                else -> listOf(answer(req))
+            }
+        }
+        val s = session(fake, loggedIn = true)
+        runCatching { s.warmUp(-1001234567890L) }
+        withTimeout(5000) { s.loggedIn.first { !it } }
+        assertEquals("0", prefs[USER_SESSION_PREF])
+        runCatching { s.begin() }
+        withTimeout(5000) { while (starts < 2) kotlinx.coroutines.delay(20) }
+    }
+
     @Test fun aCopyThatTelegramRefusesAfterAcceptingItIsAFailure() = runBlocking {
         // TDLib takes the copy at once; the server refuses it a moment later. The caller deletes the original only after a real copy.
         val fake = connected { req ->

@@ -175,7 +175,16 @@ class UserSession(
         client = c
         if (!_loggedIn.value) _step.value = LoginStep.Starting
         watcher = scope.launch {
-            combine(c.auth, c.authLink, c.authError) { a, l, e -> Triple(a, l, e) }.collect { (a, l, e) -> publish(a, l, e) }
+            combine(c.auth, c.authLink, c.authError) { a, l, e -> Triple(a, l, e) }.collect { (a, l, e) ->
+                publish(a, l, e)
+                // Ended from another device: this client answers nothing any more, so the next login gets a new one.
+                if (a == "authorizationStateClosed" && client === c) {
+                    client = null
+                    _loggedIn.value = false
+                    setPref(USER_SESSION_PREF, "0")
+                    runCatching { c.shutdown() }
+                }
+            }
         }
         c.start()
         c
