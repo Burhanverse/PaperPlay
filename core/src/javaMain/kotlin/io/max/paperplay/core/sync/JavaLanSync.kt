@@ -360,6 +360,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
 
     private inner class Peer(val info: LanDevice, val ch: SecureChannel, val socket: Socket) {
         val waiting = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
+        /** An index pull it asked for is running. */
+        val nudged = java.util.concurrent.atomic.AtomicBoolean(false)
         /**
          * Messages wait here for the one thread that writes them. The thread that reads must never write: when both devices answered a
          * sync at the same time, both were writing a big reply, neither was reading, and the link stood still for good.
@@ -468,7 +470,12 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             }
             "data-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }
             // Index pause, resume and "read this chat" requests, and "new index posts are here".
-            "indexctl", "indexnudge" -> if (p.info.paired) _messages.tryEmit(LanMessage(p.info.id, m.str("t")!!, m.toString()))
+            // New index posts: only those are fetched. A whole exchange (rows, tags, all lyrics) every few seconds while the other device reads
+            // a chat of 250,000 posts would cost a phone hours of work.
+            "indexnudge" -> if (p.info.paired && p.nudged.compareAndSet(false, true)) io.launch {
+                try { runCatching { env.data?.pullPosts(p.info.id) { q -> ask(p, q) } } } finally { p.nudged.set(false) }
+            }
+            "indexctl" -> if (p.info.paired) _messages.tryEmit(LanMessage(p.info.id, m.str("t")!!, m.toString()))
             // "I was listened to": only the listening time is fetched. Older builds ignore it and get it with the next full exchange.
             "listennudge" -> if (p.info.paired) io.launch { runCatching { env.data?.pullListening { q -> ask(p, q) } } }
             "coverreq" -> serveCovers(p, m.arr("ids")?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty())

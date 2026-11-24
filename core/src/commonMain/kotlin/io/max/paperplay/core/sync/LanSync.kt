@@ -205,6 +205,9 @@ interface LanDataSync {
     /** This device's side: asks [peerId] for what it lacks through [ask] (a request and its answer) and stores it. Returns rows added. */
     suspend fun pull(peerId: String, ask: suspend (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject): Int
 
+    /** Only the chat index, through [ask]; see [pull]. */
+    suspend fun pullPosts(peerId: String, ask: suspend (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject) {}
+
     /** Only the listening time, through [ask]; see [pull]. */
     suspend fun pullListening(ask: suspend (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject) {}
 

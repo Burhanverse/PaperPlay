@@ -166,11 +166,10 @@ class AppServices(
         }
         scope.launch {
             lan.messages.collect { m ->
-                if (m.type != "indexctl" && m.type != "indexnudge") return@collect
+                if (m.type != "indexctl") return@collect
                 val o = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(m.body) as kotlinx.serialization.json.JsonObject }.getOrNull() ?: return@collect
                 fun str(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
                 when {
-                    m.type == "indexnudge" -> launch { runCatching { lan.syncNow(m.deviceId) } }
                     str("paused") != null -> realIndex.takePause(str("paused") == "true", str("at")?.toLongOrNull() ?: clockMs())
                     str("action") != null -> startIndexing(o) // asked by an older build
                 }

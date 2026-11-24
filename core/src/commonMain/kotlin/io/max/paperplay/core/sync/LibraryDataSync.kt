@@ -72,6 +72,8 @@ class LibraryDataSync(
         added
     }
 
+    override suspend fun pullPosts(peerId: String, ask: suspend (JsonObject) -> JsonObject) = pulling.withLock { pullIndex(peerId, ask) }
+
     // ---- listening time -------------------------------------------------------------------------------------------------------------
 
     /** Milliseconds and plays per "device|day". "self" rows are from before the device had an id, so they would collide. */
