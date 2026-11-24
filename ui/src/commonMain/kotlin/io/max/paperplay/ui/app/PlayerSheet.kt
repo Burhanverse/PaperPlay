@@ -31,9 +31,15 @@ class PlayerSheetState(val standalone: Boolean = false) {
         private set
     var isAnimating by mutableStateOf(false)
         private set
+    var targetOpen by mutableStateOf(standalone)
+        private set
 
     internal fun setAnimating(running: Boolean) {
         isAnimating = running
+    }
+
+    internal fun setTargetOpen(open: Boolean) {
+        targetOpen = open
     }
 
     /** Follows a finger that has moved [dy] pixels down from where the drag began. Upward movement leaves the sheet open. */
@@ -105,6 +111,7 @@ internal fun rememberSheetCovered(showPlayer: Boolean, sheet: PlayerSheetState):
  */
 @Composable
 fun PlayerSheetHost(open: Boolean, sheet: PlayerSheetState, content: @Composable () -> Unit) {
+    remember(open) { sheet.setTargetOpen(open); open }
     val openSpec = sheetSpring<Float>()
     val closeSpec = sheetCloseSpring<Float>()
     LaunchedEffect(open) {

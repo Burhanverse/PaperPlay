@@ -336,7 +336,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
-            Box((if (anyGlass) Modifier.fillMaxSize().layerBackdrop(pageBackdrop) else Modifier.fillMaxSize()).drawWithContent { if (!coveredState.value) drawContent() }) {
+            Box(Modifier.fillMaxSize().drawWithContent { if (!coveredState.value) drawContent() }.then(if (anyGlass) Modifier.layerBackdrop(pageBackdrop) else Modifier)) {
                 AppBackground(prefs, pb.current?.coverUri, base, playing = pb.playing && !coveredState.value)
             }
             if (isPhone) {
@@ -346,7 +346,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 val barsHeight = (if (pb.current != null) 70.dp + 8.dp else 0.dp) + navHeight + (if (prefs.floatingNav) 24.dp else 0.dp) + bottomInset + 40.dp // extra scroll room so the last item clears the bar
                 // The layer the nav bar blurs: the page colour (a still copy, so it costs no animation) with the page on top. Without the colour there
                 // would be almost nothing under the bar to blur or refract.
-                Box((if (navGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()).drawWithContent { if (!coveredState.value) drawContent() }) {
+                Box(Modifier.fillMaxSize().drawWithContent { if (!coveredState.value) drawContent() }.then(if (navGlass) Modifier.layerBackdrop(backdrop) else Modifier)) {
                 // The second copy of the background (for the glass bar to blur) joins after the page has animated in: drawing two blurred
                 // backgrounds in the first frames was a large part of their cost.
                 var navBackground by remember { mutableStateOf(false) }

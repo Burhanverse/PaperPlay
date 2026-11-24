@@ -237,7 +237,7 @@ internal fun ModernPlayerBackdrop(
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize()
                             .graphicsLayer { scaleX = 1.25f; scaleY = 1.25f }
-                            .then(if (settled && blurDp > 0.5f && glassEffectsSupported()) Modifier.blur((blurDp * 0.6f).dp) else Modifier),
+                            .then(if (settled && blurDp > 0.5f && decodePx > 64 && glassEffectsSupported()) Modifier.blur((blurDp * 0.6f).dp) else Modifier),
                         contentScale = ContentScale.Crop,
                         colorFilter = desatFilter,
                     )

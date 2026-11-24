@@ -146,8 +146,18 @@ internal fun ModernFullPlayer(
 ) {
     val song = state.current ?: return
     val sheet = LocalPlayerSheet.current
-    val settled by remember(sheet) {
-        derivedStateOf { sheet.standalone || (!sheet.isAnimating && sheet.pulled <= 0f && sheet.progress.value >= COVERED_ENTER_PROGRESS) }
+    val settledRaw by remember(sheet) {
+        derivedStateOf { sheet.standalone || (sheet.targetOpen && !sheet.isAnimating && sheet.pulled <= 0f && sheet.progress.value >= COVERED_ENTER_PROGRESS) }
+    }
+    var settledGlass by remember(sheet) { mutableStateOf(sheet.standalone) }
+    androidx.compose.runtime.LaunchedEffect(settledRaw) {
+        if (settledRaw) {
+            // Wait one frame after the sheet lands so glass shader/backdrop setup never collides with the last motion frame.
+            androidx.compose.runtime.withFrameNanos { }
+            settledGlass = true
+        } else {
+            settledGlass = false
+        }
     }
     val backdrop = rememberLayerBackdrop()
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -157,11 +167,11 @@ internal fun ModernFullPlayer(
     MaterialTheme(colorScheme = scheme) {
         Box(modifier.fillMaxSize()) {
             // Backdrop recorded for real glass blur by GlassPillButton & GlassSplitPill once the sheet settles.
-            Box(if (settled) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()) {
-                ModernPlayerBackdrop(song.coverUri, scheme, state.playing, settled = settled)
+            Box(if (settledGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()) {
+                ModernPlayerBackdrop(song.coverUri, scheme, state.playing, settled = settledGlass)
             }
 
-            CompositionLocalProvider(LocalGlassBackdrop provides (if (settled) backdrop else null)) {
+            CompositionLocalProvider(LocalGlassBackdrop provides (if (settledGlass) backdrop else null)) {
                 BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
