@@ -241,10 +241,10 @@ fun main() {
                 Thread {
                     val log = io.max.paperplay.player.PlayLog
                     try {
-                        val dir = NativeDialogs.pickFolder("Choose a music folder")
-                        if (dir == null) { log.log("upload", "folder picker closed with no folder"); return@Thread }
-                        val scan = scanFolder(dir)
-                        log.log("upload", "folder ${dir.path}: ${scan.top.size} songs in it, ${scan.subfolders.size} subfolders with songs")
+                        val pickedDir = NativeDialogs.pickFolder("Choose a music folder")
+                        if (pickedDir == null) { log.log("upload", "folder picker closed with no folder"); return@Thread }
+                        val scan = scanFolder(pickedDir)
+                        log.log("upload", "folder ${pickedDir.path}: ${scan.top.size} songs in it, ${scan.subfolders.size} subfolders with songs")
                         // Back on the window's own thread, where its state is changed.
                         javax.swing.SwingUtilities.invokeLater { onPicked(scan) }
                     } catch (e: Throwable) {
@@ -252,10 +252,10 @@ fun main() {
                         // An empty answer makes the page say that nothing was found, instead of staying silent.
                         javax.swing.SwingUtilities.invokeLater { onPicked(io.max.paperplay.ui.app.FolderScan(emptyList(), emptyMap()) { _, ready -> ready(emptyList(), false) }) }
                     }
-                }.start()
+                }.apply { isDaemon = true; start() }
             },
             pickFolderPath = { onPicked ->
-                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { javax.swing.SwingUtilities.invokeLater { onPicked(it.path) } } }.start()
+                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { javax.swing.SwingUtilities.invokeLater { onPicked(it.path) } } }.apply { isDaemon = true; start() }
             },
             authRedirect = LoopbackAuth(),
             authRedirectUri = SPOTIFY_REDIRECT,
@@ -371,13 +371,28 @@ fun main() {
             // Taskbar preview buttons (previous, play or pause, next); a switch in Settings turns them off, from the next start.
             androidx.compose.runtime.LaunchedEffect(window) {
                 kotlinx.coroutines.delay(1_500)
-                if (liveServices?.platform?.settings?.get("taskbar_buttons") != "off") TaskbarButtons.install(window, ::handleMediaKey)
-                try {
-                    while (true) {
-                        kotlinx.coroutines.delay(400)
-                        liveServices?.let { TaskbarButtons.setPlaying(it.playback.nowPlayingStatic.value.isPlaying) }
+                val sv = liveServices ?: run {
+                    var waited = 0
+                    while (liveServices == null && waited < 30) {
+                        kotlinx.coroutines.delay(500)
+                        waited++
                     }
-                } finally { TaskbarButtons.release() }
+                    liveServices
+                } ?: return@LaunchedEffect
+                if (sv.platform.settings.get("taskbar_buttons") == "off") return@LaunchedEffect
+                TaskbarButtons.install(window, ::handleMediaKey)
+                try {
+                    var lastPlaying: Boolean? = null
+                    sv.playback.nowPlayingStatic.collect { np ->
+                        if (lastPlaying != np.isPlaying) {
+                            lastPlaying = np.isPlaying
+                            TaskbarButtons.setPlaying(np.isPlaying)
+                        }
+                    }
+                } finally {
+                    TaskbarButtons.release()
+                    if (titleBar[0] === window) titleBar[0] = null
+                }
             }
             androidx.compose.runtime.DisposableEffect(window, mainVisible, mainState.isMinimized) {
                 fun update() {
