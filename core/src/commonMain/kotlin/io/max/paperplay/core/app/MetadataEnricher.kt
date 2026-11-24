@@ -357,11 +357,15 @@ class MetadataEnricher(
 
     /** Looks these songs up again, even if they matched before. Edited songs are left alone. */
     fun retrySongs(songs: List<Song>): Int {
-        val rows = songs.mapNotNull { s -> repo.songByUniqueId(s.unique_id)?.takeIf { !it.user_edited } }
-            .map { it.copy(enrich_state = EnrichState.PENDING) }
-        repo.replaceSongs(rows)
-        if (rows.isNotEmpty()) kick()
-        return rows.size
+        // Read and written in one transaction: whole rows are written back, and what changed in between (a favorite, a play, a delete) would be undone.
+        val n = repo.batch {
+            val rows = songs.mapNotNull { s -> repo.songByUniqueId(s.unique_id)?.takeIf { !it.user_edited } }
+                .map { it.copy(enrich_state = EnrichState.PENDING) }
+            repo.replaceSongs(rows)
+            rows.size
+        }
+        if (n > 0) kick()
+        return n
     }
 
     // Searching

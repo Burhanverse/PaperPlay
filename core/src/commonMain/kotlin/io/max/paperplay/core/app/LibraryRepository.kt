@@ -157,14 +157,14 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun setCachedBytes(uniqueId: String, bytes: Long, notify: Boolean = false) {
         if (notify) write(soft = true) { songs.setCachedBytes(bytes, uniqueId) } else songs.setCachedBytes(bytes, uniqueId)
     }
-    fun cachedSongs(): List<Song> = songs.cachedSongs().executeAsList()
+    fun cachedSongs(): List<Song> = repo.db.stableRead { songs.cachedSongs().executeAsList() }
     fun cacheLimit(): Long = repo.cacheLimit()
     fun songsInChat(chatId: Long): List<Song> = repo.db.stableRead { songs.songsInChat(chatId).executeAsList() }
-    fun songsNeedingCovers(): List<Song> = songs.songsNeedingCovers().executeAsList()
+    fun songsNeedingCovers(): List<Song> = repo.db.stableRead { songs.songsNeedingCovers().executeAsList() }
     /** Songs of one album name, for sharing a cover and album info between its tracks. */
-    fun albumSongs(name: String): List<Song> = songs.albumRows(name).executeAsList()
+    fun albumSongs(name: String): List<Song> = repo.db.stableRead { songs.albumRows(name).executeAsList() }
     /** Songs whose cover is only a thumbnail but have a full-size source. */
-    fun songsNeedingUpgrade(): List<Song> = songs.songsNeedingUpgrade().executeAsList()
+    fun songsNeedingUpgrade(): List<Song> = repo.db.stableRead { songs.songsNeedingUpgrade().executeAsList() }
     /** Ids of songs with no cover at all, newest first. */
     fun coverMissingIds(): List<String> = songs.idsNeedingCovers().executeAsList()
     /** Ids of songs whose cover is only a low-quality thumbnail that has a full-size source. */
@@ -224,7 +224,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         uniqueIds.forEach { songs.setPinnedById(pinned, it) }
     }
 
-    fun incompletePins(): List<Song> = songs.incompletePins().executeAsList()
+    fun incompletePins(): List<Song> = repo.db.stableRead { songs.incompletePins().executeAsList() }
 
     /** Stores [ms] listened to [s] today and, when [finished] is not null, counts a play (true) or skip (false). */
     fun recordListen(s: Song, ms: Long, finished: Boolean?, notify: Boolean = true) = write(soft = true, notify = notify) {
