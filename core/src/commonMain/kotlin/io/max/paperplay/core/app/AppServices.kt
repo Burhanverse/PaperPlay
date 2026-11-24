@@ -967,7 +967,7 @@ class AppServices(
     }
 
     private fun onFileUpdate(c: TdClient, file: kotlinx.serialization.json.JsonObject) {
-        resolver.onFileUpdate(file)
+        resolver.onFileUpdate(c, file)
         val uid = file.obj("remote")?.str("unique_id")?.takeIf { it.isNotEmpty() } ?: return
         val local = file.obj("local") ?: return
         val downloaded = local.long("downloaded_size") ?: return

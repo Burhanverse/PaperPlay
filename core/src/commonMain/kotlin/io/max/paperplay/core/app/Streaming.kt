@@ -89,8 +89,9 @@ class TdStreamSource(
         progress.trySend(Unit)
     }
 
-    /** Updates cached file state from TDLib `updateFile` events. */
-    fun onFileUpdate(file: JsonObject) {
+    /** Updates cached file state from the `updateFile` events of [from]; another client's files have the same numbers but are other files. */
+    fun onFileUpdate(from: TdClient, file: JsonObject) {
+        if ((chosen ?: td()) !== from) return
         val uid = file.obj("remote")?.str("unique_id")
         val id = file.long("id")?.toInt() ?: 0
         if (uid == song.unique_id || (fileId != 0 && id == fileId)) {
@@ -425,8 +426,8 @@ class TrackResolver(
     }
 
     /** Updates active stream sources when TDLib emits `updateFile`. */
-    fun onFileUpdate(file: JsonObject) {
-        sources.value.values.forEach { it.onFileUpdate(file) }
+    fun onFileUpdate(from: TdClient, file: JsonObject) {
+        sources.value.values.forEach { it.onFileUpdate(from, file) }
     }
 
     /** Unique ids currently held by active stream sources (protected from cache eviction). */
