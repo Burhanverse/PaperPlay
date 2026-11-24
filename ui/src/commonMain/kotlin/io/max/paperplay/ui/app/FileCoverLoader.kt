@@ -59,7 +59,7 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                 if (synchronized(cache) { cache.containsKey(key) }) continue
                 val flightJob = synchronized(inFlight) {
                     if (inFlight.containsKey(key)) return@synchronized null
-                    val created = InFlightJob(decoder.async { decodeImageFile(uri, maxSide) }, refCount = 1)
+                    val created = InFlightJob(decoder.async { decodeImageFile(uri, maxSide)?.also { CoverSeeds.setFromBitmapOffMain(uri, it) } }, refCount = 1)
                     inFlight[key] = created
                     created
                 } ?: continue
@@ -68,7 +68,6 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                         val decoded = flightJob.deferred.await()
                         if (decoded != null) {
                             keep(key, decoded)
-                            CoverSeeds.setFromBitmap(uri, decoded)
                         }
                     } finally {
                         synchronized(inFlight) {
@@ -91,10 +90,8 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                     val key = "$uri@$maxSide"
                     if (synchronized(cache) { cache.containsKey(key) }) continue
                     launch {
-                        val decoded = decoder.async { decodeImageFile(uri, maxSide) }.await() ?: return@launch
+                        val decoded = decoder.async { decodeImageFile(uri, maxSide)?.also { CoverSeeds.setFromBitmapOffMain(uri, it) } }.await() ?: return@launch
                         keep(key, decoded)
-                        // The colour seed needs the main thread, which is busy while the first screen is drawn; waiting for it made this wait run to its limit.
-                        ahead.launch { CoverSeeds.setFromBitmap(uri, decoded) }
                     }
                 }
             }
@@ -122,7 +119,7 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                     existing.refCount++
                     existing
                 } else {
-                    val created = InFlightJob(decoder.async { decodeImageFile(uri, maxSide) }, refCount = 1)
+                    val created = InFlightJob(decoder.async { decodeImageFile(uri, maxSide)?.also { CoverSeeds.setFromBitmapOffMain(uri, it) } }, refCount = 1)
                     inFlight[key] = created
                     created
                 }
@@ -131,7 +128,6 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                 val decoded = job.deferred.await()
                 if (decoded != null) {
                     keep(key, decoded)
-                    CoverSeeds.setFromBitmap(uri, decoded)
                 }
                 value = decoded
             } finally {
