@@ -879,3 +879,27 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Settings search lists options inside pages (`SettingsIndex.kt`, hand-kept list); tapping one opens the page, scrolls to the row and flashes it (`searchFocus`, non-lazy pages only). `[~]` not checked on a device; new options need an entry in `settingHits`.
 - [~] Copying songs from the index on its own (`index_auto_copy`) is off by default; was on, which re-added songs after a duplicate delete. `[~]` cause not confirmed on a device.
 - [~] PR #15 (UAC 1.0 composite DAC) merged as `1f8a873`; USB tests and debug build pass; not installed, not tried with a DAC.
+
+## 25 Nov 2026 code audit and crash fixes
+
+87 findings, 75 confirmed. Core and UI tests pass where named below; nothing here was tried on a device yet (`[~]`).
+
+- [~] Phone out of memory: the 40 MB saved index is written and read piece by piece (`JsonStream`), restored once per login
+- [~] Null row crash: full library reads go through `allSongsNow()` / `stableRead`; removals are one batch
+- [~] Index button did nothing: the device link no longer deadlocks (one writer thread per link), and the phone reads the chat itself when the PC does not answer
+- [~] A chat counts as read in full only once all its posts are here (sync, import, catch-up reads)
+- [~] Deleted songs leave the library and the queue when they fail to play; sync does not bring them back when the index knows
+- [~] Listening time adds up over all devices, sent about 30 seconds after a song
+- [~] Recovery deletes an original only after Telegram confirmed the copy (`sendAndWait`)
+- [~] Deleting the row of a repeated post no longer deletes the song
+- [~] Restore keeps listening time, EQ presets, play log, audio features and the account login; backups carry listening time and EQ presets
+- [~] One backend per services: sleep timer, jobs, scrobbling, log and mini player go on while the window is hidden
+- [~] Listens go to the right song when a new queue starts at the same place
+- [~] File updates of one bot no longer touch songs of another
+- [~] First setup connects once; a corrected token is used; logging out and in again leaves no old loops (no test, compiles)
+- [~] Crash diagnostics developer option; release stacks are readable
+- [ ] USB bit-perfect: endings cut at a track change (needs a DAC and testing by ear)
+- [ ] Frames over the network are limited only after pairing, so a stranger on the Wi-Fi can crash the phone app
+- [ ] A song deleted on one device can come back from the other while the index still lists its post
+- [ ] About 60 smaller findings
+- [ ] Memory while the PC window is hidden, measured again (142 MB before the backend was kept)

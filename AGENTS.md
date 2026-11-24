@@ -95,6 +95,13 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Work that decodes whole songs (`AudioFeatureStore`) runs only while charging (`Platform.canRunHeavy`). Anything on a timer must say why its interval is safe for battery, and a repeated failure must back off and must not write the database each time.
 - The audio thread feeds `AudioTap` only while a visual read it in the last 2 s (`AudioTap.wanted`), on both the engine path and the pass-through path in `EngineAudioSink`.
 - Measuring CPU: the release build is `profileable` from the shell, so `simpleperf record --app io.max.paperplay.compose -g` works without a debug build; names come back through `androidApp/build/outputs/mapping/release/mapping.txt`. A debuggable build runs mostly interpreted and overstates every number.
+- Never hold the whole chat index in memory (text, bytes or a JSON tree): it is about 40 MB and the phone heap is 256 MB. Use `JsonStream` and `FileAppender`.
+- Read the whole library with `db.allSongsNow()` (or inside `stableRead`), never `allSongs().executeAsList()`; delete many songs in one `library.batch`.
+- A chat's newest post and "complete" may be recorded only once every post up to it is stored: `pruneDeadRows` removes songs of posts it does not find.
+- Delete a post only after the new one is confirmed: use `TdClient.sendAndWait`; TDLib answers a send before anything was sent.
+- The thread that reads a device link must never write to it (`JavaLanSync.Peer.send` queues).
+- Work that must outlive the window runs on the one `CoreBackend` of the services or on `services.scope`, never on a composition.
+- TDLib file ids belong to one client; check which client an update came from.
 
 ## Git
 - Short plain commit messages. No tool or AI mentions, no trailers.
