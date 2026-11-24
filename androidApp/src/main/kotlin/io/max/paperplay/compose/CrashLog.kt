@@ -118,10 +118,9 @@ internal object CrashLog {
                 var catchingUp = last.isNotEmpty()
                 val proc = ProcessBuilder("logcat", "-v", "threadtime").redirectErrorStream(true).start()
                 val reader = proc.inputStream.bufferedReader()
-                var writer = out.bufferedWriter(Charsets.UTF_8).also { it.close() }
-                var size = out.length()
+                var size = if (out.exists()) out.length() else 0L
                 var lastSaved = System.currentTimeMillis()
-                writer = java.io.FileWriter(out, true).buffered()
+                var writer = java.io.FileWriter(out, true).buffered()
                 while (true) {
                     val line = reader.readLine() ?: break
                     // threadtime lines start "MM-dd HH:mm:ss.SSS"; older ones are already in the file.
