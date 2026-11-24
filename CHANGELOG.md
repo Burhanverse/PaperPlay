@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.21.1] - 2026-11-24
+
+### Other changes
+- LAN address book: skip the pref write when nothing changed ([`2e0f074`](https://github.com/maxcodl/PaperPlay/commit/2e0f0744bcbba6637dfda068a079e2654ffebdf5))
+
+**Full changes:** [v1.21.0...v1.21.1](https://github.com/maxcodl/PaperPlay/compare/v1.21.0...v1.21.1)
+
 ## [1.21.0] - 2026-11-24
 
 ### Added
