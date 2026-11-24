@@ -110,6 +110,7 @@ import io.max.paperplay.ui.state.RepeatUi
 import io.max.paperplay.ui.state.SongUi
 import io.max.paperplay.ui.theme.Motion
 import io.max.paperplay.ui.theme.motionTween
+import io.max.paperplay.ui.theme.sheetCloseSpring
 import io.max.paperplay.ui.theme.sheetSpring
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.ui.tooling.preview.Preview
@@ -668,7 +669,8 @@ private fun ModernArtwork(
 ) {
     val sheet = LocalPlayerSheet.current
     val sheetPx = with(androidx.compose.ui.platform.LocalDensity.current) { 640.dp.toPx() }
-    val sheetSpec = rememberUpdatedState(sheetSpring<Float>())
+    val sheetOpenSpec = rememberUpdatedState(sheetSpring<Float>())
+    val sheetCloseSpec = rememberUpdatedState(sheetCloseSpring<Float>())
     val dragScope = rememberCoroutineScope()
     val coverShape = appShape(24.dp, CornerArea.Covers)
 
@@ -682,7 +684,7 @@ private fun ModernArtwork(
                 onDragStart = { dx = 0f; dy = 0f; pulling = false; tracker.resetTracking() },
                 onDragEnd = {
                     when {
-                        pulling -> dragScope.launch { if (sheet.release(tracker.calculateVelocity().y, sheetPx, sheetSpec.value)) onClose() }
+                        pulling -> dragScope.launch { if (sheet.release(tracker.calculateVelocity().y, sheetPx, sheetOpenSpec.value, sheetCloseSpec.value)) onClose() }
                         dy < -80f && dy < -kotlin.math.abs(dx) -> onQueue()
                         dx < -80f -> backend.next()
                         dx > 80f -> backend.previous()

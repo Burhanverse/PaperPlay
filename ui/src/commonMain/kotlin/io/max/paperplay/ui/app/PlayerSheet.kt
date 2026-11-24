@@ -10,11 +10,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import io.max.paperplay.ui.theme.sheetCloseSpring
 import io.max.paperplay.ui.theme.sheetSpring
 
 /**
@@ -25,6 +27,12 @@ class PlayerSheetState {
     val progress = Animatable(0f)
     var pulled by mutableFloatStateOf(0f)
         private set
+    var isAnimating by mutableStateOf(false)
+        private set
+
+    internal fun setAnimating(running: Boolean) {
+        isAnimating = running
+    }
 
     /** Follows a finger that has moved [dy] pixels down from where the drag began. Upward movement leaves the sheet open. */
     fun pull(dy: Float) {
@@ -35,12 +43,26 @@ class PlayerSheetState {
      * Lets go of a drag: the sheet settles open or closed, carrying the finger's speed ([velocityY], pixels per second,
      * positive is down). Returns true when it settled closed.
      */
-    suspend fun release(velocityY: Float, heightPx: Float, spec: FiniteAnimationSpec<Float>): Boolean {
+    suspend fun release(
+        velocityY: Float,
+        heightPx: Float,
+        openSpec: FiniteAnimationSpec<Float>,
+        closeSpec: FiniteAnimationSpec<Float> = openSpec,
+    ): Boolean {
         val closing = pulled > heightPx * 0.35f || velocityY > 1_200f
         // The drag offset becomes progress in one step, so the sheet does not jump.
         progress.snapTo((1f - pulled / heightPx).coerceIn(0f, 1f))
         pulled = 0f
-        progress.animateTo(if (closing) 0f else 1f, spec, initialVelocity = -velocityY / heightPx)
+        isAnimating = true
+        try {
+            progress.animateTo(
+                if (closing) 0f else 1f,
+                if (closing) closeSpec else openSpec,
+                initialVelocity = -velocityY / heightPx,
+            )
+        } finally {
+            isAnimating = false
+        }
         return closing
     }
 }
@@ -54,12 +76,24 @@ val LocalPlayerSheet = staticCompositionLocalOf { PlayerSheetState() }
  */
 @Composable
 fun PlayerSheetHost(open: Boolean, sheet: PlayerSheetState, content: @Composable () -> Unit) {
-    val spec = sheetSpring<Float>()
-    LaunchedEffect(open) { sheet.progress.animateTo(if (open) 1f else 0f, spec) }
-    val moving by remember { derivedStateOf { sheet.progress.value > 0f } }
-    if (open || moving) {
+    val openSpec = sheetSpring<Float>()
+    val closeSpec = sheetCloseSpring<Float>()
+    LaunchedEffect(open) {
+        sheet.setAnimating(true)
+        try {
+            sheet.progress.animateTo(if (open) 1f else 0f, if (open) openSpec else closeSpec)
+        } finally {
+            sheet.setAnimating(false)
+        }
+    }
+    val active by remember { derivedStateOf { sheet.isAnimating || sheet.progress.value > 0f } }
+    if (open || active) {
         CompositionLocalProvider(LocalPlayerSheet provides sheet) {
-            Box(Modifier.fillMaxSize().graphicsLayer { translationY = size.height * (1f - sheet.progress.value) + sheet.pulled }.blockTouchesBehind()) { content() }
+            Box(
+                Modifier.fillMaxSize().graphicsLayer {
+                    translationY = (size.height * (1f - sheet.progress.value.coerceIn(0f, 1f)) + sheet.pulled).coerceAtLeast(0f)
+                }.blockTouchesBehind(),
+            ) { content() }
         }
     }
 }

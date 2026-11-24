@@ -293,7 +293,8 @@ private fun PlayerBody(
         val art = if (short) (maxHeight - 40.dp).coerceAtLeast(120.dp) else minOf(maxWidth - 48.dp, maxHeight - 25.dp - 410.dp).coerceAtLeast(120.dp)
         val sheet = LocalPlayerSheet.current
         val sheetPx = with(androidx.compose.ui.platform.LocalDensity.current) { maxHeight.toPx() }
-        val sheetSpec = androidx.compose.runtime.rememberUpdatedState(io.max.paperplay.ui.theme.sheetSpring<Float>())
+        val sheetOpenSpec = androidx.compose.runtime.rememberUpdatedState(io.max.paperplay.ui.theme.sheetSpring<Float>())
+        val sheetCloseSpec = androidx.compose.runtime.rememberUpdatedState(io.max.paperplay.ui.theme.sheetCloseSpring<Float>())
         val dragScope = androidx.compose.runtime.rememberCoroutineScope()
         val cover: @Composable (Modifier) -> Unit = { cm ->
             // Drag down on the cover and the whole player follows your finger; sideways changes song, up opens the queue.
@@ -306,7 +307,7 @@ private fun PlayerBody(
                         onDragStart = { dx = 0f; dy = 0f; pulling = false; tracker.resetTracking() },
                         onDragEnd = {
                             when {
-                                pulling -> dragScope.launch { if (sheet.release(tracker.calculateVelocity().y, sheetPx, sheetSpec.value)) onClose() }
+                                pulling -> dragScope.launch { if (sheet.release(tracker.calculateVelocity().y, sheetPx, sheetOpenSpec.value, sheetCloseSpec.value)) onClose() }
                                 dy < -80f && dy < -kotlin.math.abs(dx) -> onQueue?.invoke()
                                 dx < -80f -> backend.next()
                                 dx > 80f -> backend.previous()

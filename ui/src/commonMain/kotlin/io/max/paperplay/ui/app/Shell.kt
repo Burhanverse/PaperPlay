@@ -406,7 +406,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         val threshold = with(androidx.compose.ui.platform.LocalDensity.current) { 80.dp.toPx() }
                         MiniPlayer(pb, { showPlayer = true }, backend::togglePlay, backend::next, backend::previous, { pos.value.progress(pb.durationMs) },
                             Modifier.graphicsLayer {
-                                alpha = (1f - sheet.progress.value) * (1f - kotlin.math.abs(miniDrag) / 700f).coerceIn(0f, 1f)
+                                alpha = (1f - sheet.progress.value.coerceIn(0f, 1f)) * (1f - kotlin.math.abs(miniDrag) / 700f).coerceIn(0f, 1f)
                                 translationX = miniDrag
                             }.then(if (prefs.floatingNav) Modifier else Modifier.padding(horizontal = 8.dp))
                                 // Only a paused mini player can be swiped away; playing again brings it back. It ends fully gone or fully back, never half way.
