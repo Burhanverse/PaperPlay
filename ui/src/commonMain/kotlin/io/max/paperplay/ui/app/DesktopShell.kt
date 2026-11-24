@@ -473,10 +473,17 @@ fun DesktopSettings(
             if (stack.size > 1) BackTopBar(title, onBack = { stack.removeAt(stack.lastIndex) }) {
                 val loggedIn by backend.account.loggedIn.collectAsState()
                 if (page == "channels" && loggedIn) androidx.compose.material3.IconButton({ stack.add("index") }) { AppIcon(Icons.Rounded.Forum, "Your chats and channels") }
+                if (page == "eq") EqualizerTopBarActions(backend)
             }
-            else Text(title, Modifier.padding(start = 20.dp, end = 16.dp, top = 24.dp, bottom = 8.dp), style = MaterialTheme.typography.headlineMedium)
+            else Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 24.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineMedium)
+                if (page == "eq") EqualizerTopBarActions(backend)
+            }
 
-            val isLazy = page == "missing" || page == "dupes" || page == "index" || page == "log" || page == "changelog" || page?.startsWith("index:") == true
+            val isLazy = page == "missing" || page == "dupes" || page == "index" || page == "log" || page == "changelog" || page == "eq" || page?.startsWith("index:") == true
             Column(
                 // Sliders and rows stop at a readable width instead of stretching across a wide window.
                 Modifier.fillMaxSize().widthIn(max = 880.dp)

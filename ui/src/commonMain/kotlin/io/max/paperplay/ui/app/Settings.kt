@@ -133,9 +133,10 @@ private fun SettingsScreen(
         BackTopBar(title, onBack = { if (stack.isEmpty() || (deep && stack.size <= 1)) onExit() else stack.removeAt(stack.lastIndex) }) {
             val loggedIn by backend.account.loggedIn.collectAsState()
             if (page == "channels" && loggedIn) IconButton({ stack.add("index") }) { AppIcon(Icons.Rounded.Forum, "Your chats and channels") }
+            if (page == "eq") EqualizerTopBarActions(backend)
         }
         // The chat pages hold long lists, so they scroll lazily instead of inside the shared scroll column.
-        val isLazy = page == "index" || page == "missing" || page == "log" || page == "changelog" || page?.startsWith("index:") == true
+        val isLazy = page == "index" || page == "missing" || page == "log" || page == "changelog" || page == "eq" || page?.startsWith("index:") == true
         if (page == "index") IndexPage(backend, stack, bottomPadding)
         else if (page == "dupes") DuplicatesPage(backend, bottomPadding)
         else if (page != null && page.startsWith("index:")) ChatSongsPage(backend, page.removePrefix("index:").toLongOrNull() ?: 0L, stack, bottomPadding)

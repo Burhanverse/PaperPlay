@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
 
@@ -12,9 +12,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
@@ -26,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -68,16 +72,19 @@ fun PillField(value: String, onChange: (String) -> Unit, hint: String, modifier:
 fun ChipRow(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
     val shape = appShape(12.dp, CornerArea.Chips)
     Row(
-        modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier.horizontalScroll(rememberScrollState()).selectableGroup().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         labels.forEachIndexed { i, t ->
             val on = i == selected
             Box(
-                Modifier.clip(shape)
+                Modifier.heightIn(min = 48.dp)
+                    .clip(shape)
                     .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
                     .then(if (on) Modifier else Modifier.border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape))
-                    .clickable { onSelect(i) }.padding(horizontal = 20.dp, vertical = 12.dp),
+                    .selectable(selected = on, role = Role.Tab, onClick = { onSelect(i) })
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(t, style = MaterialTheme.typography.labelLarge, color = if (on) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface)
             }

@@ -2,6 +2,13 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.19.0] - 2026-11-23
+
+### Added
+- Add UAC 1.0 composite DAC support and rate-setup hardening ([`9b52c14`](https://github.com/maxcodl/PaperPlay/commit/9b52c14aa861b0003016987d3699d7333d97419c))
+
+**Full changes:** [v1.18.1...v1.19.0](https://github.com/maxcodl/PaperPlay/compare/v1.18.1...v1.19.0)
+
 ## [1.18.1] - 2026-11-23
 
 ### Fixed

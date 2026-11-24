@@ -147,9 +147,12 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         }
     }
     var showEqFullScreen by remember { mutableStateOf(false) }
+    var showLyricsFullScreen by remember { mutableStateOf(false) }
+    LaunchedEffect(pb.current == null) { if (pb.current == null) showLyricsFullScreen = false }
     fun handleBack() {
         when {
             showEqFullScreen -> showEqFullScreen = false
+            showLyricsFullScreen -> showLyricsFullScreen = false
             showPlayer -> showPlayer = false
             settings && settingsStack.size > (if (settingsDeep || !isPhone) 1 else 0) -> settingsStack.removeAt(settingsStack.lastIndex)
             else -> goBack()
@@ -266,9 +269,9 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
     // One handler: several enabled handlers would let the last one win.
     PlatformBackHandler(
-        showEqFullScreen || showPlayer || settings || detail != null || profilePage != null || tab != 0 || history.isNotEmpty(),
+        showEqFullScreen || showLyricsFullScreen || showPlayer || settings || detail != null || profilePage != null || tab != 0 || history.isNotEmpty(),
         // The player shrinks a little as the swipe goes; a cancelled swipe puts it back.
-        onProgress = { p -> if (showPlayer && !showEqFullScreen) scope.launch { sheet.progress.snapTo(1f - 0.3f * p) } },
+        onProgress = { p -> if (showPlayer && !showEqFullScreen && !showLyricsFullScreen) scope.launch { sheet.progress.snapTo(1f - 0.3f * p) } },
         onBack = ::handleBack,
     )
 
@@ -437,12 +440,26 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         pb, pbError, backend, actions, { showPlayer = false },
                         onOpenSettings = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } },
                         onOpenEq = { showEqFullScreen = true },
+                        onOpenLyrics = { showLyricsFullScreen = true },
+                    )
+                }
+                val eqReduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showLyricsFullScreen && pb.current != null,
+                    enter = overlayPageEnter(eqReduceMotion),
+                    exit = overlayPageExit(eqReduceMotion),
+                ) {
+                    FullLyricsPage(
+                        state = pb,
+                        backend = backend,
+                        actions = actions,
+                        onClose = { showLyricsFullScreen = false },
                     )
                 }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = showEqFullScreen,
-                    enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it / 6 }) + androidx.compose.animation.fadeIn(),
-                    exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it / 6 }) + androidx.compose.animation.fadeOut(),
+                    enter = overlayPageEnter(eqReduceMotion),
+                    exit = overlayPageExit(eqReduceMotion),
                 ) {
                     FullScreenEqualizerPage(
                         backend = backend,

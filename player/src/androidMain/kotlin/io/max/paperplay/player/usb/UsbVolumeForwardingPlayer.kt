@@ -27,6 +27,26 @@ class UsbVolumeForwardingPlayer(
 
     private fun isUsbMode(): Boolean = PlaybackCore.usbExclusiveMode || PlaybackCore.usbActive
 
+    override fun play() {
+        PlaybackCore.playIntentTracker.onExplicitUserCommand(true)
+        super.play()
+    }
+
+    override fun pause() {
+        PlaybackCore.playIntentTracker.onExplicitUserCommand(false)
+        super.pause()
+    }
+
+    override fun stop() {
+        PlaybackCore.playIntentTracker.onExplicitUserCommand(false)
+        super.stop()
+    }
+
+    override fun setPlayWhenReady(playWhenReady: Boolean) {
+        PlaybackCore.playIntentTracker.onExplicitUserCommand(playWhenReady)
+        super.setPlayWhenReady(playWhenReady)
+    }
+
     override fun addListener(listener: Player.Listener) {
         customListeners.add(listener)
         super.addListener(listener)

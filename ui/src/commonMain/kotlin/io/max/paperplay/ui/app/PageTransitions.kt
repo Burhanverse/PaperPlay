@@ -54,3 +54,19 @@ internal data class PageKey(val settings: Boolean, val detail: Detail?, val tab:
 internal data class DeskKey(val now: Boolean, val settings: Boolean, val detail: Detail?, val page: String) {
     val level get() = if (now || settings || detail != null) 1 else 0
 }
+
+/** Enter transition for full-screen overlay pages launched from the player, matching [pageTransition] Forward. */
+internal fun overlayPageEnter(reduced: Boolean): EnterTransition {
+    if (reduced) return EnterTransition.None
+    val slide = tween<IntOffset>(Motion.STANDARD, easing = Motion.Emphasized)
+    val fade = tween<Float>(Motion.STANDARD, easing = Motion.Standard)
+    return slideInHorizontally(slide) { it / 4 } + fadeIn(fade)
+}
+
+/** Exit transition for full-screen overlay pages launched from the player, matching [pageTransition] Back. */
+internal fun overlayPageExit(reduced: Boolean): ExitTransition {
+    if (reduced) return ExitTransition.None
+    val slide = tween<IntOffset>(Motion.STANDARD, easing = Motion.Emphasized)
+    val quick = tween<Float>(Motion.FAST)
+    return slideOutHorizontally(slide) { it / 4 } + fadeOut(quick)
+}

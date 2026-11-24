@@ -3,7 +3,7 @@
 //! ranges via direct usbfs ioctls using Kotlin-parsed topology IDs (`UsbDescriptorParser`).
 //! Zero directory discovery and zero descriptor duplication in Rust.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::log::{
     GLOBAL_NATIVE_LOG, TAG_CLAIM_INTERFACE, TAG_CLOCK_GET_RANGE, TAG_DETACH_DRIVER,
@@ -139,8 +139,10 @@ pub fn probe_dac(
     audio_interfaces.dedup();
 
     let mut claim_guard = ProbeClaimGuard::new(fd);
-    let max_attempts = 10;
-    let delay_ms = 30;
+    let max_attempts = 4;
+    let delay_ms = 25;
+    let claim_budget = Duration::from_millis(350);
+    let claim_start = Instant::now();
 
     for &iface in &audio_interfaces {
         for attempt in 1..=max_attempts {
@@ -163,7 +165,11 @@ pub fn probe_dac(
                     );
                     break;
                 }
-                Err(_) => {
+                Err(e) => {
+                    // Only retry on EBUSY (16) within our bounded claim budget
+                    if e != libc::EBUSY || claim_start.elapsed() >= claim_budget {
+                        break;
+                    }
                     if attempt < max_attempts {
                         std::thread::sleep(Duration::from_millis(delay_ms));
                     }
@@ -191,7 +197,7 @@ pub fn probe_dac(
             w_value,
             w_index,
             &mut range_buf,
-            1000,
+            250,
         ) {
             Ok(transferred) => {
                 if transferred >= 2 {
@@ -262,12 +268,12 @@ pub fn probe_dac(
 
             if uac_version == 2 {
                 let mut count_bytes = [0u8; 2];
-                if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x02, w_val, w_idx, &mut count_bytes, 500) {
+                if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x02, w_val, w_idx, &mut count_bytes, 250) {
                     let count = u16::from_le_bytes(count_bytes) as usize;
                     if (1..=64).contains(&count) {
                         let expected = 2 + count * 6;
                         let mut data = vec![0u8; expected];
-                        if let Ok(transferred) = usbfs::control_transfer(fd, 0xA1, 0x02, w_val, w_idx, &mut data, 500) {
+                        if let Ok(transferred) = usbfs::control_transfer(fd, 0xA1, 0x02, w_val, w_idx, &mut data, 250) {
                             if transferred == expected {
                                 let min_raw = i16::from_le_bytes([data[2], data[3]]);
                                 let max_raw = i16::from_le_bytes([data[4], data[5]]);
@@ -285,14 +291,18 @@ pub fn probe_dac(
                 let mut min_raw = 0i16;
                 let mut max_raw = 0i16;
                 let mut res_raw = 256u16;
-                if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x82, w_val, w_idx, &mut vol_buf, 500) {
-                    min_raw = i16::from_le_bytes(vol_buf);
-                }
-                if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x83, w_val, w_idx, &mut vol_buf, 500) {
-                    max_raw = i16::from_le_bytes(vol_buf);
-                }
-                if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x84, w_val, w_idx, &mut vol_buf, 500) {
-                    res_raw = u16::from_le_bytes(vol_buf);
+                match usbfs::control_transfer(fd, 0xA1, 0x82, w_val, w_idx, &mut vol_buf, 250) {
+                    Ok(2) => {
+                        min_raw = i16::from_le_bytes(vol_buf);
+                        if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x83, w_val, w_idx, &mut vol_buf, 250) {
+                            max_raw = i16::from_le_bytes(vol_buf);
+                        }
+                        if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x84, w_val, w_idx, &mut vol_buf, 250) {
+                            res_raw = u16::from_le_bytes(vol_buf);
+                        }
+                    }
+                    Err(e) if e == libc::ETIMEDOUT || e == libc::ENODEV => {}
+                    _ => {}
                 }
                 min_db = min_raw as f32 / 256.0;
                 max_db = max_raw as f32 / 256.0;

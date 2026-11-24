@@ -50,6 +50,11 @@ enum class ProgressBarStyle(val label: String) {
     SQUIGGLY_WAVE("Squiggly Wave"),
     AURORA_WAVE("Aurora Wave"),
 }
+enum class LyricsTextSize(val label: String, val scale: Float) {
+    Small("Small", 0.85f),
+    Medium("Medium", 1.0f),
+    Large("Large", 1.2f),
+}
 enum class LookGroup(val label: String, val hint: String) {
     Nav("Navigation bar", "The bottom bar, or the sidebar on desktop"),
     Bars("Top bars", "App bars at the top of pages"),
@@ -161,6 +166,16 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
         ProgressBarStyle.entries.firstOrNull { it.name.equals(read("progress_bar_style"), ignoreCase = true) } ?: ProgressBarStyle.SQUIGGLY_WAVE
     )
         private set
+    var lyricsTextSize by mutableStateOf(
+        LyricsTextSize.entries.firstOrNull { it.name.equals(read("lyrics_text_size"), ignoreCase = true) } ?: LyricsTextSize.Medium
+    )
+        private set
+    var lyricsSecondary by mutableStateOf(read("lyrics_secondary") != "false")
+        private set
+    var lyricsSecondaryKind by mutableStateOf(
+        read("lyrics_secondary_kind")?.takeIf { it == "romanized" || it == "translation" } ?: "romanized"
+    )
+        private set
 
     private val nav0 = runCatching { Json.parseToJsonElement(read("nav_style").orEmpty()).jsonObject }.getOrNull()
     var navLayout by mutableStateOf(NavLayout.entries.firstOrNull { it.name.lowercase() == nav0?.str("layout") } ?: NavLayout.Pill)
@@ -243,6 +258,9 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
     fun putProfilePhoto(path: String?) { profilePhoto = path; write("profile_photo", path.orEmpty()) }
     fun putIconSet(set: IconSet) { iconSet = set; write("icon_set", set.name.lowercase()) }
     fun putProgressBarStyle(style: ProgressBarStyle) { progressBarStyle = style; write("progress_bar_style", style.name.lowercase()) }
+    fun putLyricsTextSize(size: LyricsTextSize) { lyricsTextSize = size; write("lyrics_text_size", size.name.lowercase()) }
+    fun putLyricsSecondary(on: Boolean) { lyricsSecondary = on; write("lyrics_secondary", "$on") }
+    fun putLyricsSecondaryKind(kind: String) { lyricsSecondaryKind = kind; write("lyrics_secondary_kind", kind) }
     fun putThemeMode(m: ThemeMode) { themeMode = m; write("theme_mode", m.name.lowercase()) }
     fun putAmoled(on: Boolean) { amoled = on; write("theme_amoled", "$on") }
     fun putAccent(id: String) { accent = id; write("theme_accent", id) }

@@ -243,5 +243,13 @@ class UsbAudioSinkThreadSafetyTest {
 
         val coreSrc = readSrc("player/src/androidMain/kotlin/io/max/paperplay/player/PlaybackCore.kt")
         assertTrue(coreSrc.contains("dev_use_unified_bit_perfect"), "PlaybackCore must persist dev_use_unified_bit_perfect for runtime path switching")
+
+        // Rebuild & MediaSession continuity invariants:
+        val serviceSrc = readSrc("player/src/androidMain/kotlin/io/max/paperplay/player/PlaybackService.kt")
+        assertTrue(serviceSrc.contains("BitPerfectRebuildPolicy.shouldRebuildPlayer"), "PlaybackService must gate rebuilds via BitPerfectRebuildPolicy")
+        assertTrue(serviceSrc.contains("PlaybackRebuildTransaction.execute"), "PlaybackService must use PlaybackRebuildTransaction for ordered swap-before-release")
+        val onCreateBlock = serviceSrc.substringAfter("override fun onCreate()").substringBefore("private val rebuildHandler")
+        assertFalse(onCreateBlock.contains("addAnalyticsListener(PlaybackLogging.analytics)"), "PlaybackService must not double-register PlaybackLogging.analytics already added by PlaybackCore.createPlayer")
+        assertTrue(unifiedMgrSrc.contains("BitPerfectRebuildPolicy.shouldRebuildPlayer"), "UnifiedUsbDacManager must check BitPerfectRebuildPolicy before requesting player rebuild")
     }
 }

@@ -18,6 +18,10 @@ import io.max.paperplay.player.PlayLog
 import io.max.paperplay.player.PlaybackCore
 import io.max.paperplay.player.RouteInput
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 
 /** Native [CoarseUsbSessionApi] implementation delegating directly to [UsbEngineNative]. */
@@ -102,6 +106,10 @@ class UnifiedUsbAudioSink internal constructor(
     private val context: Context?,
     private val normalSink: AudioSink,
     private val sessionApi: CoarseUsbSessionApi = NativeCoarseUsbSessionApi,
+    private val openWaitBudgetMs: Long = DEFAULT_OPEN_WAIT_BUDGET_MS,
+    private val reopenCooldownMs: Long = DEFAULT_REOPEN_COOLDOWN_MS,
+    private val usbOpenRunner: (() -> Boolean)? = null,
+    private val clockMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) : ForwardingAudioSink(normalSink) {
 
     constructor(
@@ -114,9 +122,16 @@ class UnifiedUsbAudioSink internal constructor(
     )
 
     companion object {
+        const val DEFAULT_OPEN_WAIT_BUDGET_MS = 400L
+        const val DEFAULT_REOPEN_COOLDOWN_MS = 2_000L
+
         @Volatile
         var currentInstance: UnifiedUsbAudioSink? = null
             private set
+
+        private val usbOpenExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "UsbOpenWorker").apply { isDaemon = true }
+        }
     }
 
     @Volatile
@@ -128,6 +143,15 @@ class UnifiedUsbAudioSink internal constructor(
 
     @Volatile
     private var releasedWhileIdle: Boolean = false
+
+    @Volatile
+    private var pendingUsbAttach: Boolean = false
+
+    @Volatile
+    private var lastOpenFailureMs: Long = Long.MIN_VALUE / 2
+
+    @Volatile
+    private var inFlightOpenFuture: Future<Boolean>? = null
 
     @Volatile
     private var bypassedForSpeed: Boolean = false
@@ -230,20 +254,82 @@ class UnifiedUsbAudioSink internal constructor(
         }.getOrDefault(false)
     }
 
+    fun markPendingUsbAttach() {
+        pendingUsbAttach = true
+        lastOpenFailureMs = Long.MIN_VALUE / 2
+    }
+
+    private fun runBoundedOffThreadOpen(task: () -> Boolean): Boolean {
+        if (sinkReleased) return false
+        val now = clockMs()
+        if (now - lastOpenFailureMs < reopenCooldownMs) {
+            return false
+        }
+        val existing = inFlightOpenFuture
+        if (existing != null && !existing.isDone) {
+            return false
+        }
+        val future = usbOpenExecutor.submit<Boolean> {
+            val ok = runCatching { task() }.getOrDefault(false)
+            if (sinkReleased && coarseController.handle != 0L) {
+                closeCoarseAndNotify()
+                isUsbModeActive = false
+                PlaybackCore.usbActive = false
+            }
+            ok
+        }
+        inFlightOpenFuture = future
+        return try {
+            val ok = future.get(openWaitBudgetMs, TimeUnit.MILLISECONDS)
+            if (!ok) {
+                lastOpenFailureMs = clockMs()
+            }
+            ok
+        } catch (_: TimeoutException) {
+            lastOpenFailureMs = clockMs()
+            PlayLog.log("usb", "UnifiedUsbAudioSink: USB open timed out after ${openWaitBudgetMs}ms; falling back to normal sink")
+            false
+        } catch (t: Throwable) {
+            lastOpenFailureMs = clockMs()
+            PlayLog.log("usb", "UnifiedUsbAudioSink: USB open failed (${t.message}); falling back to normal sink")
+            false
+        }
+    }
+
     private fun tryReopenAfterIdleRelease(forceBypassReturn: Boolean = false): Boolean {
-        val eligible = releasedWhileIdle || forceBypassReturn
+        val eligible = releasedWhileIdle || pendingUsbAttach || forceBypassReturn
         if (sinkReleased || !eligible || !PlaybackCore.usbExclusiveMode) return false
         val cfg = lastConfig ?: return false
-        val mgr = UnifiedUsbDacManager.instance ?: return false
-        if (!mgr.reopenActiveDeviceIfPermitted()) return false
-        configure(cfg)
-        if (isUsbModeActive && forceBypassReturn) {
-            bypassedForSpeed = false
-            PlayLog.log("usb", "UnifiedUsbAudioSink returned from speed bypass to 1.0x USB (rate=${coarseController.confirmedRateHz}, alt=${coarseController.confirmedAlt})")
-            val rate = coarseController.confirmedRateHz
-            val depth = coarseController.confirmedBitDepth
-            if (rate > 0 && depth > 0) {
-                mgr.onStreamingActive(rate, depth, null)
+        val runner = usbOpenRunner
+        val opened = if (runner != null) {
+            runBoundedOffThreadOpen(runner)
+        } else {
+            val mgr = UnifiedUsbDacManager.instance ?: return false
+            runBoundedOffThreadOpen {
+                if (!mgr.reopenActiveDeviceIfPermitted()) return@runBoundedOffThreadOpen false
+                configure(cfg)
+                isUsbModeActive
+            }
+        }
+        if (!opened) {
+            releasedWhileIdle = false
+            pendingUsbAttach = false
+            return false
+        }
+        if (runner != null) {
+            configure(cfg)
+        }
+        if (isUsbModeActive) {
+            pendingUsbAttach = false
+            releasedWhileIdle = false
+            if (forceBypassReturn) {
+                bypassedForSpeed = false
+                PlayLog.log("usb", "UnifiedUsbAudioSink returned from speed bypass to 1.0x USB (rate=${coarseController.confirmedRateHz}, alt=${coarseController.confirmedAlt})")
+                val rate = coarseController.confirmedRateHz
+                val depth = coarseController.confirmedBitDepth
+                if (rate > 0 && depth > 0) {
+                    UnifiedUsbDacManager.instance?.onStreamingActive(rate, depth, null)
+                }
             }
         }
         return isUsbModeActive
@@ -336,6 +422,7 @@ class UnifiedUsbAudioSink internal constructor(
         if (sinkReleased) return
         lastConfig = config
         releasedWhileIdle = false
+        pendingUsbAttach = false
         val f = config.format
         currentFormat = f
         anchorPositionUs = 0L
@@ -343,20 +430,43 @@ class UnifiedUsbAudioSink internal constructor(
         baseFramesConsumed = 0L
         val isDoP = f.sampleMimeType == MIME_AUDIO_DOP
 
+        if (context != null && PlaybackCore.usbExclusiveMode && !sinkPlaying && !PlaybackCore.playerPlayWhenReady && !PlaybackCore.userPlayIntent) {
+            releasedWhileIdle = true
+            isUsbModeActive = false
+            PlaybackCore.usbActive = false
+            super.configure(config)
+            normalSinkConfigured = true
+            return
+        }
+
         val usbManager = UsbAudioManager.instance
         if (PlaybackCore.usbExclusiveMode && usbManager != null) {
             if (usbManager.state.value !is UsbAudioState.Connected) {
-                val mgr = UnifiedUsbDacManager.instance
-                if (mgr != null) {
-                    mgr.reopenActiveDeviceIfPermitted()
-                } else {
-                    val dev = usbManager.enumerateAudioDevices().firstOrNull()
-                    if (dev != null) {
-                        usbManager.openDevice(dev, triggerReconfigure = false)
+                val opened = runBoundedOffThreadOpen {
+                    val mgr = UnifiedUsbDacManager.instance
+                    if (mgr != null) {
+                        mgr.reopenActiveDeviceIfPermitted()
+                    } else {
+                        val dev = usbManager.enumerateAudioDevices().firstOrNull()
+                        if (dev != null && usbManager.openDevice(dev, triggerReconfigure = false)) {
+                            usbManager.ensureNativeCapabilitiesProbed()
+                            true
+                        } else {
+                            false
+                        }
                     }
                 }
+                if (!opened && usbManager.state.value !is UsbAudioState.Connected) {
+                    isUsbModeActive = false
+                    PlaybackCore.usbActive = false
+                    if (isDoP) throw AudioSink.ConfigurationException("USB DAC open timed out or failed", f)
+                    super.configure(config)
+                    normalSinkConfigured = true
+                    return
+                }
+            } else {
+                usbManager.ensureNativeCapabilitiesProbed()
             }
-            usbManager.ensureNativeCapabilitiesProbed()
         }
         val connected = usbManager?.state?.value as? UsbAudioState.Connected
         val decision = BitPerfectRouter.decide(
@@ -512,7 +622,9 @@ class UnifiedUsbAudioSink internal constructor(
             )
         }
         UnifiedUsbDacManager.instance?.onSessionOpened(coarseController.handle, connected.device.deviceId, connected.device.productName)
-        UnifiedUsbDacManager.instance?.onStreamingActive(f.sampleRate, wireDepth, connected.device.productName)
+        if (sinkPlaying || PlaybackCore.playerPlayWhenReady) {
+            UnifiedUsbDacManager.instance?.onStreamingActive(f.sampleRate, wireDepth, connected.device.productName)
+        }
         runCatching {
             super.flush()
             super.reset()
@@ -543,16 +655,20 @@ class UnifiedUsbAudioSink internal constructor(
         val f = currentFormat
         if (!isUsbModeActive || f == null) {
             val fromSpeedBypass = bypassedForSpeed && abs(PlaybackCore.speed - 1.0f) <= 0.001f && PlaybackCore.usbExclusiveMode
-            if (releasedWhileIdle || fromSpeedBypass) {
-                if (!sinkPlaying && !PlaybackCore.playerPlayWhenReady) {
+            if (releasedWhileIdle || pendingUsbAttach || fromSpeedBypass) {
+                if (!sinkPlaying) {
                     return false
                 }
                 if (tryReopenAfterIdleRelease(forceBypassReturn = fromSpeedBypass)) {
                     // Fall through to USB handleBuffer right below
                 } else {
                     releasedWhileIdle = false
+                    pendingUsbAttach = false
                     bypassedForSpeed = false
                     if (!ensureNormalSinkConfigured()) return false
+                    if (sinkPlaying) {
+                        runCatching { super.play() }
+                    }
                     val feed = pendingEqBuf ?: buffer
                     val ok = runCatching { super.handleBuffer(feed, presentationTimeUs, encodedAccessUnitCount) }.getOrDefault(false)
                     if (ok || !feed.hasRemaining()) {
@@ -593,7 +709,7 @@ class UnifiedUsbAudioSink internal constructor(
                 bypassedForSpeed = false
             }
             if (!ensureNormalSinkConfigured()) return false
-            if (sinkPlaying || PlaybackCore.playerPlayWhenReady) {
+            if (sinkPlaying) {
                 runCatching { super.play() }
             }
             val feed = pendingEqBuf ?: buffer
@@ -673,10 +789,11 @@ class UnifiedUsbAudioSink internal constructor(
         sinkPlaying = true
         if (!isUsbModeActive) {
             val fromSpeedBypass = bypassedForSpeed && abs(PlaybackCore.speed - 1.0f) <= 0.001f && PlaybackCore.usbExclusiveMode
-            if ((releasedWhileIdle || fromSpeedBypass) && tryReopenAfterIdleRelease(forceBypassReturn = fromSpeedBypass)) {
-                // Re-claimed DAC cleanly on playback thread; run USB start flow below
+            if ((releasedWhileIdle || pendingUsbAttach || fromSpeedBypass) && tryReopenAfterIdleRelease(forceBypassReturn = fromSpeedBypass)) {
+                // Re-claimed DAC cleanly; run USB start flow below
             } else {
                 releasedWhileIdle = false
+                pendingUsbAttach = false
                 if (ensureNormalSinkConfigured()) {
                     runCatching { super.play() }
                 }
@@ -772,18 +889,27 @@ class UnifiedUsbAudioSink internal constructor(
 
     override fun release() {
         PlayLog.log("usb", "UnifiedUsbAudioSink release")
+        val isCurrent = currentInstance === this
         sinkReleased = true
-        if (currentInstance === this) currentInstance = null
+        inFlightOpenFuture?.cancel(false)
+        inFlightOpenFuture = null
         sinkPlaying = false
         releasedWhileIdle = false
+        pendingUsbAttach = false
         bypassedForSpeed = false
         normalSinkConfigured = false
         isUsbModeActive = false
-        PlaybackCore.usbActive = false
         pendingEqBuf = null
         usbPcmEq.release()
+        val oldHandle = coarseController.handle
         closeCoarseAndNotify()
-        UnifiedUsbDacManager.instance?.onSinkFallback("Sink released")
+        if (isCurrent) {
+            currentInstance = null
+            PlaybackCore.usbActive = false
+            if (oldHandle != 0L) {
+                UnifiedUsbDacManager.instance?.onSinkFallback("Sink released")
+            }
+        }
         runCatching { super.release() }
     }
 

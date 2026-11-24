@@ -72,3 +72,65 @@ fun parseLrc(lrc: String): List<LrcLine> {
     }
     return lines.sortedBy { it.timeMs }
 }
+
+/** A primary lyric line optionally paired with a romanization or translation line at the same moment. */
+data class PairedLrcLine(val timeMs: Long, val text: String, val secondary: String? = null)
+
+/**
+ * Pairs [primary] LRC lines with the nearest [secondary] LRC line within [maxOffsetMs].
+ * Tolerant of small timestamp offsets, missing secondary lines (without stealing from the next
+ * primary line), and duplicate timestamps. Optionally suppresses [secondary] when it matches [primary].
+ */
+fun pairLrcLines(
+    primary: List<LrcLine>,
+    secondary: List<LrcLine>,
+    maxOffsetMs: Long = 1500L,
+    dedupeIdentical: Boolean = true,
+): List<PairedLrcLine> {
+    if (primary.isEmpty()) return emptyList()
+    val secSorted = secondary.filter { it.text.isNotBlank() }.sortedBy { it.timeMs }
+    if (secSorted.isEmpty()) return primary.map { PairedLrcLine(it.timeMs, it.text) }
+
+    val used = BooleanArray(secSorted.size)
+    return primary.mapIndexed { idx, p ->
+        if (p.text.isBlank()) return@mapIndexed PairedLrcLine(p.timeMs, p.text)
+
+        var bestIdx = -1
+        var bestDiff = Long.MAX_VALUE
+        for (j in secSorted.indices) {
+            if (used[j]) continue
+            val diff = kotlin.math.abs(secSorted[j].timeMs - p.timeMs)
+            if (diff <= maxOffsetMs && diff < bestDiff) {
+                bestDiff = diff
+                bestIdx = j
+            }
+        }
+        if (bestIdx < 0) return@mapIndexed PairedLrcLine(p.timeMs, p.text)
+
+        // Steal guard: if a strictly later non-blank primary line is closer to this secondary line, leave this line unpaired.
+        val candTime = secSorted[bestIdx].timeMs
+        val nextTime = (idx + 1 until primary.size)
+            .firstOrNull { primary[it].text.isNotBlank() && primary[it].timeMs > p.timeMs }
+            ?.let { primary[it].timeMs }
+        if (nextTime != null && kotlin.math.abs(candTime - nextTime) < bestDiff) {
+            return@mapIndexed PairedLrcLine(p.timeMs, p.text)
+        }
+
+        used[bestIdx] = true
+        val secText = secSorted[bestIdx].text.trim()
+        val finalSec = if (dedupeIdentical && secText.equals(p.text.trim(), ignoreCase = true)) null else secText
+        PairedLrcLine(p.timeMs, p.text, finalSec)
+    }
+}
+
+/** Convenience wrapper that parses [primaryLrc] and optional [secondaryLrc] before pairing. */
+fun pairLrc(
+    primaryLrc: String,
+    secondaryLrc: String?,
+    maxOffsetMs: Long = 1500L,
+    dedupeIdentical: Boolean = true,
+): List<PairedLrcLine> {
+    val primary = parseLrc(primaryLrc)
+    val secondary = secondaryLrc?.let(::parseLrc).orEmpty()
+    return pairLrcLines(primary, secondary, maxOffsetMs, dedupeIdentical)
+}

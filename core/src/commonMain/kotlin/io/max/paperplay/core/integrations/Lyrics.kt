@@ -237,7 +237,88 @@ private object LyricsCache {
 }
 
 /** One version of a song's lyrics from a source, for the owner to pick: [label] names the source and the script. */
-class LyricsChoice(val label: String, val text: String)
+class LyricsChoice(
+    val label: String,
+    val text: String,
+    val romanized: String? = null,
+    val translation: String? = null,
+    val source: String = label.substringBefore(',').trim(),
+)
+
+/** Original, romanized, and translated lyrics returned together by NetEase for one matched track. */
+data class NeteaseLyricBundle(
+    val original: String?,
+    val romanized: String?,
+    val translation: String?,
+)
+
+/** Extracts `lrc`, `romalrc`, and `tlyric` tracks from a NetEase `/api/song/lyric` JSON object. */
+fun parseNeteaseLyricBundle(json: JsonObject?): NeteaseLyricBundle? {
+    if (json == null) return null
+    fun part(k: String) = json[k].obj()?.get("lyric").str()?.takeIf { it.isNotBlank() }
+    val orig = part("lrc")
+    val roma = part("romalrc")
+    val trans = part("tlyric")
+    if (orig == null && roma == null && trans == null) return null
+    return NeteaseLyricBundle(orig, roma, trans)
+}
+
+private object NeteaseBundleCache {
+    private const val MAX_ENTRIES = 200
+    private val lock = Mutex()
+    private val map = LinkedHashMap<String, NeteaseLyricBundle?>(64, 0.75f, true)
+
+    suspend fun get(k: String): Pair<Boolean, NeteaseLyricBundle?> = lock.withLock {
+        if (map.containsKey(k)) true to map[k] else false to null
+    }
+
+    suspend fun put(k: String, v: NeteaseLyricBundle?) = lock.withLock {
+        map[k] = v
+        while (map.size > MAX_ENTRIES) {
+            val oldest = map.keys.firstOrNull() ?: break
+            map.remove(oldest)
+        }
+    }
+}
+
+/**
+ * Fetches the NetEase lyric bundle (original, romanized, translation) for one song, respecting
+ * [NeteaseSource]'s rate gate and timeout, caching hits and misses, and never throwing.
+ */
+suspend fun fetchNeteaseLyricBundle(
+    http: HttpFetcher,
+    title: String,
+    artist: String,
+    album: String,
+    durationSec: Int,
+): NeteaseLyricBundle? {
+    val q = LyricsQuery(title, artist, album, durationSec)
+    val (hit, cached) = NeteaseBundleCache.get(q.cacheKey)
+    if (hit) return cached
+    val result = runCatching {
+        NeteaseSource.gate.wait()
+        withTimeoutOrNull(NeteaseSource.timeoutMs) {
+            val h = mapOf("referer" to "https://music.163.com/")
+            val songs = http.getJson("https://music.163.com/api/search/get?s=${enc(q.keyword)}&type=1&limit=6&offset=0", h)
+                .obj()?.get("result").obj()?.get("songs").arr().orEmpty()
+            for (e in songs) {
+                val o = e.obj() ?: continue
+                if (!titleOk(q.cleanTitle, o["name"].str().orEmpty())) continue
+                val d = (o["duration"].num() ?: 0.0) / 1000
+                if (q.durationSec > 0 && d > 0 && kotlin.math.abs(d - q.durationSec) > 6) continue
+                val artists = o["artists"].arr().orEmpty().joinToString(" ") { it.obj()?.get("name").str().orEmpty() }
+                if (!artistOk(q.mainArtist, artists)) continue
+                val id = o["id"].num()?.toLong() ?: continue
+                val r = http.getJson("https://music.163.com/api/song/lyric?id=$id&lv=1&kv=1&tv=-1&rv=-1", h).obj() ?: continue
+                val bundle = parseNeteaseLyricBundle(r)
+                if (bundle != null) return@withTimeoutOrNull bundle
+            }
+            null
+        }
+    }.getOrNull()
+    NeteaseBundleCache.put(q.cacheKey, result)
+    return result
+}
 
 /** The dominant writing system of [text], in words ("Tamil script", "Latin letters"). */
 fun lyricsScriptName(text: String): String {
@@ -280,7 +361,7 @@ suspend fun lyricsChoices(http: HttpFetcher, title: String, artist: String, albu
                 val d = o["duration"].num() ?: 0.0
                 if (q.durationSec > 0 && d > 0 && kotlin.math.abs(d - q.durationSec) > 8) continue
                 val t = o["syncedLyrics"].str()?.takeIf { it.isNotBlank() } ?: o["plainLyrics"].str()?.takeIf { it.isNotBlank() } ?: continue
-                out += LyricsChoice("LRCLIB, ${lyricsScriptName(t)}" + (if (isSyncedLyrics(t)) ", timed" else ", plain"), t)
+                out += LyricsChoice("LRCLIB, ${lyricsScriptName(t)}" + (if (isSyncedLyrics(t)) ", timed" else ", plain"), t, source = "LRCLIB")
             }
         }
         runCatching {
@@ -296,10 +377,18 @@ suspend fun lyricsChoices(http: HttpFetcher, title: String, artist: String, albu
                 if (!artistOk(q.mainArtist, artists)) continue
                 val id = o["id"].num()?.toLong() ?: continue
                 val r = http.getJson("https://music.163.com/api/song/lyric?id=$id&lv=1&kv=1&tv=-1&rv=-1", h).obj() ?: continue
-                fun part(k: String) = r[k].obj()?.get("lyric").str()?.takeIf { it.isNotBlank() }
-                part("lrc")?.let { out += LyricsChoice("NetEase, original (${lyricsScriptName(it)})", it) }
-                part("romalrc")?.let { out += LyricsChoice("NetEase, romanized", it) }
-                part("tlyric")?.let { out += LyricsChoice("NetEase, translation (${lyricsScriptName(it)})", it) }
+                val bundle = parseNeteaseLyricBundle(r) ?: continue
+                bundle.original?.let {
+                    out += LyricsChoice(
+                        label = "NetEase, original (${lyricsScriptName(it)})",
+                        text = it,
+                        romanized = bundle.romanized,
+                        translation = bundle.translation,
+                        source = "NetEase",
+                    )
+                }
+                bundle.romanized?.let { out += LyricsChoice("NetEase, romanized", it, source = "NetEase") }
+                bundle.translation?.let { out += LyricsChoice("NetEase, translation (${lyricsScriptName(it)})", it, source = "NetEase") }
                 break
             }
         }
