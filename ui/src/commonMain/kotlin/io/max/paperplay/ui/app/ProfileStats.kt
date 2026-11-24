@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -158,13 +159,19 @@ internal fun ListeningSection(stats: ProfileStats?, recents: List<SongUi>, prefs
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 12.dp).widthIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                TimeHero(s)
-                StreakRow(s)
-                Heatmap(s)
-                WeekBars(s)
-                PersonalityRow(s)
-                Badges(s)
+            // A wide window splits the stats into two columns instead of one narrow stack with empty space beside it.
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val gap = Arrangement.spacedBy(16.dp)
+                if (maxWidth >= 720.dp) {
+                    Row(Modifier.padding(horizontal = 20.dp).padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+                        Column(Modifier.weight(1f), verticalArrangement = gap) { TimeHero(s); WeekBars(s); PersonalityRow(s) }
+                        Column(Modifier.weight(1f), verticalArrangement = gap) { StreakRow(s); Heatmap(s); Badges(s) }
+                    }
+                } else {
+                    Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 12.dp), verticalArrangement = gap) {
+                        TimeHero(s); StreakRow(s); Heatmap(s); WeekBars(s); PersonalityRow(s); Badges(s)
+                    }
+                }
             }
             if (recents.isNotEmpty()) {
                 SectionLabel("Recently played")
@@ -217,7 +224,7 @@ private fun Heatmap(s: ProfileStats) {
     val fill = MaterialTheme.colorScheme.primary
     val ring = MaterialTheme.colorScheme.onSurface
     Column {
-        Canvas(Modifier.fillMaxWidth().aspectRatio(HEAT_WEEKS / 7f)) {
+        Canvas(Modifier.fillMaxWidth().widthIn(max = 480.dp).aspectRatio(HEAT_WEEKS / 7f)) {
             val cell = size.width / HEAT_WEEKS
             val gap = 2.dp.toPx()
             val side = cell - gap
