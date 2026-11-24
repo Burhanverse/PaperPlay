@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
@@ -41,12 +42,18 @@ object CoverSeeds {
         state
     }
 
+    private fun publishIfEmpty(state: MutableState<List<Int>?>, palette: List<Int>) {
+        Snapshot.withMutableSnapshot {
+            if (state.value == null) state.value = palette
+        }
+    }
+
     /** Populates the seed and palette from an already-decoded cover bitmap off the main thread. */
     fun setFromBitmapOffMain(uri: String, bitmap: ImageBitmap) {
         val state = entryFor(uri)
         if (state.value != null) return
         val p = paletteOf(bitmap, 3)
-        if (state.value == null) state.value = p
+        publishIfEmpty(state, p)
         synchronized(lock) { pending.remove(uri) }
     }
 
@@ -57,7 +64,7 @@ object CoverSeeds {
         if (synchronized(lock) { pending.add(uri) }) {
             scope.launch {
                 try {
-                    if (state.value == null) state.value = paletteOf(bitmap, 3)
+                    if (state.value == null) publishIfEmpty(state, paletteOf(bitmap, 3))
                 } finally {
                     synchronized(lock) { pending.remove(uri) }
                 }
@@ -76,7 +83,7 @@ object CoverSeeds {
                 try {
                     if (state.value == null) {
                         val p = decodeImageFile(uri, 96)?.let { paletteOf(it, 3) }.orEmpty()
-                        state.value = p
+                        publishIfEmpty(state, p)
                     }
                 } finally {
                     synchronized(lock) { pending.remove(uri) }
