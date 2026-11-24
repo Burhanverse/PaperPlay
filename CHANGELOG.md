@@ -2,6 +2,14 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.21.2] - 2026-11-24
+
+### Other changes
+- Tests: bring four core tests in line with current behaviour ([`59191e4`](https://github.com/maxcodl/PaperPlay/commit/59191e4a963b84907237f2bef388027bd85e2dd9))
+- Removed index chats sync to linked devices; no account reading without a login ([`d7db306`](https://github.com/maxcodl/PaperPlay/commit/d7db30604e1628e1ffdb6e670c294dceaafd3855))
+
+**Full changes:** [v1.21.1...v1.21.2](https://github.com/maxcodl/PaperPlay/compare/v1.21.1...v1.21.2)
+
 ## [1.21.1] - 2026-11-24
 
 ### Other changes
