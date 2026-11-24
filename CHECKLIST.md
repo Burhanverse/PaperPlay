@@ -362,6 +362,11 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 
 ## Update 2026-11-13 (late: sync, bots, search, volume, icons; compiles, not tried on a device)
 - [x] Search no longer stops after the first query (the result flow was collected, never cancelled: `collectLatest` in `SearchScreen`); search also matches the year; film songs match through the album tag
+- [x] Desktop bit-perfect seek: no static or jitter after fast seeks (the stream pauses, seeks, the device is reopened once, then it resumes); only in exclusive mode
+- [x] Desktop top bar: Home button has no background circle, drawn in the theme's contrast colour
+- [ ] Desktop memory, TEST NEXT: closing to the tray now removes the window (UI, Skia surface, caches) and a reopened window reuses the running services (`AppServices.isShutDown`). Measured hidden and playing: 142 MB working set against 361 MB before, 807 MB with the window open. Not yet checked: reopen from the tray (window comes back, music keeps playing, taskbar buttons return), then a second close and reopen, then Quit from the tray, erase everything and restore (they build new services)
+- [ ] Desktop memory with the window open (about 800 MB playing): libmpv about 109 MB and the Intel graphics driver (igc64, igxelpicd) about 110 MB are loaded; JVM itself about 270 MB (heap 125 MB, metaspace 59 MB). Try `SKIKO_RENDER_API=SOFTWARE_FAST`, load libmpv on first play, a lower `-Xmx`; measure with `-XX:NativeMemoryTracking=summary` and `jcmd <pid> VM.native_memory summary`
+- [ ] `UpstreamOffChainIdentityTest` (USB sink chain) fails in `:player:jvmTest`; not looked into, not from this work as far as known
 - [x] Plain lyrics (no timestamps, any language) drift down with the song; dragging takes over, they follow again after 6 s
 - [x] Phone mini player: devices button opens the app's Devices dialog (This phone, live linked devices with controls, Audio output switcher, Network play, Connect devices)
 - [x] Desktop player bar Devices popup is live (it was a static placeholder): own addresses, linked devices with now playing and controls, paired devices away with Connect (`DevicesPanel.kt`, `LocalLanSync` from the shell)
