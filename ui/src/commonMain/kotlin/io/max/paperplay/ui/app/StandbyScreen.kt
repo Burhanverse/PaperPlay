@@ -232,9 +232,14 @@ private fun StandbyAlertRow(tone: Color) {
     val charging = rememberCharging()
     val alerts = rememberStandbyAlerts()
     if (!charging && alerts.isEmpty()) return
-    val pulse by androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
-        0.35f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
-    )
+    val hasCall = alerts.any { it.call }
+    val pulse = if (hasCall) {
+        androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
+            0.35f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
+        ).value
+    } else {
+        0.8f
+    }
     Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         if (charging) AppIcon(Icons.Rounded.Bolt, "Charging", Modifier.size(22.dp), tint = tone)
         alerts.take(8).forEach { a ->
