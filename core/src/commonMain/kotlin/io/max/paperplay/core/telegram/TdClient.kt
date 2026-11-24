@@ -196,9 +196,10 @@ class TdClient(private val runtime: TdRuntime, private val config: TdConfig) {
             withTimeoutOrNull(10.seconds) { closed.await() }
         } catch (_: TdError) {
             // Already closed.
+        } finally {
+            runtime.close(clientId)
+            clientId = -1
         }
-        runtime.close(clientId)
-        clientId = -1
     }
 
     @Volatile private var newApiKnown: Boolean? = null
