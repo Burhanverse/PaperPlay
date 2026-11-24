@@ -125,6 +125,7 @@ internal object AndroidUsbDacBackend : io.max.paperplay.player.usb.UsbDacControl
             } else {
                 io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.onExclusiveModeChanged(false)
                 io.max.paperplay.player.usb.UsbAudioManager.instance?.onUsbExclusiveModeChanged(false)
+                io.max.paperplay.player.usb.UsbAudioManager.instance?.stop()
                 val unifiedReady = java.util.concurrent.CountDownLatch(1)
                 mainHandler.post {
                     try {
