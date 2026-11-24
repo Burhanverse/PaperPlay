@@ -205,6 +205,9 @@ class UiPrefs(private val read: (String) -> String?, private val write: (String,
         private set
     fun putPlayerRadius(v: Float) { playerRadius = v; write("player_radius", "$v") }
     /** Format badge (FLAC, Hi-Res, Dolby) on the desktop mini player. */
+    /** The desktop player bar's seek bar takes its colours from the cover. */
+    var themedSeek by mutableStateOf(read("themed_seek") != "false")
+    fun putThemedSeek(v: Boolean) { themedSeek = v; write("themed_seek", "$v") }
     var miniFormat by mutableStateOf(read("mini_format") != "false")
     fun putMiniFormat(v: Boolean) { miniFormat = v; write("mini_format", "$v") }
     var playerCard by mutableStateOf(read("player_card") == "true")

@@ -125,7 +125,12 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 MpvC.EVENT_START_FILE -> cmd { onStartFile() }
                 MpvC.EVENT_FILE_LOADED -> cmd { onFileLoaded() }
                 MpvC.EVENT_AUDIO_RECONFIG -> cmd { onAudioReconfig() }
-                MpvC.EVENT_PLAYBACK_RESTART -> cmd { endSeekMute(); publishInfo() }
+                MpvC.EVENT_PLAYBACK_RESTART -> cmd {
+                    // Fast seeking can leave the exclusive buffer corrupt without any under-run being logged (static until pause and play,
+                    // which reopens it). Reopen it here, while still muted, once the burst has settled.
+                    if (exclusive && seekBursts >= 2) { seekBursts = 0; reloadOutput("fast seek") }
+                    endSeekMute(); publishInfo()
+                }
                 MpvC.EVENT_END_FILE -> { val reason = ev.getPointer(16)?.getInt(0) ?: MpvC.END_EOF; cmd { onEndFile(reason) } }
             }
         }
@@ -332,6 +337,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     }
     @Volatile private var pendingSeek = Long.MIN_VALUE
     @Volatile private var seekMuted = false
+    /** Seeks that came within [FAST_SEEK_MS] of the one before. */
+    @Volatile private var seekBursts = 0
 
     override fun seek(positionMs: Long) {
         pendingSeek = positionMs
@@ -341,7 +348,9 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             if (pendingSeek != positionMs) return@cmd
             if (loaded && exclusive) Thread.sleep(SEEK_SETTLE_MS)
             if (pendingSeek != positionMs) return@cmd
-            seekTarget = positionMs; seekAt = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+            seekBursts = if (now - seekAt < FAST_SEEK_MS) seekBursts + 1 else 0
+            seekTarget = positionMs; seekAt = now
             // Nothing loaded yet (a session being restored): remember the place, the song is opened there once it has loaded.
             if (!loaded) { resumeAtMs = positionMs.coerceAtLeast(0); return@cmd }
             // Exclusive output has no mixer to hide the jump: mute across it, and unmute when playback has restarted.
@@ -506,6 +515,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         const val RESTART_THRESHOLD_MS = 3000L
         /** Seeks closer together than this are one seek, to the last place. */
         const val SEEK_SETTLE_MS = 80L
+        const val FAST_SEEK_MS = 1_500L
     }
 }
 

@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -104,20 +106,22 @@ fun ProfileScreen(
         item {
             Column(
                 Modifier.padding(horizontal = 16.dp).fillMaxWidth()
-                    .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(36.dp))
-                    .clickable { onSettings("profile") }
-                    .padding(vertical = 40.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(36.dp)),
             ) {
-                Avatar(prefs.profilePhoto, prefs.profileName, 150.dp)
-                Text(prefs.profileName, Modifier.padding(top = 16.dp), style = MaterialTheme.typography.headlineMedium)
-            }
-        }
-        item {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Stat(Icons.Rounded.MusicNote, songs, "Songs", Modifier.weight(1f)) { onLibraryTab(0) }
-                Stat(Icons.Rounded.Favorite, favorites, "Favorites", Modifier.weight(1f)) { onLibraryTab(4) }
-                Stat(Icons.Rounded.PlaylistPlay, playlists, "Playlists", Modifier.weight(1f)) { onLibraryTab(3) }
+                Column(
+                    Modifier.fillMaxWidth().clickable { onSettings("profile") }.padding(top = 28.dp, bottom = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Avatar(prefs.profilePhoto, prefs.profileName, 112.dp)
+                    Text(prefs.profileName, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.headlineMedium)
+                }
+                Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Stat(Icons.Rounded.MusicNote, songs, "Songs", Modifier.weight(1f)) { onLibraryTab(0) }
+                    StatDivider()
+                    Stat(Icons.Rounded.Favorite, favorites, "Favorites", Modifier.weight(1f)) { onLibraryTab(4) }
+                    StatDivider()
+                    Stat(Icons.Rounded.PlaylistPlay, playlists, "Playlists", Modifier.weight(1f)) { onLibraryTab(3) }
+                }
             }
         }
         if (backend != null) item { ListeningSection(stats, recents, prefs, onPlay) { onSettings("stats") } }
@@ -175,17 +179,20 @@ private fun AboutCard(updates: io.max.paperplay.core.update.UpdateService, onOpe
 }
 
 @Composable
+private fun StatDivider() {
+    Box(Modifier.width(1.dp).height(40.dp).background(MaterialTheme.colorScheme.outlineVariant))
+}
+
+/** A count with a small icon above it and its label below; sits in the identity card, not in a box of its own. */
+@Composable
 private fun Stat(icon: ImageVector, n: Int, label: String, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        modifier.partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(32.dp))
-            .clickable(onClick = onClick).padding(vertical = 20.dp),
+        modifier.clip(appShape(20.dp)).clickable(onClick = onClick).padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-            AppIcon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
-        Text("$n", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        AppIcon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+        Text("$n", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
@@ -157,7 +158,7 @@ internal fun ListeningSection(stats: ProfileStats?, recents: List<SongUi>, prefs
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 12.dp).widthIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 TimeHero(s)
                 StreakRow(s)
                 Heatmap(s)
@@ -218,14 +219,14 @@ private fun Heatmap(s: ProfileStats) {
     Column {
         Canvas(Modifier.fillMaxWidth().aspectRatio(HEAT_WEEKS / 7f)) {
             val cell = size.width / HEAT_WEEKS
-            val gap = 3.dp.toPx()
+            val gap = 2.dp.toPx()
             val side = cell - gap
             for (i in s.heat.indices) {
                 val ms = s.heat[i]
                 if (ms < 0) continue
                 val at = Offset((i / 7) * cell, (i % 7) * cell)
                 val level = heatLevel(ms)
-                drawRoundRect(if (level == 0) empty else fill.copy(alpha = 0.25f + 0.25f * level), at, Size(side, side), CornerRadius(side / 4))
+                drawRoundRect(if (level == 0) empty else fill.copy(alpha = 0.25f + 0.25f * level), at, Size(side, side), CornerRadius(side / 5))
                 if (i == s.heat.indexOfLast { it >= 0 }) drawRoundRect(ring, at, Size(side, side), CornerRadius(side / 4), Stroke(1.5.dp.toPx()))
             }
         }
@@ -240,11 +241,11 @@ private fun WeekBars(s: ProfileStats) {
     val dim = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
     val max = (s.week.maxOrNull() ?: 0L).coerceAtLeast(1L)
     Column {
-        Canvas(Modifier.fillMaxWidth().height(72.dp)) {
+        Canvas(Modifier.fillMaxWidth().height(56.dp)) {
             val slot = size.width / 7
-            val w = slot * 0.5f
+            val w = minOf(slot * 0.5f, 14.dp.toPx())
             s.week.forEachIndexed { i, ms ->
-                val h = (size.height * ms / max).coerceAtLeast(4.dp.toPx())
+                val h = (size.height * ms / max).coerceAtLeast(w)
                 drawRoundRect(if (i == 6) bar else dim, Offset(i * slot + (slot - w) / 2, size.height - h), Size(w, h), CornerRadius(w / 2))
             }
         }
