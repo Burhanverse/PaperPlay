@@ -48,7 +48,7 @@ internal fun DesktopTopBar(
     var menu by remember { mutableStateOf(false) }
     Row(modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         IconButton(onBack, enabled = canBack, modifier = Modifier.size(40.dp)) { AppIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-        IconButton({ onGo("home") }, Modifier.size(40.dp).clip(CircleShape).background(scheme.surfaceContainerHigh)) { AppIcon(Icons.Rounded.Home, "Home") }
+        IconButton({ onGo("home") }, Modifier.size(40.dp)) { AppIcon(Icons.Rounded.Home, "Home", tint = scheme.onBackground) }
         Box(Modifier.weight(1f))
         Box {
             Box(Modifier.size(40.dp).clip(CircleShape).clickable { menu = true }, contentAlignment = Alignment.Center) {
