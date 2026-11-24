@@ -102,6 +102,8 @@ private val credit = Regex("""(?:[\[(]|\s[-–]\s|\s)(?:feat|ft|featuring)\b\.?\
 private val remasterBrackets = Regex("""\s*[\[(][^\])]*remaster[^\])]*[\])]""", RegexOption.IGNORE_CASE)
 private val remasterDash = Regex("""\s+[-–]\s+[^-–]*remaster.*$""", RegexOption.IGNORE_CASE)
 private val versionTags = Regex("""\s*[\[(](?:mono|stereo|single version|album version|radio edit)[\])]""", RegexOption.IGNORE_CASE)
+/** Spotify writes the same tag after a dash: "Song (feat. X) - Radio Edit". */
+private val dashVersionTag = Regex("""\s+[-–]\s+(?:mono|stereo|single version|album version|radio edit)\s*$""", RegexOption.IGNORE_CASE)
 
 /** Title with featured-artist credits and remaster/version tags removed, so one song from different releases gets one key. */
 fun looseTitleKey(title: String, artist: String): String {
@@ -109,6 +111,7 @@ fun looseTitleKey(title: String, artist: String): String {
         .replace(remasterBrackets, "")
         .replace(remasterDash, "")
         .replace(versionTags, "")
+        .replace(dashVersionTag, "")
         .replace(credit, "")
     return comparableText(searchTitle(t))
 }
