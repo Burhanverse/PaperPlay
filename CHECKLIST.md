@@ -252,6 +252,7 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [ ] GitHub builds TDLib and the app downloads it, in-app update from Releases
       (skipped for now because the bot needs TDLib too)
 - [ ] Parts in Rust (tags, cover resize, mix scoring, search), only if a profile shows they are slow
+- [ ] Player skins, on a separate branch later. Skins are data only (JSON plus images/fonts in a `.zip`), built on GitHub in a `PaperPlay-Skins` repo (Action builds release assets and an `index.json` with id, name, version, size, `sha256`, preview). Settings > Appearance > Skins fetches the index only when opened, downloads on tap, checks `sha256`, unpacks to the app data folder; Apply overrides `UiPrefs` values (look, radii, cover shape, seek style, lyrics style, now playing layout); Remove deletes it; nothing in the background; a bad index or zip fails once, no retry loop. Works on phone and desktop. Skinnable screens: home, full player and lyrics, mini player, settings. Clean-room: StreamX (`StreamXProject/Skins`, skins are Android APKs against StreamX's own extension API) is GPL-3.0, so no code or assets from it; its skins cannot load here. Needs the owner's friend's OK to mirror the looks
 
 
 ---
