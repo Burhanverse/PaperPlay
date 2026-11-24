@@ -2,6 +2,28 @@ package io.max.paperplay.core.library
 
 import io.max.paperplay.core.db.LibraryDatabase
 
+/**
+ * A long list is read through several cursor windows; a delete between two of them shifts the rows and Android's cursor then
+ * fails with a null (it crashed the app while songs were being deleted). One transaction keeps the rows still while
+ * they are read, and a read that still fails is tried again.
+ */
+fun <T> LibraryDatabase.stableRead(read: () -> T): T {
+    var failure: RuntimeException? = null
+    repeat(3) {
+        try {
+            return transactionWithResult { read() }
+        } catch (e: NullPointerException) {
+            failure = e
+        } catch (e: IllegalStateException) {
+            failure = e
+        }
+    }
+    throw failure!!
+}
+
+/** The whole library, read safely while other threads delete; never read it with `allSongs().executeAsList()` directly. */
+fun LibraryDatabase.allSongsNow(): List<Song> = stableRead { songsQueries.allSongs().executeAsList() }
+
 /** Multi-statement operations of Drift's AppDb, as transactions. Streams (`watch*`) are not ported. */
 class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
     private val songs get() = db.songsQueries

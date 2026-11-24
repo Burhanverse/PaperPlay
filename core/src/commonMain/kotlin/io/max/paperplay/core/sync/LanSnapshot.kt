@@ -1,5 +1,6 @@
 package io.max.paperplay.core.sync
 
+import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.app.LibraryRepository
 import io.max.paperplay.core.filing.GONE_KEY
 import kotlinx.serialization.json.Json
@@ -177,7 +178,7 @@ class SnapshotStore(private val library: LibraryRepository, private val stillPos
         val extra = HashMap<String, SongExtra>()
         var lyricsBudget = LYRICS_BUDGET
         val lyricsMeta = lyricsMetaOf()
-        for (s in db.songsQueries.allSongs().executeAsList()) {
+        for (s in db.allSongsNow()) {
             val has = s.favorite || s.plays > 0 || s.skips > 0 || s.last_played_at != null || s.user_edited || s.pinned
             // Everything that was looked up or chosen travels too, so a device that lacks it can fill it in.
             val data = s.enrich_state == io.max.paperplay.core.library.EnrichState.DONE || !s.lyrics.isNullOrBlank() || s.cover_at != 0L || s.cover_path != null
@@ -230,7 +231,7 @@ class SnapshotStore(private val library: LibraryRepository, private val stillPos
         val metaNow = lyricsMetaOf()
         val metaNew = HashMap<String, LyricsMeta>()
         library.batch(soft = false) {
-            val rows = db.songsQueries.allSongs().executeAsList().associateBy { it.unique_id }
+            val rows = db.allSongsNow().associateBy { it.unique_id }
             val changed = ArrayList<io.max.paperplay.core.library.Song>()
             for ((id, m) in merged.songs) {
                 val row = rows[id] ?: continue

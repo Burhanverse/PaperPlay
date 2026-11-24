@@ -659,14 +659,16 @@ class UserSession(
         return call(c, request("createPrivateChat") { put("user_id", me); put("force", false) }).long("id") ?: me
     }
 
-    override suspend fun saveToCloud(tag: String, fileName: String, content: ByteArray) {
+    override suspend fun saveToCloud(tag: String, fileName: String, content: suspend (Appendable) -> Unit) {
         val c = ready()
         val chat = savedChat(c)
         val dir = "$filesDir/cloud_${newUuid()}"
         val path = "$dir/${fileName.replace('/', '_').replace('\\', '_')}"
         Fs.mkdirs(dir)
-        Fs.write(path, content)
         try {
+            val out = io.max.paperplay.core.backup.FileAppender(path)
+            content(out)
+            out.close()
             val sentId = CompletableDeferred<Long>()
             val outcome = scope.async(start = CoroutineStart.UNDISPATCHED) {
                 c.updates.first { u ->
@@ -696,7 +698,7 @@ class UserSession(
         }
     }
 
-    override suspend fun loadFromCloud(tag: String): ByteArray? {
+    override suspend fun loadFromCloud(tag: String): String? {
         val c = ready()
         val chat = savedChat(c)
         val page = call(c, request("searchChatMessages") {
@@ -719,9 +721,7 @@ class UserSession(
             put("limit", 0)
             put("synchronous", true)
         }, 600)
-        val path = file.obj("local")?.str("path")?.takeIf { it.isNotEmpty() } ?: return null
-        val size = file.long("size") ?: return null
-        return readRange(path, 0, size.toInt())
+        return file.obj("local")?.str("path")?.takeIf { it.isNotEmpty() }
     }
 }
 

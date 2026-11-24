@@ -8,6 +8,7 @@ import io.max.paperplay.core.library.LibraryRepo
 import io.max.paperplay.core.library.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
@@ -101,6 +102,28 @@ class LanSyncTest {
             assertEquals(LanFailure.NotPaired, a.sync.connect(bId).failure)
         } finally {
             a.sync.stop(); b.sync.stop(); c.sync.stop()
+        }
+    }
+
+    @Test fun bigSyncsFromBothSidesAtOnceDoNotStopTheLink() = runBlocking {
+        fun big(chat: Long) = Array(400) { song(chat, it.toLong(), "u$chat-$it").copy(lyrics = "la ".repeat(6_000), favorite = true) }
+        val a = node("A", "tok", *big(1))
+        val b = node("B", "tok", *big(2))
+        try {
+            assertEquals(null, a.sync.connectWithCode("127.0.0.1", b.port, b.sync.showPin().code).failure)
+            waitFor("linked") { a.sync.connected.value.size == 1 && b.sync.connected.value.size == 1 }
+            repeat(3) {
+                val done = kotlinx.coroutines.withTimeoutOrNull(40_000) {
+                    kotlinx.coroutines.coroutineScope {
+                        val x = async(Dispatchers.IO) { a.sync.syncNow().ok }
+                        val y = async(Dispatchers.IO) { b.sync.syncNow().ok }
+                        x.await() && y.await()
+                    }
+                }
+                assertEquals(true, done)
+            }
+        } finally {
+            a.sync.stop(); b.sync.stop()
         }
     }
 

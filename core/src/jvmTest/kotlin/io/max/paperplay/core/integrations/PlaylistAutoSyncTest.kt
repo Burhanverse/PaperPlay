@@ -33,8 +33,8 @@ private class StubAccount(logged: Boolean = true) : AccountApi {
     override suspend fun groupsAndChannels(): List<ChatInfo> = emptyList()
     override fun songsIn(chatId: Long, afterMessageId: Long): Flow<List<ChatPost>> = emptyFlow()
     override suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long) {}
-    override suspend fun saveToCloud(tag: String, fileName: String, content: ByteArray) {}
-    override suspend fun loadFromCloud(tag: String): ByteArray? = null
+    override suspend fun saveToCloud(tag: String, fileName: String, content: suspend (Appendable) -> Unit) {}
+    override suspend fun loadFromCloud(tag: String): String? = null
 }
 
 private class StubIndex(val matches: (String) -> List<ChatPost>) : ChatIndexApi {
@@ -48,7 +48,7 @@ private class StubIndex(val matches: (String) -> List<ChatPost>) : ChatIndexApi 
     override suspend fun copyToMain(post: ChatPost) { copied += post }
     override fun forget(chatId: Long) {}
     override suspend fun export() = "{}"
-    override suspend fun import(json: String) {}
+    override suspend fun import(json: io.max.paperplay.core.account.JsonStream) {}
 }
 
 class PlaylistAutoSyncTest {

@@ -43,7 +43,7 @@ internal fun AccountPage(backend: CoreBackend, onOpenIndex: (() -> Unit)?, onLog
         onBegin = { account.begin() }, onBeginQr = { account.beginQr() },
         onPhone = { account.phone(it) }, onCode = { account.code(it) }, onPassword = { account.password(it) },
         // The download, parsing and import of the saved index must not run on the main thread: it froze the page.
-        onRestore = { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { runCatching { backend.services.indexCloud.restore() }.getOrDefault(false) } },
+        onRestore = { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { runCatching { backend.services.indexCloud.restoreOnce() }.getOrDefault(false) } },
         indexedChats = indexed.size, onOpenIndex = onOpenIndex,
         extra = { RateSlider("accountCopy", backend, remember { androidx.compose.runtime.mutableStateOf<String?>(null) }) },
     )

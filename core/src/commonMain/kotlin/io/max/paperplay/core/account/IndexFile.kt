@@ -62,39 +62,59 @@ object IndexFile {
      * the caller checks them. Returns the ids of the new chats in [newChatIds]. Throws [IllegalArgumentException] for a file that is not
      * an index.
      */
-    fun read(text: String, store: IndexStore, now: Long, own: Boolean, newChatIds: MutableList<Long>? = null): IndexImport {
-        val root = runCatching { Json.parseToJsonElement(text) as? JsonObject }.getOrNull()
-            ?: throw IllegalArgumentException("This is not a PaperPlay index file.")
-        if (root["posts"] !is JsonArray && root["chats"] !is JsonArray) throw IllegalArgumentException("This is not a PaperPlay index file.")
-        val (newChats, notJoined) = mergeChats(root["chats"] as? JsonArray ?: JsonArray(emptyList()), store, now, own, newChatIds)
+    fun read(text: String, store: IndexStore, now: Long, own: Boolean, newChatIds: MutableList<Long>? = null): IndexImport =
+        read(JsonStream(java.io.StringReader(text)), store, now, own, newChatIds)
+
+    /** The same, read piece by piece: a big index never sits in memory. */
+    fun read(json: JsonStream, store: IndexStore, now: Long, own: Boolean, newChatIds: MutableList<Long>? = null): IndexImport {
+        if (!json.isObject) throw IllegalArgumentException("This is not a PaperPlay index file.")
+        var chats = JsonArray(emptyList())
+        var counts = 0 to 0
+        var isIndex = false
         var posts = 0
         val batch = ArrayList<ChatPost>(2000)
         fun flush() { if (batch.isNotEmpty()) { posts += store.upsertPosts(batch, now); batch.clear() } }
-        for (e in root["posts"] as? JsonArray ?: JsonArray(emptyList())) {
-            val a = e as? JsonArray ?: continue
-            val p = runCatching {
-                fun s(i: Int) = (a[i] as JsonPrimitive).content
-                fun n(i: Int) = s(i).toLong()
-                ChatPost(n(0), n(1), s(2), s(3), s(4), n(5).toInt(), n(6), s(7), s(8), n(9), if (a.size > 10) s(10) else "")
-            }.getOrNull() ?: continue
-            batch += p
-            if (batch.size >= 2000) flush()
-        }
-        flush()
-        if (own) for (e in root["copied"] as? JsonArray ?: JsonArray(emptyList())) {
-            val a = e as? JsonArray ?: continue
-            runCatching {
-                store.markCopied((a[0] as JsonPrimitive).content, (a[1] as JsonPrimitive).content.toLong(), (a[2] as JsonPrimitive).content.toLong(), (a[3] as JsonPrimitive).content.toLong())
+        json.obj { key ->
+            when {
+                key == "chats" && json.isArray -> {
+                    isIndex = true
+                    chats = json.value() as JsonArray
+                    counts = mergeChats(chats, store, now, own, newChatIds, progress = false)
+                }
+                key == "posts" && json.isArray -> {
+                    isIndex = true
+                    json.arr {
+                        val a = json.value() as? JsonArray ?: return@arr
+                        batch += runCatching {
+                            fun s(i: Int) = (a[i] as JsonPrimitive).content
+                            fun n(i: Int) = s(i).toLong()
+                            ChatPost(n(0), n(1), s(2), s(3), s(4), n(5).toInt(), n(6), s(7), s(8), n(9), if (a.size > 10) s(10) else "")
+                        }.getOrNull() ?: return@arr
+                        if (batch.size >= 2000) flush()
+                    }
+                    flush()
+                }
+                key == "copied" && own && json.isArray -> json.arr {
+                    val a = json.value() as? JsonArray ?: return@arr
+                    runCatching {
+                        store.markCopied((a[0] as JsonPrimitive).content, (a[1] as JsonPrimitive).content.toLong(), (a[2] as JsonPrimitive).content.toLong(), (a[3] as JsonPrimitive).content.toLong())
+                    }
+                }
+                else -> json.skip()
             }
         }
-        return IndexImport(newChats, posts, notJoined)
+        if (!isIndex) throw IllegalArgumentException("This is not a PaperPlay index file.")
+        mergeChats(chats, store, now, own, progress = true)
+        return IndexImport(counts.first, posts, counts.second)
     }
 
     /**
      * Merges chat entries (the "chats" of a file) into [store]: new chats are added, known ones keep the further read, the finished
-     * state and any link either side knows. Returns (new chats, new chats not joined).
+     * state and any link either side knows. Returns (new chats, new chats not joined). Call it with [progress] false before the posts and
+     * with true after the last one: a chat that counts as read further than its stored posts makes the missing ones look deleted in
+     * Telegram ([ChatIndex.pruneDeadRows] would remove their songs).
      */
-    fun mergeChats(chats: JsonArray, store: IndexStore, now: Long, own: Boolean, newChatIds: MutableList<Long>? = null): Pair<Int, Int> {
+    fun mergeChats(chats: JsonArray, store: IndexStore, now: Long, own: Boolean, newChatIds: MutableList<Long>? = null, progress: Boolean): Pair<Int, Int> {
         fun JsonObject.l(k: String) = (this[k] as? JsonPrimitive)?.longOrNull
         fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull
         fun JsonObject.b(k: String) = (this[k] as? JsonPrimitive)?.let { it.booleanOrNull ?: (it.contentOrNull == "true") } == true
@@ -114,7 +134,19 @@ object IndexFile {
             if (had == null) { newChats++; newChatIds?.add(id); if (!joined) notJoined++ }
             store.setChatInfo(id, username, invite, o["channel"]?.let { o.b("channel") } ?: true, joined, now)
             if (!joined) store.setJoined(id, false)
-            store.setState(id, maxOf(o.l("newest") ?: 0L, had?.newestMessageId ?: 0L), maxOf(o.l("refreshed") ?: 0L, had?.lastRefreshAt ?: 0L), o.b("complete") || had?.complete == true)
+            if (progress) {
+                val now2 = store.chat(id) ?: continue
+                // Fewer posts here than the other side has: some did not come along, so its "read in full" does not hold here.
+                if (now2.postCount < (o.l("count") ?: 0L)) continue
+                val newest = o.l("newest") ?: 0L
+                val complete = o.b("complete")
+                store.setState(id, 0L, o.l("refreshed") ?: 0L, now2.complete)
+                // "Complete" means nothing is missing up to its own newest post; the newest post of a read that never finished says nothing.
+                when {
+                    complete == now2.complete -> store.setRead(id, maxOf(newest, now2.newestMessageId), complete)
+                    complete -> store.setRead(id, newest, true)
+                }
+            }
         }
         return newChats to notJoined
     }

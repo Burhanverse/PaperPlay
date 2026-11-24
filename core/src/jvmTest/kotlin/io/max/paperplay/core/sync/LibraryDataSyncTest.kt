@@ -7,6 +7,8 @@ import io.max.paperplay.core.db.LibraryDatabase
 import io.max.paperplay.core.db.libraryDriver
 import io.max.paperplay.core.library.LibraryRepo
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -73,6 +75,67 @@ class LibraryDataSyncTest {
         assertEquals(1L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'alive'"))
         assertEquals(0L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'elsewhere'"))
         assertEquals("""{"elsewhere":5}""", phone.library.pref(io.max.paperplay.core.filing.GONE_KEY))
+    }
+
+    @Test
+    fun aSongWhosePostIsDeletedDoesNotComeBackFromTheOtherDevice() = runBlocking {
+        val pc = Device("pc")
+        val phone = Device("phone")
+        pc.song("kept", 1); pc.song("deleted", 2); pc.song("newer", 9)
+        val chat = pc.count("SELECT chat_id FROM songs WHERE unique_id = 'deleted'")
+        // The phone read the chat in full up to post 5 and found only post 1.
+        phone.index.saveChat(chat, "Main"); phone.index.setChatInfo(chat, "", "", true, true, 1)
+        phone.index.upsertPosts(listOf(post(chat, 1)), 1)
+        phone.index.setState(chat, 5, 1, true)
+        pull(phone, pc)
+        assertEquals(listOf("kept", "newer"), listOf("kept", "deleted", "newer").filter { phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = '$it'") == 1L })
+    }
+
+    @Test
+    fun listeningTimeOfAllDevicesAddsUpOnceOnEveryDevice() = runBlocking {
+        val pc = Device("pc")
+        val phone = Device("phone")
+        val tablet = Device("tablet")
+        fun Device.hear(day: String, ms: Long) = library.repo.addListen(library.pref("device_id")!!, day, "k", ms, 1)
+        fun Device.days() = library.repo.listenPerDay()
+        pc.hear("2026-11-23", 500); pc.hear("2026-11-24", 100); phone.hear("2026-11-24", 30)
+        pull(phone, pc); pull(pc, phone); pull(phone, pc)
+        val both = mapOf("2026-11-23" to 500L, "2026-11-24" to 130L)
+        assertEquals(both, phone.days())
+        assertEquals(both, pc.days())
+        // More heard later the same day arrives too, and a third device gets the PC's time through the phone.
+        pc.hear("2026-11-24", 7)
+        pull(phone, pc); pull(tablet, phone)
+        assertEquals(137L, tablet.days()["2026-11-24"])
+        // Nothing is left to send.
+        assertEquals("[]", phone.sync.answer("pc", buildJsonObject {
+            put("k", "listens"); put("self", pc.library.pref("device_id")!!)
+            put("have", buildJsonObject { for (r in pc.library.repo.db.miscQueries.listenRows(null).executeAsList()) put("${r.origin}|${r.day}", r.ms + r.plays) })
+        })["rows"].toString())
+        // A device with an older build refuses the request; songs still sync.
+        pc.song("a", 1)
+        phone.sync.pull("pc") { q -> if (q["k"].toString() == "\"listens\"") throw java.io.IOException("the other device could not answer") else pc.sync.answer("phone", q) }
+        assertEquals(1L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'a'"))
+    }
+
+    @Test
+    fun aChatCountsAsReadOnlyAfterItsLastPostArrived() = runBlocking {
+        val pc = Device("pc")
+        val phone = Device("phone")
+        pc.index.saveChat(-5, "Big"); pc.index.setChatInfo(-5, "", "", true, true, 1)
+        pc.index.upsertPosts((1L..4500L).map { post(-5, it) }, 7)
+        pc.index.setState(-5, 4500, 1, true)
+        // The link dies after the first page of 2,000 posts.
+        var pages = 0
+        runCatching { phone.sync.pull("pc") { q -> if (q["k"].toString() == "\"index\"" && ++pages > 1) throw java.io.IOException("link lost") else pc.sync.answer("phone", q) } }
+        assertEquals(2000, phone.index.chat(-5)!!.postCount)
+        assertEquals(false, phone.index.chat(-5)!!.complete)
+        assertEquals(0L, phone.index.chat(-5)!!.newestMessageId)
+        assertEquals(false, phone.index.isDeletedPost(-5, 4400))
+        pull(phone, pc)
+        assertEquals(4500, phone.index.chat(-5)!!.postCount)
+        assertEquals(true, phone.index.chat(-5)!!.complete)
+        assertEquals(4500L, phone.index.chat(-5)!!.newestMessageId)
     }
 
     @Test

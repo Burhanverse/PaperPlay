@@ -96,8 +96,12 @@ fun ProfileScreen(
     onPlay: (List<io.max.paperplay.ui.state.SongUi>, Int) -> Unit = { _, _ -> },
 ) {
     var stats by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ProfileStats?>(null) }
-    androidx.compose.runtime.LaunchedEffect(backend, recents.firstOrNull()?.id) {
-        if (backend != null) stats = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { backend.profileStats() }
+    androidx.compose.runtime.LaunchedEffect(backend) {
+        // Also after a sync brought another device's listening; at most every 2 s while the library changes.
+        backend?.services?.library?.changes?.collect {
+            stats = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { backend.profileStats() }
+            kotlinx.coroutines.delay(2_000)
+        }
     }
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding + 32.dp)) {
         item {

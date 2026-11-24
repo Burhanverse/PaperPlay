@@ -1,5 +1,6 @@
 package io.max.paperplay.ui.app
 
+import io.max.paperplay.core.library.allSongsNow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,7 +76,7 @@ internal fun SortPage(backend: CoreBackend) {
     LaunchedEffect(finished) {
         val loaded = withContext(Dispatchers.Default) {
             val repo = backend.services.library.repo
-            val songs = repo.db.songsQueries.allSongs().executeAsList()
+            val songs = repo.db.allSongsNow()
             val copies = repo.db.filingQueries.allPostCopies().executeAsList()
             val topicRows = repo.db.miscQueries.topics().executeAsList()
             val names = backend.taste.value.topicNames

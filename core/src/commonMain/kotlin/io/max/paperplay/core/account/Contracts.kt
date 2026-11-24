@@ -109,11 +109,11 @@ interface AccountApi {
     /** Copies one post into [toChat] without a "forwarded" label. */
     suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long)
 
-    /** Sends [content] as a document named [fileName] to the account's Saved Messages, with [tag] in its caption. */
-    suspend fun saveToCloud(tag: String, fileName: String, content: ByteArray)
+    /** Sends what [content] writes as a document named [fileName] to the account's Saved Messages, with [tag] in its caption. */
+    suspend fun saveToCloud(tag: String, fileName: String, content: suspend (Appendable) -> Unit)
 
-    /** The newest document in Saved Messages whose caption holds [tag], or null. */
-    suspend fun loadFromCloud(tag: String): ByteArray?
+    /** The newest document in Saved Messages whose caption holds [tag], downloaded: its path, or null. It can be tens of MB. */
+    suspend fun loadFromCloud(tag: String): String?
 }
 
 /** One indexed post and what it means for the library. */
@@ -259,7 +259,7 @@ interface ChatIndexApi {
     suspend fun exportTo(out: Appendable, chatIds: Set<Long>? = null) { out.append(export()) }
 
     /** Merges an index file in. Never deletes; chats the account is not in are marked to join. */
-    suspend fun importFrom(text: String): IndexImport { import(text); return IndexImport(0, 0, 0) }
+    suspend fun importFrom(json: JsonStream): IndexImport { import(json); return IndexImport(0, 0, 0) }
 
     /** True when the library already has [post] (same file or same song) or it was copied before. */
     fun alreadyHave(post: ChatPost): Boolean = false
@@ -269,5 +269,5 @@ interface ChatIndexApi {
 
     /** The index as text, for saving to Telegram; and the way back. */
     suspend fun export(): String
-    suspend fun import(json: String)
+    suspend fun import(json: JsonStream)
 }

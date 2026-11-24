@@ -21,8 +21,10 @@ private class FakeAccount : AccountApi {
     override val loggedIn = MutableStateFlow(true)
     val reads = mutableListOf<Pair<Long, Long>>()
     var batches: List<List<ChatPost>> = emptyList()
+    var cutAfter = 0L
     val copies = mutableListOf<Triple<Long, Long, Long>>()
-    var cloud: ByteArray? = null
+    var cloud: String? = null
+    var loads = 0
     override suspend fun begin() {}
     override suspend fun beginQr() {}
     override suspend fun phone(number: String) {}
@@ -32,11 +34,11 @@ private class FakeAccount : AccountApi {
     override suspend fun groupsAndChannels(): List<ChatInfo> = emptyList()
     override fun songsIn(chatId: Long, afterMessageId: Long): Flow<List<ChatPost>> = flow {
         reads += chatId to afterMessageId
-        for (b in batches) emit(b.filter { it.messageId > afterMessageId })
+        for (b in batches) { emit(b.filter { it.messageId > afterMessageId }); if (b.any { it.messageId == cutAfter }) throw java.io.IOException("cut off") }
     }
     override suspend fun copyPost(fromChat: Long, messageId: Long, toChat: Long) { copies += Triple(fromChat, messageId, toChat) }
-    override suspend fun saveToCloud(tag: String, fileName: String, content: ByteArray) { cloud = content }
-    override suspend fun loadFromCloud(tag: String): ByteArray? = cloud
+    override suspend fun saveToCloud(tag: String, fileName: String, content: suspend (Appendable) -> Unit) { cloud = StringBuilder().also { content(it) }.toString() }
+    override suspend fun loadFromCloud(tag: String): String? = cloud?.let { t -> loads++; java.io.File.createTempFile("cloud", ".json").also { it.writeText(t); it.deleteOnExit() }.path }
 }
 
 class ChatIndexTest {
@@ -69,6 +71,23 @@ class ChatIndexTest {
         index.refresh()
         assertEquals(listOf(-5L to 20L), account.reads)
         assertEquals(3, index.songs(-5).first().size)
+    }
+
+    @Test
+    fun aCatchUpReadThatIsCutOffLosesNoPostAndRemovesNoSong() = runBlocking {
+        account.batches = listOf((1L..20L).map { post(it, "u$it", "S$it") })
+        index.indexChat(ChatInfo(-5, "Chat", true), true)
+        // Three new posts, read newest first; the link dies after the first page. The bot already added their songs.
+        for (m in 1L..23L) library.upsertBotSong(post(m, "u$m", "S$m").asSong().copy(remote_id = "r$m"))
+        account.batches = listOf(listOf(post(23, "u23", "S23")), listOf(post(22, "u22", "S22"), post(21, "u21", "S21")))
+        account.cutAfter = 23
+        runCatching { index.refresh() }
+        assertEquals(0, index.pruneDeadRows())
+        account.cutAfter = 0
+        index.refresh()
+        assertEquals(23, index.songs(-5).first().size)
+        assertEquals(0, index.pruneDeadRows())
+        assertEquals(23, library.songsInChat(-5).size)
     }
 
     @Test
@@ -111,6 +130,24 @@ class ChatIndexTest {
         assertEquals(1, songs.size)
         assertTrue(songs.single().copied)
         assertFalse(index.indexedChats.value.isEmpty())
+        // Restored once per install: opening the account page again must not download and read it all again.
+        account.loads = 0
+        assertTrue(cloud.restoreOnce())
+        assertFalse(cloud.restoreOnce())
+        assertEquals(1, account.loads)
+    }
+
+    @Test
+    fun jsonIsReadPieceByPieceWithAnyTextInIt() = runBlocking {
+        val text = """ { "a" : 1, "b":"x\"},]\\" , "c":[ [1,"t\u00e9 \\\" ] ["], [] ,{"k":[null,true]} ], "d":{}, "e":[] } """
+        val seen = ArrayList<String>()
+        val json = JsonStream(java.io.StringReader(text))
+        json.obj { k -> if (k == "c") json.arr { seen += "c=" + json.value() } else if (k == "d") { json.skip(); seen += "d" } else seen += k + "=" + json.value() }
+        val tree = kotlinx.serialization.json.Json.parseToJsonElement(text) as kotlinx.serialization.json.JsonObject
+        assertEquals(listOf("a=" + tree["a"], "b=" + tree["b"]) + (tree["c"] as kotlinx.serialization.json.JsonArray).map { "c=$it" } + listOf("d", "e=[]"), seen)
+        for (bad in listOf("{", "{\"a\":[1,2", "{\"a\" 1}", "{\"a\":\"x", "[1]")) {
+            kotlin.test.assertFailsWith<IllegalArgumentException>(bad) { runBlocking { JsonStream(java.io.StringReader(bad)).let { j -> j.obj { j.value() } } } }
+        }
     }
 
     @Test
@@ -137,6 +174,20 @@ class ChatIndexTest {
         assertEquals(null, library.songByUniqueId("u7"))
         assertEquals(19, library.songsInChat(-5).size)
         assertEquals(0, index.pruneDeadRows())
+    }
+
+    @Test
+    fun removingDeadRowsSignalsOneChangeNotOnePerSong() = runBlocking {
+        for (m in 1L..100L) library.upsertBotSong(post(m, "u$m", "S$m").asSong().copy(remote_id = "r$m"))
+        account.batches = listOf((11L..100L).map { post(it, "u$it", "S$it") })
+        index.indexChat(ChatInfo(-5, "Chat", true), true)
+        kotlinx.coroutines.delay(2_500) // the signals of the writes above
+        val before = library.changes.value
+        assertEquals(10, index.pruneDeadRows())
+        assertTrue(library.changes.value - before <= 1)
+        kotlinx.coroutines.delay(2_500)
+        assertEquals(1, library.changes.value - before)
+        assertEquals(90, library.songsInChat(-5).size)
     }
 
     @Test

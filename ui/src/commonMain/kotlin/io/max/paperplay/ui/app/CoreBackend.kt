@@ -1,5 +1,6 @@
 package io.max.paperplay.ui.app
 
+import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.app.AppServices
 import io.max.paperplay.core.app.createBackup
 import io.max.paperplay.core.app.NowPlaying
@@ -1899,7 +1900,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
      * Returns how many were reset.
      */
     fun resetCompilationInfo(): Int {
-        val list = repo.repo.db.songsQueries.allSongs().executeAsList()
+        val list = repo.repo.db.allSongsNow()
             .filter { !it.user_edited && it.cover_at == 0L && it.metadata_source != "File tags" && io.max.paperplay.core.metadata.isCompilationAlbum(it.album) }
         repo.replaceSongs(
             list.map { it.copy(album = "", release_id = null, cover_url = null, cover_path = null, metadata_source = null, enrich_state = io.max.paperplay.core.library.EnrichState.PENDING) },

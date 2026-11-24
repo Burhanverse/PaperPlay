@@ -1,5 +1,6 @@
 package io.max.paperplay.ui.app
 
+import io.max.paperplay.core.library.allSongsNow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
@@ -107,7 +108,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
         val repo = backend.services.library.repo
         suspend fun find() = withContext(Dispatchers.Default) {
             findDuplicates(
-                repo.db.songsQueries.allSongs().executeAsList(), repo.db.filingQueries.allPostCopies().executeAsList(),
+                repo.db.allSongsNow(), repo.db.filingQueries.allPostCopies().executeAsList(),
                 DefaultSongRules, onlyChat = main,
             )
         }

@@ -1,5 +1,6 @@
 package io.max.paperplay.core.filing
 
+import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.app.botOwnerOf
 import io.max.paperplay.core.app.fileOfMessage
 import io.max.paperplay.core.library.LibraryRepo
@@ -89,7 +90,7 @@ class AutoFiler(
         val topics = runCatching { repo.db.miscQueries.topics().executeAsList() }.getOrDefault(emptyList())
         val choices = topicChoices(topics, mainChat, emptyMap())
         if (choices.none { !it.isGeneral }) return emptyList()
-        val all = repo.db.songsQueries.allSongs().executeAsList()
+        val all = repo.db.allSongsNow()
         val inMain = all.filter { it.chat_id == mainChat }
         val mainUnique = inMain.mapTo(HashSet()) { it.unique_id }
         val mainFiles = inMain.mapTo(HashSet()) { it.file_name.lowercase() to it.size }

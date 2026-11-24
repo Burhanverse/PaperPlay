@@ -7,6 +7,8 @@ import io.max.paperplay.core.account.IndexFile
 import io.max.paperplay.core.account.IndexStore
 import io.max.paperplay.core.app.LibraryRepository
 import io.max.paperplay.core.filing.GONE_KEY
+import io.max.paperplay.player.PlayLog
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -27,6 +29,8 @@ import kotlinx.coroutines.sync.withLock
  *   time, without this device's cover file path (covers follow through the normal cover exchange).
  * - Index: posts are fetched in change order from a cursor kept per device, 2,000 at a time, so a first sync of 250,000 posts resumes
  *   where it stopped and later syncs send only what changed. A post fetched from a device is never sent back to it.
+ * - Listening time: every device's rows are kept apart by the device they were heard on, so adding them up never counts a listen twice.
+ *   Only days on which the other device knows more are sent, its own and the ones it got from a third device.
  * - Pause: the later of the two pause or resume decisions wins.
  */
 class LibraryDataSync(
@@ -41,6 +45,8 @@ class LibraryDataSync(
     private val onIndexChanged: () -> Unit = {},
     /** The main chat: the only chat where deleting a song deletes its post in Telegram. */
     private val mainChat: () -> Long? = { null },
+    /** Starts an index read the other device asked for; false when this device cannot read (no account login). */
+    private val startIndexing: (JsonObject) -> Boolean = { false },
 ) : LanDataSync {
 
     override fun answer(peerId: String, request: JsonObject): JsonObject = when ((request["k"] as? JsonPrimitive)?.contentOrNull) {
@@ -49,6 +55,8 @@ class LibraryDataSync(
             val ids = (request["ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.take(MAX_ROWS)
             put("rows", songRows(ids))
         }
+        "listens" -> listenPage(request)
+        "startindex" -> buildJsonObject { put("ok", startIndexing(request)) }
         "index" -> indexPage(peerId, request)
         else -> throw IllegalArgumentException("unknown request")
     }
@@ -58,8 +66,47 @@ class LibraryDataSync(
     // One pull at a time: a nudge and the timed sync can overlap, and two pulls would race on the same cursor.
     override suspend fun pull(peerId: String, ask: suspend (JsonObject) -> JsonObject): Int = pulling.withLock {
         val added = pullSongs(ask)
+        // A device with an older build does not know this request; the rest still syncs.
+        try { pullListening(ask) } catch (e: CancellationException) { throw e } catch (e: Exception) { PlayLog.log("sync", "listening time not synced: ${e.message}") }
         pullIndex(peerId, ask)
         added
+    }
+
+    // ---- listening time -------------------------------------------------------------------------------------------------------------
+
+    /** Milliseconds and plays per "device|day". "self" rows are from before the device had an id, so they would collide. */
+    private fun listenDays(): Map<String, Long> = HashMap<String, Long>().also { out ->
+        for (r in library.repo.db.miscQueries.listenRows(null).executeAsList()) {
+            if (r.origin != "self") out["${r.origin}|${r.day}"] = (out["${r.origin}|${r.day}"] ?: 0L) + r.ms + r.plays
+        }
+    }
+
+    private fun listenPage(request: JsonObject): JsonObject {
+        val theirs = request["have"] as? JsonObject ?: JsonObject(emptyMap())
+        val asker = (request["self"] as? JsonPrimitive)?.contentOrNull
+        val due = listenDays().filter { (k, sum) -> k.substringBefore('|') != asker && sum > ((theirs[k] as? JsonPrimitive)?.longOrNull ?: -1L) }.keys
+        return buildJsonObject {
+            put("rows", buildJsonArray {
+                if (due.isNotEmpty()) for (r in library.repo.db.miscQueries.listenRows(null).executeAsList()) {
+                    if ("${r.origin}|${r.day}" !in due) continue
+                    add(buildJsonArray { add(JsonPrimitive(r.origin)); add(JsonPrimitive(r.day)); add(JsonPrimitive(r.track_key)); add(JsonPrimitive(r.ms)); add(JsonPrimitive(r.plays)) })
+                }
+            })
+        }
+    }
+
+    override suspend fun pullListening(ask: suspend (JsonObject) -> JsonObject) {
+        val self = library.pref("device_id") ?: return
+        val mine = listenDays()
+        val a = ask(buildJsonObject { put("k", "listens"); put("self", self); put("have", JsonObject(mine.mapValues { JsonPrimitive(it.value) })) })
+        val rows = (a["rows"] as? JsonArray).orEmpty().mapNotNull { e ->
+            runCatching {
+                val r = e as JsonArray
+                fun s(i: Int) = (r[i] as JsonPrimitive).content
+                listOf<Any>(s(0), s(1), s(2), s(3).toLong(), s(4).toLong())
+            }.getOrNull()
+        }
+        if (rows.isNotEmpty()) library.batch { library.repo.mergeListen(rows, self) }
     }
 
     // ---- songs ----------------------------------------------------------------------------------------------------------------------
@@ -127,6 +174,10 @@ class LibraryDataSync(
                     val o = r as? JsonObject ?: continue
                     val entries = o.entries.filter { (k, v) -> k in cols && k !in LOCAL_ONLY && v !is JsonNull }
                     if (entries.isEmpty()) continue
+                    // A post this device's full read of the chat did not find is deleted in Telegram; the other device just does not know yet.
+                    val chat = (o["chat_id"] as? JsonPrimitive)?.longOrNull
+                    val msg = (o["message_id"] as? JsonPrimitive)?.longOrNull
+                    if (chat != null && msg != null && index()?.isDeletedPost(chat, msg) == true) continue
                     driver.execute(
                         null,
                         "INSERT OR IGNORE INTO songs (${entries.joinToString(",") { "\"${it.key}\"" }}) VALUES (${entries.joinToString(",") { "?" }})",
@@ -190,6 +241,7 @@ class LibraryDataSync(
         val saved = library.pref(key)?.split(':')?.mapNotNull { it.toLongOrNull() }?.takeIf { it.size == 3 } ?: listOf(-1L, 0L, 0L)
         var at = saved[0]; var chat = saved[1]; var msg = saved[2]
         var first = true
+        var chats = JsonArray(emptyList())
         while (true) {
             val a = ask(buildJsonObject { put("k", "index"); put("at", at); put("chat", chat); put("msg", msg); put("first", first) })
             if (a["none"] != null) return
@@ -200,7 +252,8 @@ class LibraryDataSync(
                     runCatching { Triple((r[0] as JsonPrimitive).content.toLong(), (r[1] as JsonPrimitive).content == "true", (r[2] as JsonPrimitive).content.toLong()) }.getOrNull()
                 }
                 store.mergeRemoved(removed)
-                (a["chats"] as? JsonArray)?.let { chats -> IndexFile.mergeChats(JsonArray(chats.filterNot { c -> ((c as? JsonObject)?.get("id") as? JsonPrimitive)?.longOrNull?.let(store::isGone) == true }), store, 0, own = true) }
+                chats = JsonArray((a["chats"] as? JsonArray).orEmpty().filterNot { c -> ((c as? JsonObject)?.get("id") as? JsonPrimitive)?.longOrNull?.let(store::isGone) == true })
+                IndexFile.mergeChats(chats, store, 0, own = true, progress = false)
                 for (e in (a["copied"] as? JsonArray).orEmpty()) {
                     val c = e as? JsonArray ?: continue
                     runCatching { store.markCopied((c[0] as JsonPrimitive).content, (c[1] as JsonPrimitive).content.toLong(), (c[2] as JsonPrimitive).content.toLong(), (c[3] as JsonPrimitive).content.toLong()) }
@@ -223,8 +276,11 @@ class LibraryDataSync(
                 at = last.second; chat = last.first.chatId; msg = last.first.messageId
                 library.setPref(key, "$at:$chat:$msg")
             }
+            val done = (a["more"] as? JsonPrimitive)?.contentOrNull != "true"
+            // How far the chats are read counts only now that their last post is here; a pull that is cut off leaves it as it was.
+            if (done) IndexFile.mergeChats(chats, store, 0, own = true, progress = true)
             onIndexChanged()
-            if ((a["more"] as? JsonPrimitive)?.contentOrNull != "true" || posts.isEmpty()) return
+            if (done || posts.isEmpty()) return
         }
     }
 

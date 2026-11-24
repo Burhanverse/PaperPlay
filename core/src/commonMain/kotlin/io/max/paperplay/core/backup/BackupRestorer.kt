@@ -367,7 +367,7 @@ class BackupRestorer {
         // Counts and keys follow the copied rows.
         io.max.paperplay.core.account.IndexStore(driver)
         scan.indexFile?.let { path ->
-            runCatching { io.max.paperplay.core.account.IndexFile.read(Fs.readText(path), store, 0, own = true) }
+            runCatching { java.io.File(path).bufferedReader().use { io.max.paperplay.core.account.IndexFile.read(io.max.paperplay.core.account.JsonStream(it), store, 0, own = true) } }
         }
     }
 

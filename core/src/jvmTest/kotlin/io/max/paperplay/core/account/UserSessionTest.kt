@@ -239,7 +239,7 @@ class UserSessionTest {
             }))
         }
         val s = session(fake, loggedIn = true)
-        assertContentEquals(byteArrayOf(1, 2, 3), s.loadFromCloud("paperplay-x"))
+        assertContentEquals(byteArrayOf(1, 2, 3), File(s.loadFromCloud("paperplay-x")!!).readBytes())
         val search = fake.sent.last { it.type == "searchChatMessages" }
         assertEquals("paperplay-x", search.str("query"))
         assertEquals("42", search.str("chat_id"))

@@ -1,5 +1,6 @@
 package io.max.paperplay.core.app
 
+import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.sync.netplay.HostNow
 import io.max.paperplay.core.sync.netplay.LocalPlay
@@ -47,7 +48,7 @@ class PlaybackNetplayPlayer(
     }
 
     override suspend fun load(queue: List<NetSong>, index: Int, audio: NetAudio?): SongSource {
-        val lib = library.repo.db.songsQueries.allSongs().executeAsList()
+        val lib = library.repo.db.allSongsNow()
         val refs = lib.map { LocalSongRef(it.unique_id, it.title, it.artist, it.duration_sec.toLong()) }
         val byUid = lib.associateBy { it.unique_id }
         val songs = ArrayList<Song>()

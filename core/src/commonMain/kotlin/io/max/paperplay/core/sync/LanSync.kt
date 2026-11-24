@@ -189,6 +189,9 @@ interface LanSync {
      * [messages] there. Only paired devices are listened to. False when nothing was linked.
      */
     suspend fun sendMessage(deviceId: String?, body: kotlinx.serialization.json.JsonObject): Boolean = false
+
+    /** Asks one linked, paired device (its [LanDataSync.answer]) and waits; null when it did not answer in time or refused. */
+    suspend fun request(deviceId: String, q: kotlinx.serialization.json.JsonObject, timeoutMs: Long): kotlinx.serialization.json.JsonObject? = null
 }
 
 /**
@@ -201,6 +204,9 @@ interface LanDataSync {
 
     /** This device's side: asks [peerId] for what it lacks through [ask] (a request and its answer) and stores it. Returns rows added. */
     suspend fun pull(peerId: String, ask: suspend (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject): Int
+
+    /** Only the listening time, through [ask]; see [pull]. */
+    suspend fun pullListening(ask: suspend (kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject) {}
 
     /** Which of [ids] (song unique ids) still have their post in the main chat, so a deletion of them is stale. */
     fun stillPosted(ids: Set<String>): Set<String> = emptySet()

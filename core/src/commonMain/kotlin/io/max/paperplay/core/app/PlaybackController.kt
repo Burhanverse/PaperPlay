@@ -195,6 +195,7 @@ class PlaybackController(
                 if (state == PlayerState.Paused || state == PlayerState.Idle || state == PlayerState.Ended || state == PlayerState.Error) {
                     launch { runCatching { resolver.pauseAll() } }
                 }
+                if (state == PlayerState.Error && cs != null) launch { if (runCatching { isDeleted?.invoke(cs) }.getOrNull() == true) dropDeleted(cs) }
                 if (state != PlayerState.Ended) return@collect
                 // The last song of the queue has no song change after it, so its listen is closed here.
                 finishListening()
@@ -355,6 +356,25 @@ class PlaybackController(
     fun setCorrectionProfile(text: String?) = engine.setCorrectionProfile(text)
     fun setSpeed(speed: Float) = engine.setSpeed(speed)
     fun setNormalize(on: Boolean) = engine.setNormalize(on)
+
+    /** Asked when a song could not be played: true when its post is deleted in Telegram, and then it leaves the queue. Set by the owner. */
+    @kotlin.concurrent.Volatile
+    var isDeleted: (suspend (Song) -> Boolean)? = null
+
+    /** Takes [song], which cannot be played any more, out of the queue and plays the one after it. */
+    private fun dropDeleted(song: Song) {
+        val idx = engine.currentIndex.value
+        // The user may have moved on while Telegram was asked.
+        if (meta.value.queue.getOrNull(idx)?.unique_id != song.unique_id || engine.state.value != PlayerState.Error) return
+        command {
+            val order = meta.value.queue.toMutableList().also { it.removeAt(idx) }
+            original = original.filter { it.unique_id != song.unique_id }
+            if (order.isEmpty()) return@command
+            apply(order, idx.coerceAtMost(order.lastIndex), 0)
+            // When the last song of the queue failed nothing comes after it: the one before is shown but not started.
+            if (idx <= order.lastIndex) engine.play() else engine.pause()
+        }
+    }
 
     /** Takes the song at [index] out of the queue. The last song cannot be removed. Playing on keeps the position. */
     fun removeAt(index: Int) = command {

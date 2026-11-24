@@ -1,5 +1,6 @@
 package io.max.paperplay.core.app
 
+import io.max.paperplay.core.library.allSongsNow
 import kotlinx.coroutines.sync.withLock
 import io.max.paperplay.core.db.LibraryDatabase
 import io.max.paperplay.core.integrations.defaultHttpFetcher
@@ -105,10 +106,27 @@ class AppServices(
                 pauseState = { realIndex.pauseState() },
                 takePause = { p, at -> realIndex.takePause(p, at) },
                 onIndexChanged = { realIndex.syncedIn() },
+                startIndexing = ::startIndexing,
                 mainChat = { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) },
             ),
         ),
     ).also { lanSync = it; bindLan(it); bindIndexToLan(it, isDesktop) }
+
+    /** Starts a read another linked device asked for; false when this device cannot read. */
+    private fun startIndexing(o: kotlinx.serialization.json.JsonObject): Boolean {
+        if (!account.loggedIn.value) return false
+        fun str(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        when (str("action")) {
+            "refresh" -> scope.launch { runCatching { realIndex.setPaused(false); realIndex.refresh() } }
+            "index" -> {
+                val id = str("chat")?.toLongOrNull() ?: return false
+                val chat = io.max.paperplay.core.account.ChatInfo(id, str("title").orEmpty(), str("channel") == "true")
+                scope.launch { runCatching { realIndex.indexChat(chat, false) } }
+            }
+            else -> return false
+        }
+        return true
+    }
 
     /**
      * The chat index across linked devices: the PC does the reading while a phone is linked to it (the phone asks it and receives the
@@ -118,10 +136,14 @@ class AppServices(
         fun leader(): String? = if (isDesktop) null else lan.connected.value.firstOrNull { it.desktop && it.paired }?.id
         realIndex.delegate = { action, chat ->
             val to = leader()
-            to != null && lan.sendMessage(to, kotlinx.serialization.json.buildJsonObject {
-                put("t", "indexctl"); put("action", action)
+            // Only when the PC says it has started: a dead link, a PC without the account or an older build must not make the button do
+            // nothing. This device then reads the chat itself.
+            val ok = to != null && (lan.request(to, kotlinx.serialization.json.buildJsonObject {
+                put("k", "startindex"); put("action", action)
                 if (chat != null) { put("chat", chat.id); put("title", chat.title); put("channel", chat.isChannel) }
-            })
+            }, 6_000)?.get("ok") as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+            if (to != null) activityLog("Index", if (ok) "The linked PC reads the chats" else "The linked PC did not answer; reading the chats here")
+            ok
         }
         realIndex.onPausedChanged = { paused ->
             val at = realIndex.pauseState().second
@@ -130,6 +152,13 @@ class AppServices(
         // New posts are announced at most every 5 s; the other device then pulls them.
         val nudge = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
         realIndex.onPostsSaved = { nudge.tryEmit(Unit) }
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        scope.launch {
+            for (u in heard) {
+                delay(30.seconds)
+                lan.sendMessage(null, kotlinx.serialization.json.buildJsonObject { put("t", "listennudge") })
+            }
+        }
         @OptIn(kotlinx.coroutines.FlowPreview::class)
         scope.launch {
             nudge.sample(5_000).collect { lan.sendMessage(null, kotlinx.serialization.json.buildJsonObject { put("t", "indexnudge") }) }
@@ -142,12 +171,7 @@ class AppServices(
                 when {
                     m.type == "indexnudge" -> launch { runCatching { lan.syncNow(m.deviceId) } }
                     str("paused") != null -> realIndex.takePause(str("paused") == "true", str("at")?.toLongOrNull() ?: clockMs())
-                    str("action") == "refresh" -> launch { runCatching { realIndex.setPaused(false); realIndex.refresh() } }
-                    str("action") == "index" -> {
-                        val id = str("chat")?.toLongOrNull() ?: return@collect
-                        val chat = io.max.paperplay.core.account.ChatInfo(id, str("title").orEmpty(), str("channel") == "true")
-                        launch { runCatching { realIndex.indexChat(chat, false) } }
-                    }
+                    str("action") != null -> startIndexing(o) // asked by an older build
                 }
             }
         }
@@ -325,7 +349,7 @@ class AppServices(
     /** Sends audio files to a chat or topic as the bot. */
     val uploader: Uploader by lazy {
         Uploader(scope, { client }, library::pref, {
-            library.repo.db.songsQueries.allSongs().executeAsList().mapTo(HashSet()) { it.file_name to it.size }
+            library.repo.db.allSongsNow().mapTo(HashSet()) { it.file_name to it.size }
         }, botPool, library::setPref, { song -> library.upsertBotSong(song) })
     }
 
@@ -508,8 +532,11 @@ class AppServices(
     }
 
     /** Every listen with how much was heard, for recommendations. */
+    private val heard = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
     val playEvents = io.max.paperplay.core.recs.PlayEventLog(driver).also { log ->
         library.onListen = { s, ms, at ->
+            heard.trySend(Unit)
             log.record(s.unique_id, at, ms, s.duration_sec * 1000L)
             io.max.paperplay.player.PlayLog.log("recs", "listen \"${s.title}\" heard ${ms / 1000}s of ${s.duration_sec}s")
         }
@@ -566,8 +593,22 @@ class AppServices(
     }
 
     /** Created on first use, so a screen that never plays does not load the audio stack. */
-    private val playbackLazy = lazy { PlaybackController(platform.createPlayer(), resolver, library, scope) }
+    private val playbackLazy = lazy { PlaybackController(platform.createPlayer(), resolver, library, scope).also { it.isDeleted = ::removeIfDeleted } }
     val playback: PlaybackController get() = playbackLazy.value
+
+    /**
+     * A song failed to play: asks the owner's account whether its post still exists and removes it from the library when Telegram says it
+     * is gone. No bot can tell (it does not see other bots' posts), and an account that cannot be asked removes nothing. Only channels and
+     * supergroups: in any other chat the account and a bot number the same post differently.
+     */
+    private suspend fun removeIfDeleted(song: io.max.paperplay.core.library.Song): Boolean {
+        if (song.chat_id > -1_000_000_000_000L || song.remote_id == NETPLAY_REMOTE || !account.loggedIn.value) return false
+        val alive = account.existingPosts(song.chat_id, listOf(song.message_id)) ?: return false
+        if (song.message_id in alive) return false
+        library.removePost(song.chat_id, song.message_id)
+        activityLog("Library", "Removed \"${song.title}\": its post was deleted in Telegram")
+        return true
+    }
 
     /** Network play: listening sessions with other people on the same network. Nothing listens until a session starts. */
     val netplay: io.max.paperplay.core.sync.netplay.Netplay by lazy {
@@ -621,7 +662,7 @@ class AppServices(
     private val namesLock = kotlinx.coroutines.sync.Mutex()
 
     private suspend fun repairNames() = namesLock.withLock {
-        val fixed = repairSplitNames(library.repo.db.songsQueries.allSongs().executeAsList())
+        val fixed = repairSplitNames(library.repo.db.allSongsNow())
         if (fixed.isEmpty()) return@withLock
         library.replaceSongs(fixed)
         activityLog("Library", "Fixed the title and artist of ${fixed.size} songs")
@@ -644,12 +685,14 @@ class AppServices(
         // Songs whose names were split badly ("Song - Lofi - Artist", "Song - Artist" read the other way round) get their title and artist
         // right, and are looked up again. Runs now and after every scan, because new uploads arrive split by the file name alone.
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            scanner.progress.collect { if (it == null) repairNames() }
+            scanner.progress.collect {
+                if (it == null) try { repairNames() } catch (e: CancellationException) { throw e } catch (e: Exception) { appLog("library", "name repair failed: $e") }
+            }
         }
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             if (library.pref("forum_topics_id_fix_v1") != "done") {
                 val topics = library.repo.db.miscQueries.topics().executeAsList()
-                val songs = library.repo.db.songsQueries.allSongs().executeAsList()
+                val songs = library.repo.db.allSongsNow()
                 val fixed = repairShiftedForumTopics(topics, songs)
                 for ((chatId, list) in fixed) library.replaceTopics(chatId, list)
                 library.setPref("forum_topics_id_fix_v1", "done")

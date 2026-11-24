@@ -155,6 +155,11 @@ class IndexStore(private val driver: SqlDriver) {
         touch()
     }
 
+    /** Sets how far a chat is read exactly (a merge can step back to the newest post up to which nothing is missing). */
+    fun setRead(id: Long, newest: Long, complete: Boolean) {
+        exec("UPDATE index_chats SET newest_message_id = ?, complete = ? WHERE chat_id = ?", 3) { bindLong(0, newest); bindLong(1, if (complete) 1 else 0); bindLong(2, id) }
+    }
+
     fun setState(id: Long, newest: Long, refreshedAt: Long, complete: Boolean) {
         exec("UPDATE index_chats SET newest_message_id = MAX(newest_message_id, ?), last_refresh_at = MAX(last_refresh_at, ?), complete = ?, updated_at = MAX(updated_at, ?) WHERE chat_id = ?", 5) {
             bindLong(0, newest); bindLong(1, refreshedAt); bindLong(2, if (complete) 1 else 0); bindLong(3, refreshedAt); bindLong(4, id)
@@ -273,6 +278,13 @@ class IndexStore(private val driver: SqlDriver) {
 
     /** Message ids saved for [chatId]. */
     fun messageIds(chatId: Long): Set<Long> = query("SELECT message_id FROM index_posts WHERE chat_id = ?", 1, { bindLong(0, chatId) }) { it.getLong(0)!! }.toHashSet()
+
+    /** True when [chatId] was read in full up to this post and the post was not there: it is deleted in Telegram. */
+    fun isDeletedPost(chatId: Long, messageId: Long): Boolean {
+        val c = chat(chatId) ?: return false
+        if (!c.complete || !c.joined || c.postCount == 0 || messageId > c.newestMessageId) return false
+        return query("SELECT 1 FROM index_posts WHERE chat_id = ? AND message_id = ?", 2, { bindLong(0, chatId); bindLong(1, messageId) }) { 1 }.isEmpty()
+    }
 
     /** Which of [uniqueIds] are posted in [chatId] (as of its last read). */
     fun posted(chatId: Long, uniqueIds: Collection<String>): Set<String> = uniqueIds.chunked(500).flatMapTo(HashSet()) { part ->

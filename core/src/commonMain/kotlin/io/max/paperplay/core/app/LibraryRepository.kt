@@ -4,8 +4,10 @@ import io.max.paperplay.core.library.LibraryChat
 import io.max.paperplay.core.library.LibraryRepo
 import io.max.paperplay.core.library.Playlist
 import io.max.paperplay.core.library.Song
+import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.library.laterStamp
 import io.max.paperplay.core.library.newUuid
+import io.max.paperplay.core.library.stableRead
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,26 +68,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     fun invalidateSoon() { soft.trySend(Unit) }
 
     private fun <T> watch(query: () -> T): Flow<T> =
-        changes.map { stableRead(query) }.distinctUntilChanged().flowOn(Dispatchers.IO)
-
-    /**
-     * A long list is read through several cursor windows; a delete between two of them shifts the rows and Android's cursor then
-     * fails with a null (it crashed the app while duplicates were being deleted). One transaction keeps the rows still while
-     * they are read, and a read that still fails is tried again.
-     */
-    private fun <T> stableRead(read: () -> T): T {
-        var failure: RuntimeException? = null
-        repeat(3) {
-            try {
-                return repo.db.transactionWithResult { read() }
-            } catch (e: NullPointerException) {
-                failure = e
-            } catch (e: IllegalStateException) {
-                failure = e
-            }
-        }
-        throw failure!!
-    }
+        changes.map { repo.db.stableRead(query) }.distinctUntilChanged().flowOn(Dispatchers.IO)
 
     private fun <T> write(soft: Boolean = false, notify: Boolean = true, block: () -> T): T =
         block().also { if (notify) { if (soft) invalidateSoon() else invalidate() } }
@@ -170,13 +153,13 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     /** Saves many rows in one transaction with one (coalesced) change signal. */
     fun replaceSongs(list: List<Song>) { if (list.isNotEmpty()) batch { list.forEach { repo.db.enrichQueries.replaceSong(it) } } }
     fun nextToEnrich(): Song? = songs.nextToEnrich().executeAsOneOrNull()
-    fun unmatchedSongs(): List<Song> = songs.allSongs().executeAsList().filter { it.enrich_state == 2L && !it.user_edited }
+    fun unmatchedSongs(): List<Song> = repo.db.allSongsNow().filter { it.enrich_state == 2L && !it.user_edited }
     fun setCachedBytes(uniqueId: String, bytes: Long, notify: Boolean = false) {
         if (notify) write(soft = true) { songs.setCachedBytes(bytes, uniqueId) } else songs.setCachedBytes(bytes, uniqueId)
     }
     fun cachedSongs(): List<Song> = songs.cachedSongs().executeAsList()
     fun cacheLimit(): Long = repo.cacheLimit()
-    fun songsInChat(chatId: Long): List<Song> = songs.songsInChat(chatId).executeAsList()
+    fun songsInChat(chatId: Long): List<Song> = repo.db.stableRead { songs.songsInChat(chatId).executeAsList() }
     fun songsNeedingCovers(): List<Song> = songs.songsNeedingCovers().executeAsList()
     /** Songs of one album name, for sharing a cover and album info between its tracks. */
     fun albumSongs(name: String): List<Song> = songs.albumRows(name).executeAsList()

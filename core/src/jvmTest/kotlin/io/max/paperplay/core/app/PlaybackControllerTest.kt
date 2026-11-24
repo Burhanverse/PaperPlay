@@ -129,6 +129,33 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun aSongWhosePostIsDeletedLeavesTheQueueAndTheNextOnePlays() = runBlocking {
+        var now = 1_000L
+        val db = LibraryDatabase(libraryDriver())
+        val repo = LibraryRepository(LibraryRepo(db) { ++now }) { ++now }
+        val songs = (1L..4L).map { song(it) }
+        songs.forEach { db.songsQueries.insertSong(it) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = FakePlayerEngine()
+        val controller = PlaybackController(engine, TrackResolver { null }, repo, scope)
+        controller.isDeleted = { it.unique_id == "u2" }
+        try {
+            controller.setQueue(songs, startIndex = 1)
+            await { engine.mutableCurrentIndex.value == 1 && controller.nowPlayingStatic.value.song?.unique_id == "u2" }
+            engine.mutableState.value = PlayerState.Error
+            await { engine.lastQueue.map { it.uri } == listOf("tg-u1", "tg-u3", "tg-u4") && controller.nowPlayingStatic.value.song?.unique_id == "u3" }
+            // A failure for any other reason leaves the queue alone.
+            delay(150)
+            engine.mutableState.value = PlayerState.Error
+            delay(300)
+            assertEquals(3, engine.lastQueue.size)
+        } finally {
+            controller.release()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun pickingFromTheQueueKeepsItsOrderEvenWithShuffleOn() = runBlocking {
         var now = 1_000L
         val db = LibraryDatabase(libraryDriver())

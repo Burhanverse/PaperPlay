@@ -34,7 +34,7 @@ object IndexArchive {
             var found = false
             source.scan { e -> if (!e.isDirectory && e.name == ENTRY) { e.copyTo(tmp); found = true } }
             if (!found) throw IllegalArgumentException("This file has no chat index in it.")
-            return index.importFrom(Fs.readText(tmp))
+            return java.io.File(tmp).bufferedReader().use { index.importFrom(io.max.paperplay.core.account.JsonStream(it)) }
         } finally {
             Fs.deleteRecursively(tmp)
         }

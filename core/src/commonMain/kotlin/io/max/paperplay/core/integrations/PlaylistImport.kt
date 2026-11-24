@@ -1,5 +1,6 @@
 package io.max.paperplay.core.integrations
 
+import io.max.paperplay.core.library.allSongsNow
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import io.max.paperplay.core.db.Missing_tracks
@@ -170,7 +171,7 @@ class ImportStore(val repo: LibraryRepo, private val driver: SqlDriver, val cloc
     fun <T> transaction(block: () -> T): T = repo.db.transactionWithResult { block() }
 
     fun livePlaylists(): List<Playlist> = lists.livePlaylists().executeAsList()
-    fun songs(): List<Song> = repo.db.songsQueries.allSongs().executeAsList()
+    fun songs(): List<Song> = repo.db.allSongsNow()
     fun missing(playlistId: Long): List<MissingTrack> = lists.missingTracks(playlistId).executeAsList()
     fun createPlaylist(name: String, sourceUrl: String): Long = repo.createPlaylist(name, sourceUrl)
 

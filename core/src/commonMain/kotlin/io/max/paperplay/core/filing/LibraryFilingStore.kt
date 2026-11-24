@@ -1,5 +1,6 @@
 package io.max.paperplay.core.filing
 
+import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.library.ForumTopic
 import io.max.paperplay.core.library.LibraryRepo
 import io.max.paperplay.core.library.PostCopy
@@ -33,7 +34,7 @@ class LibraryFilingStore(private val repo: LibraryRepo) : FilingStore {
     override fun pref(key: String) = repo.pref(key)
     override fun setPref(key: String, value: String) { repo.setPref(key, value) }
     override fun mainChatId() = parseMainChat(pref(MAIN_CHAT_KEY))
-    override fun songs(): List<Song> = songsQ.allSongs().executeAsList()
+    override fun songs(): List<Song> = repo.db.allSongsNow()
     override fun song(chatId: Long, messageId: Long) = songsQ.song(chatId, messageId).executeAsOneOrNull()
     override fun songByUniqueId(uniqueId: String) = songsQ.songByUniqueId(uniqueId).executeAsOneOrNull()
     override fun postCopies(): List<PostCopy> = repo.db.filingQueries.allPostCopies().executeAsList()

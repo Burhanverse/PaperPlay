@@ -360,13 +360,50 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
 
     private inner class Peer(val info: LanDevice, val ch: SecureChannel, val socket: Socket) {
         val waiting = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
-        fun send(o: JsonObject) = ch.send(o.toString().encodeToByteArray())
-        fun close() { runCatching { socket.close() } }
+        /**
+         * Messages wait here for the one thread that writes them. The thread that reads must never write: when both devices answered a
+         * sync at the same time, both were writing a big reply, neither was reading, and the link stood still for good.
+         */
+        private val out = java.util.concurrent.LinkedBlockingQueue<JsonObject>(OUT_QUEUE)
+        @Volatile private var closed = false
+        @Volatile private var writingSince = 0L
+
+        fun start() {
+            Thread({
+                try {
+                    while (!closed) {
+                        val o = out.poll(1, java.util.concurrent.TimeUnit.SECONDS) ?: continue
+                        writingSince = System.nanoTime()
+                        ch.send(o.toString().encodeToByteArray())
+                        writingSince = 0L
+                    }
+                } catch (e: Exception) {
+                    close()
+                }
+            }, "lan-writer").apply { isDaemon = true; start() }
+        }
+
+        /** Queues [o]; throws when the link is closed, full, or the other device has not taken a message for a minute. */
+        fun send(o: JsonObject) {
+            val since = writingSince
+            if (since != 0L && System.nanoTime() - since > STALLED_NS) close()
+            if (!closed && !out.offer(o)) close()
+            if (closed) throw IOException("link closed")
+        }
+
+        /** [send] for a run of big messages: waits until the ones before have gone, so they do not pile up in memory. */
+        suspend fun sendPaced(o: JsonObject) {
+            while (!closed && out.size >= 2) delay(50)
+            send(o)
+        }
+
+        fun close() { closed = true; runCatching { socket.close() } }
     }
 
     private fun register(p: Peer) {
         // The other device dialled in on purpose: it wants the link back.
         byed.remove(p.info.id)
+        p.start()
         peers.put(p.info.id, p)?.close()
         publishConnected()
         // A new link exchanges song data at once (what one device lacks, the other fills in), then now and then while it lasts.
@@ -386,7 +423,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
 
     private fun runLoop(p: Peer) {
         try {
-            p.socket.soTimeout = 0
+            // The other device says what it plays at least every 5 s; a link this quiet is dead (sleep, lost Wi-Fi) and is dialled again.
+            p.socket.soTimeout = QUIET_MS
             p.socket.keepAlive = true
             while (true) {
                 val m = parseObj(p.ch.receive())
@@ -429,6 +467,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             "data-reply" -> m.str("rid")?.let { p.waiting.remove(it)?.complete(m) }
             // Index pause, resume and "read this chat" requests, and "new index posts are here".
             "indexctl", "indexnudge" -> if (p.info.paired) _messages.tryEmit(LanMessage(p.info.id, m.str("t")!!, m.toString()))
+            // "I was listened to": only the listening time is fetched. Older builds ignore it and get it with the next full exchange.
+            "listennudge" -> if (p.info.paired) io.launch { runCatching { env.data?.pullListening { q -> ask(p, q) } } }
             "coverreq" -> serveCovers(p, m.arr("ids")?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }.orEmpty())
             "cover" -> {
                 val id = m.str("id")
@@ -585,7 +625,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         setHeld(deviceId, true)
         peers[deviceId]?.let { p ->
             // Tells the other device, so it does not dial back either.
-            runCatching { p.send(buildJsonObject { put("t", "bye") }) }
+            // Written by the link's own thread, so it gets a moment before the close below.
+            runCatching { p.send(buildJsonObject { put("t", "bye") }); Thread.sleep(150) }
             p.close()
         }
     }
@@ -627,18 +668,23 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     }
 
     /** Sends a data request to [p] and waits for its answer; throws when the link fails or the other side could not answer. */
-    private suspend fun ask(p: Peer, q: JsonObject): JsonObject {
+    private suspend fun ask(p: Peer, q: JsonObject, timeoutMs: Long = 120_000): JsonObject {
         val rid = newUuid()
         val waiter = CompletableDeferred<JsonObject>()
         p.waiting[rid] = waiter
         try {
             p.send(buildJsonObject { put("t", "data"); put("rid", rid); put("q", q) })
-            val reply = withTimeoutOrNull(120_000) { waiter.await() } ?: throw IOException("no answer")
+            val reply = withTimeoutOrNull(timeoutMs) { waiter.await() } ?: throw IOException("no answer")
             if (reply.flag("error") == true) throw IOException("the other device could not answer")
             return reply.obj("a") ?: throw IOException("empty answer")
         } finally {
             p.waiting.remove(rid)
         }
+    }
+
+    override suspend fun request(deviceId: String, q: JsonObject, timeoutMs: Long): JsonObject? = withContext(Dispatchers.IO) {
+        val p = peers[deviceId]?.takeIf { it.info.paired } ?: return@withContext null
+        try { ask(p, q, timeoutMs) } catch (e: IOException) { null }
     }
 
     override suspend fun sendMessage(deviceId: String?, body: JsonObject): Boolean = withContext(Dispatchers.IO) {
@@ -653,7 +699,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 val cover = runCatching { env.coverBytes(id) }.getOrNull() ?: continue
                 if (cover.bytes.size > MAX_COVER) continue
                 runCatching {
-                    p.send(
+                    p.sendPaced(
                         buildJsonObject {
                             put("t", "cover"); put("id", id); put("at", cover.at); put("curl", cover.sourceUrl)
                             put("b64", java.util.Base64.getEncoder().encodeToString(cover.bytes))
@@ -939,3 +985,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             }.isSuccess
         }
 }
+
+private const val OUT_QUEUE = 512
+private const val STALLED_NS = 60_000_000_000L
+private const val QUIET_MS = 90_000

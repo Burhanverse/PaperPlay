@@ -1,5 +1,6 @@
 package io.max.paperplay.core.account
 
+import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.app.LibraryRepository
 import io.max.paperplay.core.integrations.MatchKind
 import io.max.paperplay.core.integrations.looseTitleKey
@@ -250,9 +251,13 @@ class ChatIndex(
                         if (store.upsertPosts(batch, clock()) > 0) onPostsSaved?.invoke()
                         batch.forEach { ids += it.messageId }
                         found += batch.size
-                        newest = maxOf(newest, batch.maxOf { it.messageId })
-                        // Newest is saved at once but the chat only counts as complete when the whole read ends.
-                        store.setState(chatId, newest, clock(), complete = after > 0 && complete)
+                        // A full read goes through the audio posts first and the files after: a song posted in between lies below the newest
+                        // file but was not read, so only the audio pass counts and the next catch-up read gets the rest.
+                        if (cp == null || cp.filter == 0) newest = maxOf(newest, batch.maxOf { it.messageId })
+                        // A full read saves newest at once but only counts as complete when the whole read ends. A catch-up read comes newest
+                        // first, so its newest is saved at the end: stopped half way, the posts in between would never be asked for again
+                        // and their songs would look deleted.
+                        if (after == 0L) store.setState(chatId, newest, clock(), complete = false)
                         // The count shown is everything saved for the chat, so a resumed read goes on from 78,700, not from 0.
                         _progress.value = IndexProgress(chatId, title, store.count(chatId), true)
                         cp?.let { library.setPref(ckptKey(chatId), "${it.filter}:${it.from}") }
@@ -290,7 +295,7 @@ class ChatIndex(
     /** The whole library, not only the main chat: a song added from any chat counts as already there. */
     private fun libraryMain(): Main {
         // A library-only entry (played through the account, no post in Telegram) is not "had": it stays listed until it is really copied.
-        val all = library.repo.db.songsQueries.allSongs().executeAsList().filter { it.remote_id != io.max.paperplay.core.app.ACCOUNT_REMOTE }
+        val all = library.repo.db.allSongsNow().filter { it.remote_id != io.max.paperplay.core.app.ACCOUNT_REMOTE }
         val copies = library.repo.db.filingQueries.allPostCopies().executeAsList()
         return Main(all.map { it.unique_id }.toSet() + copies.map { it.unique_id }, all.groupBy { looseTitleKey(it.title, it.artist) })
     }
@@ -326,7 +331,7 @@ class ChatIndex(
      */
     override suspend fun updateFlags() = flagsLock.withLock {
         store.prepare()
-        val all = library.repo.db.songsQueries.allSongs().executeAsList()
+        val all = library.repo.db.allSongsNow()
         val real = all.filter { it.remote_id != io.max.paperplay.core.app.ACCOUNT_REMOTE }
         val ids = real.mapTo(HashSet()) { it.unique_id } + library.repo.db.filingQueries.allPostCopies().executeAsList().map { it.unique_id }
         val byKey = real.groupBy { looseTitleKey(it.title, it.artist) }.filterKeys { it.isNotEmpty() }
@@ -434,7 +439,7 @@ class ChatIndex(
     private fun libraryOnly(): List<Song> {
         val main = mainChat()
         // Includes posts that sit in the main chat but that no bot can read: copying posts them again from the account, and the old post becomes a repeat.
-        return library.repo.db.songsQueries.allSongs().executeAsList().filter { it.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE }
+        return library.repo.db.allSongsNow().filter { it.remote_id == io.max.paperplay.core.app.ACCOUNT_REMOTE }
     }
 
     override fun libraryOnlyCount(): Int = libraryOnly().size
@@ -504,8 +509,10 @@ class ChatIndex(
                 io.max.paperplay.player.PlayLog.log("index", "Not removing ${dead.size} of ${rows.size} songs of ${c.title} whose posts are gone: too many, read the chat again first")
                 continue
             }
+            // One transaction and one change signal: a signal per song made every open list read the whole library again for each one,
+            // which ran the phone out of memory.
+            library.batch { for (s in dead) library.repo.removePost(s.chat_id, s.message_id) }
             for (s in dead) {
-                library.removePost(s.chat_id, s.message_id)
                 io.max.paperplay.player.PlayLog.log("index", "Removed \"${s.title}\": its post is no longer in ${c.title}")
             }
             removed += dead.size
@@ -532,15 +539,15 @@ class ChatIndex(
     override suspend fun exportTo(out: Appendable, chatIds: Set<Long>?) = IndexFile.write(store, out, chatIds, forSharing = false, clock())
 
     /** Merges an exported index in (the account's own cloud copy). Saved posts stay; the newer position and a finished read win. Safe to repeat. */
-    override suspend fun import(json: String) {
+    override suspend fun import(json: JsonStream) {
         IndexFile.read(json, store, clock(), own = true)
         chatsChanged()
     }
 
     /** Merges someone else's (or another device's) file: copied marks stay theirs, and chats this account cannot see are marked to join. */
-    override suspend fun importFrom(text: String): IndexImport {
+    override suspend fun importFrom(json: JsonStream): IndexImport {
         val fresh = ArrayList<Long>()
-        val r = IndexFile.read(text, store, clock(), own = false, fresh)
+        val r = IndexFile.read(json, store, clock(), own = false, fresh)
         // A chat the account is already in needs no joining.
         var notJoined = r.notJoined
         for (id in fresh) if (runCatching { account.canSee(id) }.getOrDefault(false)) { store.setJoined(id, true); notJoined-- }
@@ -566,7 +573,8 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
         val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
         val last = library.pref("index_cloud_at")?.toLongOrNull() ?: 0L
         if (sig == library.pref("index_cloud_sig") || (!force && now - last < 24 * 3600_000L)) return
-        // The index text goes in as it is: parsing 40 MB of posts back into a JSON tree only to print it again could run out of memory.
+        // Written to a file as it is read from the database: the text of 250,000 posts is about 40 MB, and built in memory (twice, as
+        // text and as bytes) it ran the phone out of its 256 MB heap.
         val rest = buildJsonObject {
             put("prefs", buildJsonObject {
                 put(IndexPrefs.AUTO, library.pref(IndexPrefs.AUTO) ?: "false")
@@ -575,8 +583,11 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
             put("version", 2)
             put("user", userData())
         }.toString()
-        val body = "{\"index\":" + index.export() + "," + rest.removePrefix("{")
-        account.saveToCloud(tag, "paperplay-index.json", body.encodeToByteArray())
+        account.saveToCloud(tag, "paperplay-index.json") { out ->
+            out.append("{\"index\":")
+            index.exportTo(out)
+            out.append(",").append(rest.removePrefix("{"))
+        }
         library.setPref("index_cloud_at", "$now")
         library.setPref("index_cloud_sig", sig)
     }
@@ -584,7 +595,7 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
     /** Favorites, listening counts, edited tags, pins and playlists, keyed by unique_id. */
     private fun userData(): JsonObject {
         val q = library.repo.db
-        val rows = q.songsQueries.allSongs().executeAsList()
+        val rows = q.allSongsNow()
         return buildJsonObject {
             put("songs", buildJsonArray {
                 for (s in rows) {
@@ -614,7 +625,7 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
     /** Merges saved user data into matching songs: newer favorite wins, counts and last play take the larger value. */
     private fun applyUserData(user: JsonObject) {
         val q = library.repo.db
-        val local = q.songsQueries.allSongs().executeAsList().associateBy { it.unique_id }
+        val local = q.allSongsNow().associateBy { it.unique_id }
         val changed = ArrayList<Song>()
         for (e in user["songs"] as? JsonArray ?: JsonArray(emptyList())) {
             val o = e as? JsonObject ?: continue
@@ -650,22 +661,47 @@ class IndexCloud(private val account: AccountApi, private val index: ChatIndexAp
         }
     }
 
-    /** True when a snapshot was found and merged. */
+    /** True when a snapshot was found and merged. Read piece by piece, see [JsonStream]. */
     suspend fun restore(): Boolean {
-        val bytes = account.loadFromCloud(tag) ?: return false
-        val root = runCatching { Json.parseToJsonElement(bytes.decodeToString()) as? JsonObject }.getOrNull() ?: return false
-        val data = root["index"] ?: return false
-        index.import(data.toString())
-        (root["prefs"] as? JsonObject)?.forEach { (k, v) ->
+        val path = account.loadFromCloud(tag) ?: return false
+        var found = false
+        var prefs: JsonObject? = null
+        var user: JsonObject? = null
+        java.io.File(path).bufferedReader().use { reader ->
+            val json = JsonStream(reader)
+            if (!json.isObject) return false
+            json.obj { key ->
+                when {
+                    key == "index" && json.isObject -> { index.import(json); found = true }
+                    key == "prefs" -> prefs = json.value() as? JsonObject
+                    key == "user" -> user = json.value() as? JsonObject
+                    else -> json.skip()
+                }
+            }
+        }
+        if (!found) return false
+        prefs?.forEach { (k, v) ->
             if (k == IndexPrefs.AUTO || k == IndexPrefs.AUTO_COPY) (v as? JsonPrimitive)?.contentOrNull?.let { library.setPref(k, it) }
         }
-        (root["user"] as? JsonObject)?.let { runCatching { applyUserData(it) } }
+        user?.let { runCatching { applyUserData(it) } }
         return true
     }
 
-    /** Restores once after the first login on this install; failures are ignored and tried again next start. */
-    suspend fun restoreOnce() {
-        if (library.pref("cloud_restored") == "1") return
-        runCatching { restore(); library.setPref("cloud_restored", "1") }
+    private val restoring = Mutex()
+
+    /**
+     * Restores once after the first login on this install; true when a saved index was merged now. A failure is tried again at the next
+     * start. The account page and the start both ask; the second waits and finds it done.
+     */
+    suspend fun restoreOnce(): Boolean = restoring.withLock {
+        if (library.pref("cloud_restored") == "1") return false
+        try {
+            restore().also { library.setPref("cloud_restored", "1") }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            io.max.paperplay.player.PlayLog.log("index", "The saved index could not be restored: $e")
+            false
+        }
     }
 }

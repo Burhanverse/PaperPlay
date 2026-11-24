@@ -70,6 +70,16 @@ class IndexStoreTest {
         assertEquals(2, c.postCount)
         // Reading the same file again adds nothing.
         assertEquals(0, IndexFile.read(shared, other, 11, own = false).posts)
+        // "Complete" holds up to its own newest post only: an unfinished read further on must not stretch it, nor may missing posts.
+        fun chats(json: String) = IndexFile.mergeChats(kotlinx.serialization.json.Json.parseToJsonElement(json) as kotlinx.serialization.json.JsonArray, other, 13, own = true, progress = true)
+        other.setRead(-5, 2, true)
+        chats("""[{"id":-5,"title":"Public","newest":500,"complete":false,"count":1}]""")
+        assertEquals(2L to true, other.chat(-5)!!.let { it.newestMessageId to it.complete })
+        other.setRead(-5, 500, false)
+        chats("""[{"id":-5,"title":"Public","newest":900,"complete":true,"count":3}]""")
+        assertEquals(500L to false, other.chat(-5)!!.let { it.newestMessageId to it.complete })
+        chats("""[{"id":-5,"title":"Public","newest":2,"complete":true,"count":2}]""")
+        assertEquals(2L to true, other.chat(-5)!!.let { it.newestMessageId to it.complete })
         assertFailsWith<IllegalArgumentException> { IndexFile.read("{}", other, 12, own = false) }
         Unit
     }
