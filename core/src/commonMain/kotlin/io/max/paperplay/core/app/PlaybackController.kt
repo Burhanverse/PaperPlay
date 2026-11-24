@@ -68,6 +68,8 @@ class PlaybackController(
 ) {
     private class Meta(val queue: List<Song>, val shuffle: Boolean, val repeat: Repeat, val error: String?)
 
+    /** Counts queues that start at the index that was playing already. */
+    private val queueChanges = MutableStateFlow(0L)
     private val meta = MutableStateFlow(Meta(emptyList(), false, Repeat.OFF, null))
     private var original: List<Song> = emptyList()
     private var job: Job? = null
@@ -119,7 +121,9 @@ class PlaybackController(
         }
         scope.launch { engine.state.collect { if (it == PlayerState.Paused || it == PlayerState.Ended) saveSession() } }
         scope.launch {
-            engine.currentIndex.collect { idx ->
+            // The index alone does not tell: a new queue that starts at the place the old one was at changes the song but not the index, and
+            // what was heard next was counted for the old song.
+            combine(engine.currentIndex, queueChanges) { i, _ -> i }.collect { idx ->
                 val song = meta.value.queue.getOrNull(idx)
                 io.max.paperplay.player.PlayLog.log(
                     "controller",
@@ -578,6 +582,8 @@ class PlaybackController(
                 resolver.retain(order)
                 meta.value = Meta(order, shuffle, meta.value.repeat, null)
                 engine.setQueue(order.map(resolver::resolve), index, seekMs.coerceAtLeast(0L))
+                // Any other index comes through the engine once it has taken the queue; until then the old one means nothing in the new queue.
+                if (engine.currentIndex.value == index) queueChanges.update { it + 1 }
             }
             scope.launch { runCatching { resolver.fullyDownload(order.drop(index).take(3)) } }
             warm.await()?.let { err ->

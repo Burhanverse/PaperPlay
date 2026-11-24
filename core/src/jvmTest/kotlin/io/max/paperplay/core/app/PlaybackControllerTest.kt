@@ -129,6 +129,39 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun aNewQueueAtTheSameIndexIsANewSong() = runBlocking {
+        var now = 1_000L
+        val db = LibraryDatabase(libraryDriver())
+        val repo = LibraryRepository(LibraryRepo(db) { ++now }) { ++now }
+        val songs = (1L..4L).map { song(it) }
+        songs.forEach { db.songsQueries.insertSong(it) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = FakePlayerEngine()
+        val controller = PlaybackController(engine, TrackResolver { null }, repo, scope)
+        val heard = java.util.Collections.synchronizedList(ArrayList<Pair<String, Long>>())
+        controller.onListened = { s, ms -> heard += s.unique_id to ms }
+        try {
+            controller.setQueue(songs.take(2), 0)
+            await { engine.lastQueue.size == 2 && controller.nowPlayingStatic.value.song?.unique_id == "u1" }
+            delay(150)
+            for (t in 1L..6L) { engine.mutablePositionMs.value = t * 500; delay(20) }
+            // Another list, also from its first song.
+            controller.setQueue(songs.drop(2), 0)
+            await { engine.lastQueue.firstOrNull()?.uri == "tg-u3" }
+            await { heard.isNotEmpty() }
+            assertEquals("u1", heard.single().first)
+            delay(150)
+            for (t in 1L..6L) { engine.mutablePositionMs.value = t * 500; delay(20) }
+            controller.setQueue(songs.take(1), 0)
+            await { heard.size == 2 }
+            assertEquals("u3", heard[1].first)
+        } finally {
+            controller.release()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun aSongWhosePostIsDeletedLeavesTheQueueAndTheNextOnePlays() = runBlocking {
         var now = 1_000L
         val db = LibraryDatabase(libraryDriver())
