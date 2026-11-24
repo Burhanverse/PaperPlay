@@ -130,6 +130,7 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
       stable queue keys, handwritten baseline profile
 - [x] Seek bar wave stops drawing when the Android app is in the background (needs a phone check)
 - [x] Home mixes cached so Home opens faster
+- [~] Audit performance and lifecycle fixes: off-main `CoverSeeds` with per-URI state, stable `LocalPageTop`, deferred `g0` reads in `MainShell`, `SongRow`/`CoverImage`/`skeleton` recomposition and allocation fixes, idle animation gating, and `Onboarding` touch blocking (compiles, pending on-device verification)
 
 ### Song list, rows, search and playlist toolbar redesign (12 Nov, edited, compiles not tried)
 - [x] Slim song rows (one format chip plus status icon, size only when wide, `maxLines = 1`), slim search field with clear (`PillField`), grouped search results (Songs, Albums, Artists headers), playlist top bar overflow menu: all found in the code on 13 Nov (compiles, not tried). The flat opaque sticky Play/Shuffle/Sort bar was not re-checked

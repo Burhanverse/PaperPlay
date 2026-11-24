@@ -92,7 +92,6 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     val scanning by backend.scanning.collectAsState()
     val pbError by backend.playbackError.collectAsState()
     val conn by backend.connection.collectAsState()
-    val volume by backend.volume.collectAsState()
 
     // Phone: four tabs. Desktop: a sidebar page id.
     var tab by remember { mutableIntStateOf(0) }
@@ -286,12 +285,16 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     val g0 = androidx.compose.animation.animateColorAsState(backgroundTopColor(prefs, tint, base), androidx.compose.animation.core.tween(700))
     // The page itself is drawn by AppBackground; g0 only tints the window and top areas.
     // Colour of the page where a pinned list bar sits, a fifth of the way down: the cover wash eases from g0 to g1 over the top 45%.
-    val pinnedBar = androidx.compose.runtime.remember(tint, base, prefs.background) {
+    val tintState = androidx.compose.runtime.rememberUpdatedState(tint)
+    val baseState = androidx.compose.runtime.rememberUpdatedState(base)
+    val bgState = androidx.compose.runtime.rememberUpdatedState(prefs.background)
+    val pinnedBar = androidx.compose.runtime.remember(g0) {
         androidx.compose.runtime.derivedStateOf {
-            if (prefs.background == BgMode.Cover) {
-                val g1 = tint.copy(alpha = 0.32f).compositeOver(base)
+            val b = baseState.value
+            if (bgState.value == BgMode.Cover) {
+                val g1 = tintState.value.copy(alpha = 0.32f).compositeOver(b)
                 androidx.compose.ui.graphics.lerp(g0.value, g1, 0.45f)
-            } else base
+            } else b
         }
     }
 
@@ -469,6 +472,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 }
             } else {
                 // Desktop: sidebar, content card, now playing panel, player bar.
+                val volume by backend.volume.collectAsState()
                 LaunchedEffect(settings) { if (settings && settingsStack.isEmpty()) settingsStack.add("style") }
                 val playlistId = (detail as? Detail.Playlist)?.id
                 var showNow by remember { mutableStateOf(false) }
@@ -484,7 +488,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 LaunchedEffect(Unit) { kotlinx.coroutines.delay(25_000); waitingForSong = false }
                 val panel = prefs.nowPlayingPanel && (pb.current != null || waitingForSong) && !showNow
                 var sidebarExpanded by remember { mutableStateOf(true) }
-                WindowTint(g0.value)
+                WindowTintFromState(g0)
                 // The mouse back button goes back like the phone gesture.
                 // While the full now playing view is open the whole window takes the song's colours, so the sidebar and
                 // player bar sit on the same wash as the card instead of on the plain page background.
@@ -629,8 +633,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     }
                 }
             }
-            StatusToast(
-                conn, scan, if (lib.songs is Load.Ready) songs.size else 1, g0.value,
+            StatusToastFromState(
+                conn, scan, if (lib.songs is Load.Ready) songs.size else 1, g0,
                 if (isPhone) Modifier.align(Alignment.TopCenter).padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp)
                 // On a desktop it sits bottom right above the player bar, clear of page titles and the panel button.
                 else Modifier.align(Alignment.BottomEnd).padding(bottom = 96.dp, end = 8.dp),
@@ -709,3 +713,19 @@ private suspend fun waitForQuietStart() {
 }
 
 private val announcedConnecting = mutableSetOf<String>()
+
+@Composable
+private fun WindowTintFromState(g0: androidx.compose.runtime.State<androidx.compose.ui.graphics.Color>) {
+    WindowTint(g0.value)
+}
+
+@Composable
+private fun StatusToastFromState(
+    conn: ConnectionUi,
+    scan: androidx.compose.runtime.State<ScanUi?>,
+    songCount: Int,
+    g0: androidx.compose.runtime.State<androidx.compose.ui.graphics.Color>,
+    modifier: Modifier,
+) {
+    StatusToast(conn, scan, songCount, g0.value, modifier)
+}
