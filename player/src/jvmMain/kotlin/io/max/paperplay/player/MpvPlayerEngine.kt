@@ -128,7 +128,9 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 MpvC.EVENT_PLAYBACK_RESTART -> cmd {
                     // Fast seeking can leave the exclusive buffer corrupt without any under-run being logged (static until pause and play,
                     // which reopens it). Reopen it here, while still muted, once the burst has settled.
-                    if (exclusive && seekBursts >= 2) { seekBursts = 0; reloadOutput("fast seek") }
+                    // The stream was paused across the seek, so the device is not left corrupt and needs no reopening (that took a second of noise).
+                    // The seek is done while still paused and muted: open the device afresh (a clean buffer), then resume.
+                    if (seekPaused) reloadOutput("seek")
                     endSeekMute(); publishInfo()
                 }
                 MpvC.EVENT_END_FILE -> { val reason = ev.getPointer(16)?.getInt(0) ?: MpvC.END_EOF; cmd { onEndFile(reason) } }
@@ -169,8 +171,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         val prefix = p.getPointer(0)?.getString(0, "UTF-8") ?: return
         val text = p.getPointer(16)?.getString(0, "UTF-8")?.trim() ?: return
         // The output has fallen behind for good (heard as static and slow sound): open it again, the way switching bit-perfect off and on does.
-        // Right after a seek one under-run is enough: that is the burst that leaves the exclusive buffer starved.
-        if (exclusive && prefix.startsWith("ao") && text.startsWith("Under-run") && (underruns.hit() || System.currentTimeMillis() - seekAt < 500)) {
+        // Under-runs while a seek has the stream paused are expected and do not count.
+        if (exclusive && prefix.startsWith("ao") && text.startsWith("Under-run") && !seekPaused && underruns.hit()) {
             cmd { reloadOutput("under-runs"); endSeekMute() }
         }
         val line = "$prefix: $text"
@@ -195,7 +197,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             "demuxer-cache-time" -> if (format == MpvC.FORMAT_DOUBLE) _bufferedMs.value = (data.getDouble(0) * 1000).toLong().coerceAtLeast(0)
             "pause" -> if (format == MpvC.FORMAT_FLAG) {
                 paused = data.getInt(0) != 0
-                if (loaded && (_state.value == PlayerState.Playing || _state.value == PlayerState.Paused)) _state.value = if (paused) PlayerState.Paused else PlayerState.Playing
+                if (loaded && !seekPaused && (_state.value == PlayerState.Playing || _state.value == PlayerState.Paused)) _state.value = if (paused) PlayerState.Paused else PlayerState.Playing
             }
         }
     }
@@ -326,6 +328,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         if (_state.value == PlayerState.Ended) start(_currentIndex.value) else setProp("pause", "no")
     }
     override fun pause() = cmd {
+        // A pause during a seek's own pause sets nothing new in mpv, so the state is set here.
+        if (seekPaused) { seekPaused = false; if (loaded) _state.value = PlayerState.Paused }
         setProp("pause", "yes")
         if (exclusive) { setProp("audio-exclusive", "no"); publishInfo() }
     }
@@ -337,8 +341,6 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     }
     @Volatile private var pendingSeek = Long.MIN_VALUE
     @Volatile private var seekMuted = false
-    /** Seeks that came within [FAST_SEEK_MS] of the one before. */
-    @Volatile private var seekBursts = 0
 
     override fun seek(positionMs: Long) {
         pendingSeek = positionMs
@@ -348,18 +350,31 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             if (pendingSeek != positionMs) return@cmd
             if (loaded && exclusive) Thread.sleep(SEEK_SETTLE_MS)
             if (pendingSeek != positionMs) return@cmd
-            val now = System.currentTimeMillis()
-            seekBursts = if (now - seekAt < FAST_SEEK_MS) seekBursts + 1 else 0
-            seekTarget = positionMs; seekAt = now
+            seekTarget = positionMs; seekAt = System.currentTimeMillis()
             // Nothing loaded yet (a session being restored): remember the place, the song is opened there once it has loaded.
             if (!loaded) { resumeAtMs = positionMs.coerceAtLeast(0); return@cmd }
             // Exclusive output has no mixer to hide the jump: mute across it, and unmute when playback has restarted.
-            if (exclusive && !seekMuted) { setProp("mute", "yes"); seekMuted = true }
+            // The stream is also paused, so the device is not left starved while the seek decodes (that was the static).
+            if (exclusive && !seekMuted) {
+                setProp("mute", "yes"); seekMuted = true
+                if (!paused) { seekPaused = true; setProp("pause", "yes") }
+            }
+            if (exclusive) {
+                // Safety: never stay paused or muted if the restart event does not come.
+                val at = seekAt
+                Thread { Thread.sleep(SEEK_RESUME_LIMIT_MS); cmd { if (seekAt == at) endSeekMute() } }.apply { isDaemon = true; name = "seek-resume" }.start()
+            }
             command("seek", "%.3f".format(java.util.Locale.ROOT, positionMs.coerceAtLeast(0) / 1000.0), "absolute+exact")
         }
     }
 
-    private fun endSeekMute() { if (seekMuted) { seekMuted = false; setProp("mute", "no") } }
+    /** Paused only for the seek, so the player state shows no pause and the stream resumes when the seek is done. */
+    @Volatile private var seekPaused = false
+
+    private fun endSeekMute() {
+        if (seekPaused) { seekPaused = false; setProp("pause", "no") }
+        if (seekMuted) { seekMuted = false; setProp("mute", "no") }
+    }
 
     // ---- sound settings
 
@@ -515,7 +530,8 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         const val RESTART_THRESHOLD_MS = 3000L
         /** Seeks closer together than this are one seek, to the last place. */
         const val SEEK_SETTLE_MS = 80L
-        const val FAST_SEEK_MS = 1_500L
+        /** A seek never keeps the stream paused longer than this, even if the restart event does not come. */
+        const val SEEK_RESUME_LIMIT_MS = 1_500L
     }
 }
 
