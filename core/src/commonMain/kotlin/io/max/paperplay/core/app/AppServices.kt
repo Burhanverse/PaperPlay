@@ -883,6 +883,12 @@ class AppServices(
             (account as? io.max.paperplay.core.account.UserSession)?.closeForBackup()
             runtime?.stop()
         } finally {
+            // Work in the middle of a database call ends before the database is closed under it. A caller that is itself part of this scope
+            // would wait for itself, so it is not waited for longer than this.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                scope.cancel()
+                kotlinx.coroutines.withTimeoutOrNull(3.seconds) { scope.coroutineContext[Job]?.join() }
+            }
             close()
         }
     }
