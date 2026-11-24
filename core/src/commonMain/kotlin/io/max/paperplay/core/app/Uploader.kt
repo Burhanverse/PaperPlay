@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -35,6 +37,7 @@ import kotlinx.serialization.json.put
 import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.hours
 
 enum class UploadStatus { Queued, Uploading, Done, Failed }
 
@@ -357,8 +360,13 @@ class Uploader(
                 put("input_message_content", audioContent(buildJsonObject { put("@type", "inputFileLocal"); put("path", job.path) }, newApi, title, artist, seconds))
             }, 2.minutes)
             sent.obj("content")?.obj("audio")?.obj("audio")?.long("id")?.let { fileId.complete(it) }
-            sentId.complete(sent.long("id") ?: throw TdError(0, "Telegram did not accept the file."))
-            val done = withTimeoutOrNull(30.minutes) { outcome.await() } ?: throw TdError(408, "Upload timed out")
+            val tempId = sent.long("id") ?: throw TdError(0, "Telegram did not accept the file.")
+            sentId.complete(tempId)
+            val done = withTimeoutOrNull(3.hours) { outcome.await() } ?: run {
+                // It is sent again after this, so the one still uploading has to go, or both would be posted.
+                runCatching { c.call(request("deleteMessages") { put("chat_id", job.chatId); put("message_ids", JsonArray(listOf(JsonPrimitive(tempId)))); put("revoke", true) }) }
+                throw TdError(408, "Upload timed out")
+            }
             if (done["@type"]?.jsonPrimitive?.content == "updateMessageSendFailed") {
                 val err = done.obj("error")
                 throw TdError(err?.long("code")?.toInt() ?: 0, err?.str("message") ?: "Telegram refused the file.")
