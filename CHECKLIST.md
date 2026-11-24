@@ -854,3 +854,7 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Index preview: play indexed songs without adding them (`IndexPreview`, `CoreBackend.previewPost`), play button on index rows, thumbnails and tap-to-play in Search "In your indexed chats", copy-to-main button in the player for previewed songs, temporary files cleared after 10 minutes idle, word-based index search (`IndexStore.words`). Debug build installed; `[~]` pending on-device check (play, copy, cleanup, search).
 - [ ] "Bot can't reach" count differs per device (`remote_id` is not synced). Idea: carry the bot owner in LAN sync or claim account songs in the background.
 - [ ] Duplicate detection needs work (cases not yet given).
+- [~] Search keeps its text and results when the full player is closed (`keptSearch` in `Screens.kt`); indexed results show a temporary cover read from Telegram (memory only, `CoreBackend.postThumb`). `[~]` not checked on a device.
+- [~] Settings search lists options inside pages (`SettingsIndex.kt`, hand-kept list); tapping one opens the page, scrolls to the row and flashes it (`searchFocus`, non-lazy pages only). `[~]` not checked on a device; new options need an entry in `settingHits`.
+- [~] Copying songs from the index on its own (`index_auto_copy`) is off by default; was on, which re-added songs after a duplicate delete. `[~]` cause not confirmed on a device.
+- [~] PR #15 (UAC 1.0 composite DAC) merged as `1f8a873`; USB tests and debug build pass; not installed, not tried with a DAC.
