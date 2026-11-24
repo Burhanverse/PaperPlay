@@ -264,7 +264,7 @@ class BitPerfectRebuildAndAttachTest {
     }
 
     @Test
-    fun `rebuild on empty or ended queue never calls setMediaItems prepare or play`() {
+    fun `rebuild on empty queue never calls setMediaItems prepare or play, and rebuild on ended queue preserves items without prepare or play`() {
         val emptyEvents = mutableListOf<String>()
         val emptyOld = FakePlayer(
             items = mutableListOf(),
@@ -292,8 +292,8 @@ class BitPerfectRebuildAndAttachTest {
 
         val endedEvents = mutableListOf<String>()
         val endedOld = FakePlayer(
-            items = mutableListOf("only-song"),
-            currentIndex = 0,
+            items = mutableListOf("only-song", "second-song"),
+            currentIndex = 1,
             positionMs = 180_000L,
             playbackState = PlaybackStateConst.STATE_ENDED,
             pwr = true,
@@ -308,12 +308,17 @@ class BitPerfectRebuildAndAttachTest {
             wrapForwarding = { it },
             session = endedSession.adapter(),
         )
-        assertFalse(endedPlan.shouldSetItems)
+        assertTrue(endedPlan.shouldSetItems)
         assertFalse(endedPlan.shouldPrepareQueue)
         assertFalse(endedPlan.targetPlayWhenReady)
-        assertFalse(nextEnded.mediaItemsSet)
+        assertTrue(nextEnded.mediaItemsSet)
+        assertEquals(listOf("only-song", "second-song"), nextEnded.items)
+        assertEquals(1, nextEnded.currentIndex)
+        assertEquals(0L, nextEnded.positionMs)
         assertFalse(nextEnded.prepared)
         assertFalse(nextEnded.playWhenReady)
+        endedSession.player!!.playCommand()
+        assertTrue(nextEnded.playWhenReady)
     }
 
     @Test

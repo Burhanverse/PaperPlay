@@ -109,13 +109,14 @@ object BitPerfectRebuildPolicy {
             )
         }
         if (snap.playbackState == PlaybackStateConst.STATE_ENDED) {
+            val safeIdx = if (snap.currentIndex in 0 until snap.itemCount) snap.currentIndex else 0
             return RebuildPlan(
-                shouldSetItems = false,
+                shouldSetItems = true,
                 shouldPrepareQueue = false,
-                safeIndex = 0,
+                safeIndex = safeIdx,
                 safePositionMs = 0L,
                 targetPlayWhenReady = false,
-                reason = "ended queue",
+                reason = "ended queue preserved",
             )
         }
         val intendedPlay = snap.userPlayIntent &&
