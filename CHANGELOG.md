@@ -2,6 +2,16 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.21.0] - 2026-11-24
+
+### Added
+- Add modern full-screen player UI with configurable backdrop blur ([`f2123c5`](https://github.com/maxcodl/PaperPlay/commit/f2123c50e8096aee8d8f58dbe52c86c1d0073e7a))
+
+### Other changes
+- Profile listening card: two columns on wide windows ([`30ca672`](https://github.com/maxcodl/PaperPlay/commit/30ca6727d666a3a8edd153d1bacd38aba60dceda))
+
+**Full changes:** [v1.20.1...v1.21.0](https://github.com/maxcodl/PaperPlay/compare/v1.20.1...v1.21.0)
+
 ## [1.20.1] - 2026-11-24
 
 ### Other changes
