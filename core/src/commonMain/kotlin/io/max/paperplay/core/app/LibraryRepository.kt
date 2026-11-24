@@ -75,7 +75,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
 
     /** Runs [block] as one database transaction and signals one change (coalesced when [soft]). */
     fun <T> batch(soft: Boolean = true, block: () -> T): T =
-        write(soft) { repo.db.transactionWithResult { block() } }
+        write(soft) { repo.db.transactionWithResult { repo.lockForWrite(); block() } }
 
     private val allShared: Flow<List<Song>> by lazy {
         watch { songs.allSongs().executeAsList() }

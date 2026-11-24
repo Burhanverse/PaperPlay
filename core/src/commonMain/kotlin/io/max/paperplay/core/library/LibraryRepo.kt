@@ -63,6 +63,13 @@ class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
 
     fun cacheLimit(): Long = pref("cache_limit")?.toLongOrNull() ?: DEFAULT_CACHE_LIMIT
 
+    /**
+     * First thing in a transaction that reads before it writes. On the desktop such a transaction starts as a reader, and when another
+     * thread writes before its own first write, SQLite refuses it at once ("database is locked") without waiting. A write that changes
+     * nothing takes the lock first, and that one waits its turn.
+     */
+    fun lockForWrite() = misc.advanceScanned(0, Long.MIN_VALUE)
+
     fun addListen(origin: String, day: String, key: String, ms: Long, plays: Long) = db.transaction {
         misc.addListenUpdate(ms, plays, origin, day, key)
         misc.insertListen(origin, day, key, ms, plays)
@@ -106,6 +113,7 @@ class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
      * file listed under another post is remembered as a copy. True only when a new song was created.
      */
     fun upsertBotSong(s: Song): Boolean = db.transactionWithResult {
+        lockForWrite()
         if (songs.song(s.chat_id, s.message_id).executeAsOneOrNull() != null) {
             songs.refreshPost(s.remote_id, s.topic_id, s.chat_id, s.message_id)
             return@transactionWithResult false
@@ -174,6 +182,7 @@ class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
 
     /** Hands [from]'s playlist entries and favorite to [to], before [from] is deleted. */
     fun moveReferences(from: Song, to: Song) = db.transaction {
+        lockForWrite()
         moveEntries(from.chat_id, from.message_id, to.chat_id, to.message_id)
         if (from.favorite && !to.favorite) songs.setFavorite(true, clock(), to.chat_id, to.message_id)
     }

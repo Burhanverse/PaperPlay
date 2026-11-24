@@ -88,6 +88,24 @@ class LibraryDbTest {
         assertNull(q.songByUniqueId("same").executeAsOneOrNull())
     }
 
+    /** A batch that reads first and writes later waits for other writers instead of failing with "database is locked". */
+    @Test
+    fun aBatchThatReadsFirstIsNotRefusedWhileOthersWrite() {
+        val f = java.nio.file.Files.createTempDirectory("busy").toFile().let { java.io.File(it, "l.sqlite").path.replace('\\', '/') }
+        val library = io.max.paperplay.core.app.LibraryRepository(LibraryRepo(LibraryDatabase(libraryDriver(f))) { 1L }) { 1L }
+        val other = LibraryRepo(LibraryDatabase(libraryDriver(f))) { 1L }
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val writer = Thread { var i = 0; while (!stop.get()) { other.setPref("k", "${i++}"); Thread.sleep(1) } }.apply { start() }
+        try {
+            repeat(30) { n ->
+                library.batch { library.repo.db.songsQueries.allSongs().executeAsList(); Thread.sleep(8); library.setPref("mine", "$n") }
+            }
+        } finally {
+            stop.set(true); writer.join()
+        }
+        assertEquals("29", library.pref("mine"))
+    }
+
     @Test
     fun listenStatsAddAndMerge() {
         val repo = open()

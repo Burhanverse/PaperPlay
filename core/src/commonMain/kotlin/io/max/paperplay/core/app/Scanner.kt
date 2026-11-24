@@ -589,6 +589,7 @@ class Scanner(
                 holes += requested.size - messages.size
                 // One transaction and one change notice for the whole page.
                 repo.repo.db.transaction {
+                    repo.repo.lockForWrite()
                     for (m in messages) {
                         m.long("id")?.let { newest = maxOf(newest, it) }
                         saveTopicName(m)
