@@ -126,7 +126,9 @@ class Uploader(
         }
     }
     val isPaused: StateFlow<Boolean> = paused
-    private var running = false
+    @Volatile private var running = false
+    private val pumpLock = Any()
+    private val sentLock = Any()
     private val gate = Mutex()
     private var uploaded = 0
 
@@ -144,7 +146,19 @@ class Uploader(
     ): EnqueueResult {
         val skipKnown = pref("upload_skip_known") != "false"
         val known = if (skipKnown) knownSongs().mapTo(HashSet()) { sentKey(it.first, it.second) } else emptySet()
-        val sentBefore = if (skipKnown) sentFiles().keys else emptySet()
+        val sentBefore = if (skipKnown) sentKeysSnapshot() else emptySet()
+        val existingJobs = _jobs.value
+        val queuedKeys = if (skipKnown) {
+            existingJobs.mapNotNullTo(HashSet()) {
+                if (it.chatId == chatId && it.status != UploadStatus.Failed) sentKey(it.name, it.size) else null
+            }
+        } else {
+            emptySet()
+        }
+        val queuedPaths = existingJobs.mapNotNullTo(HashSet()) {
+            if (it.chatId == chatId && it.status != UploadStatus.Done && it.status != UploadStatus.Failed) it.path else null
+        }
+        val freshKeys = HashSet<String>()
         var notAudio = 0
         var skipped = 0
         var tooSmall = 0
@@ -165,15 +179,15 @@ class Uploader(
             }
             // Known to the library, sent by this app before (the library only learns of a song after a scan), or already in the queue.
             val key = sentKey(name, size)
-            val queuedAlready = skipKnown && _jobs.value.any { sentKey(it.name, it.size) == key && it.chatId == chatId && it.status != UploadStatus.Failed } || key in fresh.map { sentKey(it.name, it.size) }
+            val queuedAlready = (skipKnown && key in queuedKeys) || key in freshKeys
             if (key in known || key in sentBefore || queuedAlready) {
                 appLog("enqueue", "skipped $name: library=${key in known} sentBefore=${key in sentBefore} queued=$queuedAlready")
                 skipped++
                 if (temporary) deleteFile(p)
                 continue
             }
-            val waiting = _jobs.value.any { it.path == p && it.chatId == chatId && it.status != UploadStatus.Done && it.status != UploadStatus.Failed }
-            if (waiting) continue
+            if (p in queuedPaths) continue
+            freshKeys.add(key)
             fresh += UploadJob(newUuid(), p, name, size, chatId, chatTitle, topicId, topicName, temporary = temporary)
         }
         _jobs.update { it + fresh }
@@ -188,15 +202,22 @@ class Uploader(
 
     private var sent: MutableMap<String, Long>? = null
 
-    /** Files this app has sent, kept across restarts. */
-    private fun sentFiles(): MutableMap<String, Long> = sent ?: runCatching {
+    /** Files this app has sent, kept across restarts. Caller must hold [sentLock]. */
+    private fun sentFilesLocked(): MutableMap<String, Long> = sent ?: runCatching {
         Json.parseToJsonElement(pref(SENT_PREF) ?: "{}").jsonObject.mapValues { it.value.jsonPrimitive.content.toLong() }.toMutableMap()
     }.getOrElse { mutableMapOf() }.also { sent = it }
 
+    private fun sentKeysSnapshot(): Set<String> = synchronized(sentLock) {
+        HashSet(sentFilesLocked().keys)
+    }
+
     private fun rememberSent(job: UploadJob) {
-        val files = sentFiles()
-        files[sentKey(job.name, job.size)] = nowMs()
-        runCatching { setPref(SENT_PREF, kotlinx.serialization.json.JsonObject(files.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }).toString()) }
+        val serialized = synchronized(sentLock) {
+            val files = sentFilesLocked()
+            files[sentKey(job.name, job.size)] = nowMs()
+            kotlinx.serialization.json.JsonObject(files.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }).toString()
+        }
+        runCatching { setPref(SENT_PREF, serialized) }
     }
 
     fun retry(id: String) {
@@ -232,14 +253,16 @@ class Uploader(
     private fun update(id: String, change: (UploadJob) -> UploadJob) = _jobs.update { l -> l.map { if (it.id == id) change(it) else it } }
 
     private fun pump() {
-        if (running || paused.value) return
-        running = true
+        synchronized(pumpLock) {
+            if (running || paused.value) return
+            running = true
+        }
         scope.launch {
             try {
                 val parallel = (pref("upload_parallel")?.toIntOrNull() ?: 6).coerceIn(1, 20)
                 List(parallel) { launch { worker() } }.joinAll()
             } finally {
-                running = false
+                synchronized(pumpLock) { running = false }
             }
             if (!paused.value && _jobs.value.any { it.status == UploadStatus.Queued }) pump()
         }
