@@ -106,7 +106,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private val identityPub: ByteArray
     private val deviceId: String = lib.pref("device_id") ?: newUuid().also { lib.setPref("device_id", it) }
     private val guard = PairingGuard(env.clock, ::randomDigits)
-    private val book = AddressBook({ lib.pref("lan_addresses") }, { lib.setPref("lan_addresses", it) }, env.clock)
+    private val book = AddressBook({ lib.pref("lan_addresses") }, { if (lib.pref("lan_addresses") != it) lib.setPref("lan_addresses", it) }, env.clock)
     private val store = SnapshotStore(lib) { ids -> env.data?.stillPosted(ids).orEmpty() }
 
     private val _listening = MutableStateFlow(false)
