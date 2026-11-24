@@ -1,6 +1,8 @@
 package io.max.paperplay.core.sync.netplay
 
 import io.max.paperplay.core.library.newUuid
+import io.max.paperplay.core.sync.MAX_GUEST_FRAME
+import io.max.paperplay.core.sync.MAX_STRANGER_FRAME
 import io.max.paperplay.core.sync.CodeAttempt
 import io.max.paperplay.core.sync.clientHandshake
 import io.max.paperplay.core.sync.constantEq
@@ -211,7 +213,7 @@ internal class JavaNetplay(private val env: NetplayEnv) : Netplay {
             val inp = DataInputStream(BufferedInputStream(s.getInputStream()))
             val out = DataOutputStream(BufferedOutputStream(s.getOutputStream()))
             val hs = serverHandshake(inp, out)
-            val first = parseObj(hs.channel.receive())
+            val first = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
             if (first.str("t") != "np-hello") throw IOException("bad message")
             try {
                 admitted = admit(hr, first, hs.transcript, hs.channel, source, s)
@@ -236,7 +238,7 @@ internal class JavaNetplay(private val env: NetplayEnv) : Netplay {
         try {
             s.soTimeout = 20_000
             s.keepAlive = true
-            while (true) handleGuest(hr, g, parseObj(g.ch.receive()))
+            while (true) handleGuest(hr, g, parseObj(g.ch.receive(MAX_GUEST_FRAME)))
         } catch (e: Exception) {
             // Link closed, timed out or damaged.
         } finally {

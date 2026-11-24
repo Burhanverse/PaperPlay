@@ -265,7 +265,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             val out = DataOutputStream(BufferedOutputStream(s.getOutputStream()))
             val hs = serverHandshake(inp, out)
             val ch = hs.channel
-            val first = parseObj(ch.receive())
+            val first = parseObj(ch.receive(MAX_STRANGER_FRAME))
             val source = (s.remoteSocketAddress as? InetSocketAddress)?.address?.hostAddress ?: "?"
             if (first.str("t") != "auth") throw IOException("bad message")
             if (first.str("m") == "probe") {
@@ -540,7 +540,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                     put("proof", b64(proof(secret, label, "client", t, identityPub)))
                 }.toString().encodeToByteArray(),
             )
-            val reply = parseObj(hs.channel.receive())
+            val reply = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
             if (reply.str("t") != "auth-ok") {
                 failure = failureOf(reply.str("why"))
                 throw AuthFail(failure)
@@ -896,7 +896,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             val out = DataOutputStream(BufferedOutputStream(s.getOutputStream()))
             val hs = clientHandshake(inp, out)
             hs.channel.send(buildJsonObject { put("t", "auth"); put("m", "probe") }.toString().encodeToByteArray())
-            val r = parseObj(hs.channel.receive())
+            val r = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
             if (r.str("t") != "probe-ok") return null
             val id = r.reqStr("id")
             if (id == deviceId) return null

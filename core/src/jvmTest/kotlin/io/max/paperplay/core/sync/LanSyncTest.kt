@@ -105,6 +105,15 @@ class LanSyncTest {
         }
     }
 
+    @Test fun aStrangerCannotClaimABigFrame() {
+        val claim = java.io.ByteArrayOutputStream().also { java.io.DataOutputStream(it).writeInt(32 * 1024 * 1024) }.toByteArray()
+        val ch = SecureChannel(
+            java.io.DataInputStream(claim.inputStream()), java.io.DataOutputStream(java.io.ByteArrayOutputStream()), ByteArray(32), ByteArray(32),
+        )
+        val e = runCatching { ch.receive(MAX_STRANGER_FRAME) }.exceptionOrNull()
+        assertEquals("bad frame size", e?.message)
+    }
+
     @Test fun bigSyncsFromBothSidesAtOnceDoNotStopTheLink() = runBlocking {
         fun big(chat: Long) = Array(400) { song(chat, it.toLong(), "u$chat-$it").copy(lyrics = "la ".repeat(6_000), favorite = true) }
         val a = node("A", "tok", *big(1))

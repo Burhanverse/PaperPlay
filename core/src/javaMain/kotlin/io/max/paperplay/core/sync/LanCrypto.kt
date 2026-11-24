@@ -118,6 +118,15 @@ internal fun constantEq(a: ByteArray, b: ByteArray): Boolean = MessageDigest.isE
 
 internal const val MAX_FRAME = 32 * 1024 * 1024
 
+/**
+ * The most a device may send before it has shown who it is. Memory is taken for a frame before it arrives, so a stranger on the network
+ * could otherwise ask for hundreds of MB with a few bytes and crash a phone.
+ */
+internal const val MAX_STRANGER_FRAME = 64 * 1024
+
+/** The most a guest of a listening session may send; guests send short commands. */
+internal const val MAX_GUEST_FRAME = 1024 * 1024
+
 internal fun writeFrame(out: DataOutputStream, bytes: ByteArray) {
     out.writeInt(bytes.size)
     out.write(bytes)
@@ -165,8 +174,8 @@ internal class SecureChannel(
     }
 
     /** Blocks for the next frame. Throws on a bad frame; the caller closes the link. */
-    fun receive(): ByteArray {
-        val ct = readFrame(input)
+    fun receive(max: Int = MAX_FRAME): ByteArray {
+        val ct = readFrame(input, max)
         val plain = cipher(Cipher.DECRYPT_MODE, recvKey, recvCounter).doFinal(ct)
         recvCounter++
         return plain
