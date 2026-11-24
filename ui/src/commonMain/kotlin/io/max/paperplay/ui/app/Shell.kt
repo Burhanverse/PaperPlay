@@ -73,6 +73,8 @@ import io.max.paperplay.ui.state.Load
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
+internal val LocalOutputDevice = androidx.compose.runtime.staticCompositionLocalOf<io.max.paperplay.ui.OutputDevice?> { null }
+
 private data class NavSnapshot(
     val tab: Int, val libraryTab: Int?, val profilePage: String?, val detail: Detail?,
     val settings: Boolean, val settingsStack: List<String>, val settingsDeep: Boolean, val page: String,
@@ -177,10 +179,15 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
 
     val tagDialogs = remember { TagDialogState() }
     // The sound output goes to linked devices with the playing state, so each one can say where the music is heard.
-    run {
-        val out = io.max.paperplay.ui.rememberOutputDevice()
-        androidx.compose.runtime.SideEffect {
-            backend.services.outputInfo = { out.name to (if (out.external) "headphones" else if (isPhone) "phone" else "speakers") }
+    val out = io.max.paperplay.ui.rememberOutputDevice()
+    androidx.compose.runtime.SideEffect {
+        backend.services.outputInfo = { out.name to (if (out.external) "headphones" else if (isPhone) "phone" else "speakers") }
+    }
+    // Prewarm the full-player cover bitmap and palette on track change rather than on the first frame of opening the sheet.
+    LaunchedEffect(pb.current?.coverUri) {
+        pb.current?.coverUri?.let { uri ->
+            loader.preload(listOf(uri), 1280)
+            CoverSeeds.palette(uri)
         }
     }
     val actions = remember(backend) {
@@ -325,7 +332,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             copyPreview = { backend.copyPreview(it) },
             openSearch = { id, q -> openChat(id, backend.chatIndex.chats.value.firstOrNull { it.id == id }?.title ?: "Indexed chat", q) },
         )
-    }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput, { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } }, { id -> backend.switchOutput(id, move = true) { m -> scope.launch { snack.showSnackbar(m) } } }) }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputDevice provides out, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput, { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } }, { id -> backend.switchOutput(id, move = true) { m -> scope.launch { snack.showSnackbar(m) } } }) }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).

@@ -25,7 +25,7 @@ import io.max.paperplay.ui.theme.sheetSpring
  * Where the full player sits between closed and open. [progress] is 0 closed and 1 open; [pulled] is how far a finger
  * has dragged the open sheet down, in pixels. Both are read only in a layer block, so moving the sheet never recomposes it.
  */
-class PlayerSheetState {
+class PlayerSheetState(val standalone: Boolean = false) {
     val progress = Animatable(0f)
     var pulled by mutableFloatStateOf(0f)
         private set
@@ -70,7 +70,7 @@ class PlayerSheetState {
 }
 
 /** The sheet the full player is in. Outside a [PlayerSheetHost] (previews) it is a stand-alone one that moves nothing. */
-val LocalPlayerSheet = staticCompositionLocalOf { PlayerSheetState() }
+val LocalPlayerSheet = staticCompositionLocalOf { PlayerSheetState(standalone = true) }
 
 internal const val COVERED_ENTER_PROGRESS = 0.999f
 internal const val COVERED_EXIT_PROGRESS = 0.98f

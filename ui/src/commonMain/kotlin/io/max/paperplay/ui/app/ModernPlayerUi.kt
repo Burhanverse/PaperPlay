@@ -65,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -144,6 +145,10 @@ internal fun ModernFullPlayer(
     modifier: Modifier = Modifier,
 ) {
     val song = state.current ?: return
+    val sheet = LocalPlayerSheet.current
+    val settled by remember(sheet) {
+        derivedStateOf { sheet.standalone || (!sheet.isAnimating && sheet.pulled <= 0f && sheet.progress.value >= COVERED_ENTER_PROGRESS) }
+    }
     val backdrop = rememberLayerBackdrop()
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -151,12 +156,12 @@ internal fun ModernFullPlayer(
 
     MaterialTheme(colorScheme = scheme) {
         Box(modifier.fillMaxSize()) {
-            // Backdrop recorded for real glass blur by GlassPillButton & GlassSplitPill.
-            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                ModernPlayerBackdrop(song.coverUri, scheme, state.playing)
+            // Backdrop recorded for real glass blur by GlassPillButton & GlassSplitPill once the sheet settles.
+            Box(if (settled) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()) {
+                ModernPlayerBackdrop(song.coverUri, scheme, state.playing, settled = settled)
             }
 
-            CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            CompositionLocalProvider(LocalGlassBackdrop provides (if (settled) backdrop else null)) {
                 BoxWithConstraints(
                     Modifier
                         .fillMaxSize()

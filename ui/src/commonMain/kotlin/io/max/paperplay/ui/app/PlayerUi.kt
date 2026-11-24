@@ -374,7 +374,7 @@ private fun PlayerBody(
                     AppIcon(Icons.AutoMirrored.Rounded.VolumeUp, "Louder", Modifier.size(18.dp), tint = scheme.onSurface.copy(alpha = 0.65f))
                 }
                 // Output device pill, like the AirPods one in Apple Music.
-                val out = io.max.paperplay.ui.rememberOutputDevice()
+                val out = LocalOutputDevice.current ?: io.max.paperplay.ui.rememberOutputDevice()
                 var devicesOpen by remember { mutableStateOf(false) }
                 val switchOutput = io.max.paperplay.ui.rememberOutputSwitcher()
                 // When another linked device is the one playing, the pill says so instead of naming this phone's speaker or headphones.

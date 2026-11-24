@@ -181,6 +181,7 @@ internal fun ModernPlayerBackdrop(
     scheme: ColorScheme,
     playing: Boolean,
     modifier: Modifier = Modifier,
+    settled: Boolean = true,
 ) {
     val loader = LocalCoverLoader.current
     val foreground = rememberAppForeground()
@@ -196,9 +197,14 @@ internal fun ModernPlayerBackdrop(
         ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.76f) })
     }
     val time = remember { mutableFloatStateOf(0f) }
+    val bloomAlpha by animateFloatAsState(
+        targetValue = if (settled) 1f else 0f,
+        animationSpec = motionTween(Motion.FAST),
+        label = "bloomSettled",
+    )
 
-    LaunchedEffect(playing, foreground, reduceMotion, reducedTransparency) {
-        if (!playing || !foreground || reduceMotion || reducedTransparency) return@LaunchedEffect
+    LaunchedEffect(playing, foreground, settled, reduceMotion, reducedTransparency) {
+        if (!playing || !foreground || !settled || reduceMotion || reducedTransparency) return@LaunchedEffect
         var last = 0L
         while (isActive) {
             withFrameNanos { now ->
@@ -231,7 +237,7 @@ internal fun ModernPlayerBackdrop(
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize()
                             .graphicsLayer { scaleX = 1.25f; scaleY = 1.25f }
-                            .then(if (blurDp > 0.5f && glassEffectsSupported()) Modifier.blur((blurDp * 0.6f).dp) else Modifier),
+                            .then(if (settled && blurDp > 0.5f && glassEffectsSupported()) Modifier.blur((blurDp * 0.6f).dp) else Modifier),
                         contentScale = ContentScale.Crop,
                         colorFilter = desatFilter,
                     )
@@ -256,6 +262,8 @@ internal fun ModernPlayerBackdrop(
             val c1 = palette[0]
             val c2 = palette.getOrElse(1) { scheme.tertiary }
             Canvas(Modifier.fillMaxSize()) {
+                val ba = bloomAlpha
+                if (ba <= 0.001f) return@Canvas
                 val t = time.floatValue
                 val w = size.width
                 val h = size.height
@@ -263,7 +271,7 @@ internal fun ModernPlayerBackdrop(
                 val y1 = h * (0.26f + 0.08f * cos(t * 0.17f))
                 val r1 = maxOf(w, h) * 0.55f
                 drawCircle(
-                    brush = Brush.radialGradient(listOf(c1.copy(alpha = 0.24f), Color.Transparent), Offset(x1, y1), r1),
+                    brush = Brush.radialGradient(listOf(c1.copy(alpha = 0.24f * ba), Color.Transparent), Offset(x1, y1), r1),
                     radius = r1,
                     center = Offset(x1, y1),
                 )
@@ -271,7 +279,7 @@ internal fun ModernPlayerBackdrop(
                 val y2 = h * (0.62f + 0.09f * sin(t * 0.15f))
                 val r2 = maxOf(w, h) * 0.50f
                 drawCircle(
-                    brush = Brush.radialGradient(listOf(c2.copy(alpha = 0.20f), Color.Transparent), Offset(x2, y2), r2),
+                    brush = Brush.radialGradient(listOf(c2.copy(alpha = 0.20f * ba), Color.Transparent), Offset(x2, y2), r2),
                     radius = r2,
                     center = Offset(x2, y2),
                 )
