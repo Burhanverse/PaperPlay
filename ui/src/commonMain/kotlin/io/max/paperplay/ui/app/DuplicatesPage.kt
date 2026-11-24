@@ -42,6 +42,7 @@ import io.max.paperplay.core.dupes.describeDuplicate
 import io.max.paperplay.core.dupes.findDuplicates
 import io.max.paperplay.core.dupes.sectionOf
 import io.max.paperplay.core.dupes.survivorOf
+import io.max.paperplay.core.dupes.without
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -133,9 +134,10 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
 
     // Posts that are gone leave the page at once; a group with no extra copy left goes with them.
     val goneNow = jobs.filter { it.isDuplicate && it.status == DeleteStatus.Done }.map { it.postChat to it.postMessage }.toSet()
-    val found = remember(groups, goneNow) {
-        groups?.let { l -> if (goneNow.isEmpty()) l else l.mapNotNull { g -> g.copy(others = g.others.filter { (it.chatId to it.messageId) !in goneNow }).takeIf { it.others.isNotEmpty() } } }
-    }
+    // Out of the list itself, the copy to keep too: a deleted post must not count as the one that stays, not even after the next run
+    // cleared the finished jobs.
+    LaunchedEffect(goneNow) { if (goneNow.isNotEmpty()) groups = groups?.mapNotNull { it.without(goneNow) } }
+    val found = remember(groups, goneNow) { groups?.mapNotNull { it.without(goneNow) } }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     var toTop by remember { mutableStateOf(0) }
     LaunchedEffect(toTop) { if (toTop > 0) listState.scrollToItem(0) }

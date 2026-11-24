@@ -54,6 +54,13 @@ data class DuplicateGroup(
     val suggested: Set<Long>,
 )
 
+/** The group without posts that are deleted by now: the next live post becomes the copy to keep; null when fewer than two are left. */
+fun DuplicateGroup.without(gone: Set<Pair<Long, Long>>): DuplicateGroup? {
+    if (gone.isEmpty()) return this
+    val live = (listOf(keep) + others).filter { (it.chatId to it.messageId) !in gone }
+    return if (live.size < 2) null else copy(keep = live.first(), others = live.drop(1))
+}
+
 enum class DuplicateSection { Extras, OtherTopics, Maybe }
 
 fun sectionOf(g: DuplicateGroup): DuplicateSection = when {
