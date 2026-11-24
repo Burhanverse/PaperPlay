@@ -12,6 +12,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -83,66 +84,104 @@ internal fun EngineExtras(backend: PlayerControls) {
     val earphone by backend.eqEarphone.collectAsState()
     val options by backend.eqOptions.collectAsState()
     val output by backend.eqOutput.collectAsState()
-    Text(
-        if (!phone) "Stereo width and crossfeed work while the equalizer is on and Bit-perfect is off."
-        else output?.let { "Settings for $it. Each output (earbuds, DAC, speaker) keeps its own and switches by itself." }
-            ?: "Each output (earbuds, DAC, speaker) keeps its own settings once something has played on it.",
-        Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    if (phone) {
-        SectionLabel("Earphone correction")
-        val names = listOf("None") + io.max.paperplay.player.CorrectionProfile.EARPHONES.keys
-        ChoiceRow(names, earphone.ifEmpty { "None" }, { it }, { backend.setEqEarphone(if (it == "None") "" else it) })
-        Text(
-            "Evens out the earphone's own measured sound (AutoEq). Wired earphones only; choose None for earbuds.",
-            Modifier.padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+
+    val outputNote = if (!phone) {
+        "Stereo width and crossfeed work while the equalizer is on and Bit-perfect is off."
+    } else {
+        output?.let { "Settings for $it. Each output (earbuds, DAC, speaker) keeps its own and switches by itself." }
+            ?: "Each output (earbuds, DAC, speaker) keeps its own settings once something has played on it."
     }
-    SectionLabel("Stereo width")
-    Text(
-        "${kotlin.math.round(width * 100).toInt()}%" + when {
+
+    if (phone) {
+        SettingsSection("Earphone correction") {
+            val names = listOf("None") + io.max.paperplay.player.CorrectionProfile.EARPHONES.keys
+            SettingsRow(
+                title = "Profile",
+                icon = Icons.Rounded.Headphones,
+                subtitle = "Evens out the earphone's own measured sound (AutoEq). Wired earphones only; choose None for earbuds.",
+            )
+            ChoiceRow(names, earphone.ifEmpty { "None" }, { it }, { backend.setEqEarphone(if (it == "None") "" else it) })
+        }
+    }
+
+    SettingsSection("Stereo width") {
+        val widthDesc = "${kotlin.math.round(width * 100).toInt()}%" + when {
             width > 1.005f -> ", instruments spread further apart; bass stays centred"
             width < 0.995f -> ", narrower, softer on hard-panned recordings"
             else -> ", as recorded"
-        },
-        Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
-    )
-    androidx.compose.material3.Slider(
-        value = width, onValueChange = { backend.setEqWidth(kotlin.math.round(it * 20) / 20f) }, valueRange = 0.5f..1.6f, steps = 21,
-        enabled = on, modifier = Modifier.padding(horizontal = 20.dp),
-    )
-    SectionLabel("Extras")
-    if (phone) {
-        SwitchRow(
-            "Dynamic bass", options and EQ_DYNAMIC_BASS != 0, { backend.setEqOption(EQ_DYNAMIC_BASS, it) }, null,
-            "Full Bass lift in quiet parts, less where the bass is already heavy, so it stays clean when loud",
-        )
-        SwitchRow(
-            "De-esser", options and EQ_DE_ESSER != 0, { backend.setEqOption(EQ_DE_ESSER, it) }, null,
-            "Softens sharp s and t sounds in voices; leaves cymbals and normal treble alone",
+        }
+        SliderRow(
+            title = "Stereo width: $widthDesc",
+            value = width,
+            range = 0.5f..1.6f,
+            steps = 21,
+            enabled = on,
+            hint = outputNote,
+            onChange = { backend.setEqWidth(kotlin.math.round(it * 20) / 20f) },
         )
     }
-    SwitchRow(
-        "Crossfeed", options and EQ_CROSSFEED != 0, { backend.setEqOption(EQ_CROSSFEED, it) }, null,
-        "Blends a little of each side into the other, like speakers; eases hard-panned old recordings",
-    )
+
+    SettingsSection("Extras") {
+        if (phone) {
+            SwitchRow(
+                title = "Dynamic bass",
+                checked = options and EQ_DYNAMIC_BASS != 0,
+                onChange = { backend.setEqOption(EQ_DYNAMIC_BASS, it) },
+                icon = Icons.Rounded.GraphicEq,
+                subtitle = "Full Bass lift in quiet parts, less where the bass is already heavy, so it stays clean when loud",
+            )
+            RowDivider()
+            SwitchRow(
+                title = "De-esser",
+                checked = options and EQ_DE_ESSER != 0,
+                onChange = { backend.setEqOption(EQ_DE_ESSER, it) },
+                icon = Icons.Rounded.Tune,
+                subtitle = "Softens sharp s and t sounds in voices; leaves cymbals and normal treble alone",
+            )
+            RowDivider()
+        }
+        SwitchRow(
+            title = "Crossfeed",
+            checked = options and EQ_CROSSFEED != 0,
+            onChange = { backend.setEqOption(EQ_CROSSFEED, it) },
+            icon = Icons.Rounded.Hearing,
+            subtitle = "Blends a little of each side into the other, like speakers; eases hard-panned old recordings",
+        )
+    }
+
     if (!phone) return
-    SectionLabel("Listening check")
-    SwitchRow(
-        "Exact level", exact, backend::setEqExact, null,
-        if (exact) "Plays the curve as drawn; quieter by the curve's peak, so raise the volume"
-        else "Keeps the music loud; big bass boosts are heard a little smaller than drawn",
-    )
-    SwitchRow(
-        "Compare with original", dry, backend::setEqDry, null,
-        "Plays the untouched sound at the same loudness, so only the tuning differs",
-    )
+
+    SettingsSection("Listening check") {
+        SwitchRow(
+            title = "Exact level",
+            checked = exact,
+            onChange = backend::setEqExact,
+            icon = Icons.Rounded.Tune,
+            subtitle = if (exact) {
+                "Plays the curve as drawn; quieter by the curve's peak, so raise the volume"
+            } else {
+                "Keeps the music loud; big bass boosts are heard a little smaller than drawn"
+            },
+        )
+        RowDivider()
+        SwitchRow(
+            title = "Compare with original",
+            checked = dry,
+            onChange = backend::setEqDry,
+            icon = Icons.Rounded.CompareArrows,
+            subtitle = "Plays the untouched sound at the same loudness, so only the tuning differs",
+        )
+    }
 }
 
 /** Settings > Listening > Equalizer. Full 31-band parametric EQ, AutoEQ browser, and engine extras. */
 @Composable
 internal fun EqualizerPage(backend: CoreBackend) {
-    ParametricEqualizerContent(backend = backend, showTopMasterSwitch = true)
+    EqualizerScreenBody(
+        backend = backend,
+        modifier = Modifier.fillMaxSize(),
+        bottomPadding = LocalPageBottomPadding.current,
+    )
 }
 
 @Composable

@@ -439,10 +439,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         onOpenEq = { showEqFullScreen = true },
                     )
                 }
+                val eqReduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
                 androidx.compose.animation.AnimatedVisibility(
                     visible = showEqFullScreen,
-                    enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it / 6 }) + androidx.compose.animation.fadeIn(),
-                    exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it / 6 }) + androidx.compose.animation.fadeOut(),
+                    enter = overlayPageEnter(eqReduceMotion),
+                    exit = overlayPageExit(eqReduceMotion),
                 ) {
                     FullScreenEqualizerPage(
                         backend = backend,

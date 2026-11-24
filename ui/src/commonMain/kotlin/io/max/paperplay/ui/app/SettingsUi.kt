@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
 
@@ -138,22 +138,34 @@ private fun Modifier.searchFocus(title: String): Modifier {
 fun SettingsRow(
     title: String, modifier: Modifier = Modifier, icon: ImageVector? = null, subtitle: String? = null,
     onClick: (() -> Unit)? = null, enabled: Boolean = true,
+    titleColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
+    iconTint: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
     /** Shown in place of [icon], such as a cover. */
     leading: (@Composable () -> Unit)? = null,
     // Last on purpose: a trailing lambda at a call site binds to the last parameter, and callers mean the content at the end of the row.
     trailing: @Composable () -> Unit = {},
 ) {
+    val resolvedTitleColor = when {
+        !enabled -> MaterialTheme.colorScheme.outline
+        titleColor != androidx.compose.ui.graphics.Color.Unspecified -> titleColor
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val resolvedIconTint = when {
+        !enabled -> MaterialTheme.colorScheme.outline
+        iconTint != androidx.compose.ui.graphics.Color.Unspecified -> iconTint
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     Row(
         modifier.fillMaxWidth().searchFocus(title).then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leading != null) Box(Modifier.padding(end = 16.dp)) { leading() }
-        else if (icon != null) AppIcon(icon, null, Modifier.padding(end = 16.dp), tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline)
+        else if (icon != null) AppIcon(icon, null, Modifier.padding(end = 16.dp), tint = resolvedIconTint)
         Column(Modifier.weight(1f)) {
             val behindInfo = LocalSettingsInfo.current && isExplanation(subtitle)
             var open by remember { mutableStateOf(false) }
-            TitleWithInfo(title, if (behindInfo) subtitle else null, open, { open = !open }, if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline, MaterialTheme.typography.titleMedium)
+            TitleWithInfo(title, if (behindInfo) subtitle else null, open, { open = !open }, resolvedTitleColor, MaterialTheme.typography.titleMedium)
             if (subtitle != null && (!behindInfo || open)) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         trailing()
@@ -188,17 +200,18 @@ fun <T> DropdownRow(
 }
 
 @Composable
-fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit, icon: ImageVector? = null, subtitle: String? = null) =
-    SettingsRow(title, icon = icon, subtitle = subtitle, onClick = { onChange(!checked) }) { Switch(checked, onChange) }
+fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit, icon: ImageVector? = null, subtitle: String? = null, enabled: Boolean = true) =
+    SettingsRow(title, icon = icon, subtitle = subtitle, onClick = { onChange(!checked) }, enabled = enabled) { Switch(checked, onChange, enabled = enabled) }
 
 @Composable
-fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit, steps: Int = 0, hint: String? = null, onDone: () -> Unit = {}) {
+fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit, steps: Int = 0, hint: String? = null, enabled: Boolean = true, onDone: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().searchFocus(title).padding(horizontal = 20.dp, vertical = 4.dp)) {
         val behindInfo = LocalSettingsInfo.current && hint != null
         var open by remember { mutableStateOf(false) }
-        TitleWithInfo(title, if (behindInfo) hint else null, open, { open = !open }, MaterialTheme.colorScheme.onSurface, MaterialTheme.typography.bodyLarge)
+        val titleColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
+        TitleWithInfo(title, if (behindInfo) hint else null, open, { open = !open }, titleColor, MaterialTheme.typography.bodyLarge)
         if (hint != null && (!behindInfo || open)) Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Slider(value, onChange, valueRange = range, steps = steps, onValueChangeFinished = onDone)
+        Slider(value, onChange, valueRange = range, steps = steps, enabled = enabled, onValueChangeFinished = onDone)
     }
 }
 

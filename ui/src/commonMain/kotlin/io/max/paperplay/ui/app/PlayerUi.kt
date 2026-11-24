@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.navigationBars
@@ -646,12 +647,25 @@ internal fun SpeedDialog(backend: PlayerControls, onClose: () -> Unit) {
 /** Desktop equalizer dialog; on Android phones FullPlayer navigates to [FullScreenEqualizerPage] instead. */
 @Composable
 internal fun EqualizerDialog(backend: PlayerControls, onClose: () -> Unit) {
+    val dialogShape = appShape(28.dp, CornerArea.Dialogs)
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("Equalizer") },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.widthIn(min = 420.dp, max = 680.dp).padding(horizontal = 24.dp, vertical = 16.dp).then(overlayRim(dialogShape)),
+        shape = dialogShape,
+        containerColor = overlayColor(),
+        title = {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Equalizer", Modifier.weight(1f))
+                EqualizerTopBarActions(backend)
+            }
+        },
         text = {
-            Column(Modifier.widthIn(min = 420.dp, max = 640.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
-                ParametricEqualizerContent(backend = backend, showTopMasterSwitch = true)
+            androidx.compose.runtime.CompositionLocalProvider(LocalSettingsInfo provides true) {
+                EqualizerScreenBody(
+                    backend = backend,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 420.dp, max = 560.dp),
+                )
             }
         },
         confirmButton = { TextButton(onClose) { Text("Close") } },

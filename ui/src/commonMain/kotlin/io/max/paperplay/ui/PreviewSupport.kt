@@ -36,7 +36,15 @@ internal class FakePlayerControls(
     position: PositionUi = PositionUi(positionMs = 84_000, bufferedMs = 150_000),
     sleepAt: Long? = null,
     private val lyrics: String? = "[00:10.00]First line of the song\n[00:20.00]Second line of the song\n[00:30.00]Third line of the song",
+    eqOn: Boolean = false,
+    peqProfile: io.max.paperplay.player.ParametricEqProfile = io.max.paperplay.player.ParametricEqProfile.flat10(),
+    bitPerfectStatus: io.max.paperplay.player.BitPerfectStatus = io.max.paperplay.player.BitPerfectStatus.Off,
+    eqOutput: String? = null,
 ) : PlayerControls {
+    override val eqOn: StateFlow<Boolean> = MutableStateFlow(eqOn)
+    override val peqProfile: StateFlow<io.max.paperplay.player.ParametricEqProfile> = MutableStateFlow(peqProfile)
+    override val bitPerfectStatus: StateFlow<io.max.paperplay.player.BitPerfectStatus> = MutableStateFlow(bitPerfectStatus)
+    override val eqOutput: StateFlow<String?> = MutableStateFlow(eqOutput)
     override val position: StateFlow<PositionUi> = MutableStateFlow(position)
     override val sleepAt: StateFlow<Long?> = MutableStateFlow(sleepAt)
     override val speed: StateFlow<Float> = MutableStateFlow(1f)
