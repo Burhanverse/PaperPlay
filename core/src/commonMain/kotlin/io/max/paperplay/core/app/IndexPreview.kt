@@ -17,6 +17,8 @@ class IndexPreview(
     private val dir: String,
     private val inLibrary: (String) -> Boolean,
     private val playingId: () -> String?,
+    /** A song is being streamed through the account right now; clearing its downloads would take it away. */
+    private val streaming: () -> Boolean,
     private val busy: () -> Boolean,
     private val clearDownloads: suspend () -> Unit,
     scope: CoroutineScope,
@@ -53,7 +55,7 @@ class IndexPreview(
             if (playing != null && playing in seen) seen[playing] = now
             seen.filterValues { now - it > ttlMs }.keys.toList()
         }
-        if (old.isEmpty() || busy()) return
+        if (old.isEmpty() || busy() || streaming()) return
         // chisle: the account's downloads are cleared whole; TDLib cannot name one preview's file after a restart.
         if (old.any { !inLibrary(it) }) runCatching { clearDownloads() }
         old.forEach { id ->

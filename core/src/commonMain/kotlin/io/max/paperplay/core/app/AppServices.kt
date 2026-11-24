@@ -392,6 +392,7 @@ class AppServices(
             "${platform.dataDir.trimEnd('/')}/preview",
             { library.songByUniqueId(it) != null },
             { if (playbackLazy.isInitialized()) playback.nowPlaying.value.song?.unique_id else null },
+            { playbackLazy.isInitialized() && playback.nowPlaying.value.let { it.isPlaying && it.song?.remote_id == ACCOUNT_REMOTE } },
             { indexCopier.progress.value != null || recovery.progress.value.running },
             { account.clearDownloads() },
             scope, clock,
