@@ -61,7 +61,7 @@ class UnifiedUsbDacManager(private val context: Context) {
             if (coordinator.mode.value != BitPerfectMode.ON) return false
             val dev = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId } ?: return false
             val usb = UsbAudioManager.instance ?: UsbAudioManager(appContext).also { UsbAudioManager.instance = it }
-            return usb.openDevice(dev)
+            return usb.openDevice(dev, triggerReconfigure = PlaybackCore.userPlayIntent && PlaybackCore.playerIsPlaying)
         }
 
         override fun requestUsbPermission(deviceId: Int) {
@@ -185,10 +185,23 @@ class UnifiedUsbDacManager(private val context: Context) {
                 permissionAction -> {
                     scanClassOnly()
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                    if (granted && coordinator.mode.value == BitPerfectMode.ON &&
-                        UnifiedUsbAudioSink.currentInstance?.isUsbModeActive != true
-                    ) {
-                        PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+                    if (granted && coordinator.mode.value == BitPerfectMode.ON) {
+                        UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
+                        val shouldRebuild = BitPerfectRebuildPolicy.shouldRebuildPlayer(
+                            SinkRebuildNeedInput(
+                                isExplicitModeOrChainChange = false,
+                                usbExclusiveMode = PlaybackCore.usbExclusiveMode,
+                                useUnifiedBitPerfect = PlaybackCore.useUnifiedBitPerfect,
+                                devApi34MixerEnabled = PlaybackCore.devApi34MixerEnabled,
+                                hasUnifiedUsbSinkInstance = UnifiedUsbAudioSink.currentInstance != null,
+                                api34ActiveOnCurrentPlayer = Api34BitPerfectMixer.lastVerification is Api34MixerVerification.Verified,
+                            ),
+                        )
+                        if (shouldRebuild) {
+                            PlaybackCore.onRebuildPlayerForBitPerfect?.invoke(false)
+                        } else if (PlaybackCore.userPlayIntent && PlaybackCore.playerIsPlaying) {
+                            PlaybackCore.requestReconfiguration()
+                        }
                     }
                 }
             }

@@ -4,7 +4,7 @@
 use std::os::fd::RawFd;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use rusb::{Context, DeviceHandle, UsbContext};
 
 use crate::log::{
@@ -16,6 +16,17 @@ use crate::log::{
 
 pub const FU_MUTE_SELECTOR: u16 = 0x01;
 pub const FU_VOLUME_SELECTOR: u16 = 0x02;
+
+pub const CLAIM_MAX_ATTEMPTS: u32 = 4;
+pub const CLAIM_RETRY_DELAY_MS: u64 = 25;
+pub const CLAIM_TOTAL_BUDGET_MS: u64 = 350;
+pub const CONTROL_TIMEOUT_MS: u64 = 250;
+pub const FU_CONTROL_TIMEOUT_MS: u64 = 200;
+
+#[inline]
+pub(crate) fn is_retryable_claim_error(e: rusb::Error) -> bool {
+    matches!(e, rusb::Error::Busy)
+}
 
 /// UAC 1.0 Class-Specific AS Isochronous Audio Data Endpoint Descriptor `bmAttributes` bit 0:
 /// Sampling Frequency control (`SAMPLING_FREQ_CONTROL` = 0x01) is supported.
@@ -109,7 +120,7 @@ pub(crate) fn program_sample_rate(
             w_value,
             w_index,
             &mut range_buf,
-            Duration::from_millis(1000),
+            Duration::from_millis(CONTROL_TIMEOUT_MS),
         ) {
             Ok(read_len) => {
                 let num_ranges = if read_len >= 2 {
@@ -132,7 +143,7 @@ pub(crate) fn program_sample_rate(
             w_value,
             w_index,
             &rate_data,
-            Duration::from_millis(1000),
+            Duration::from_millis(CONTROL_TIMEOUT_MS),
         ) {
             Ok(_) => {
                 GLOBAL_NATIVE_LOG.record(TAG_CLOCK_SET_CUR, clock_source_id as i32, sample_rate as i64);
@@ -163,7 +174,7 @@ pub(crate) fn program_sample_rate(
             w_value,
             w_index,
             &mut readback,
-            Duration::from_millis(1000),
+            Duration::from_millis(CONTROL_TIMEOUT_MS),
         ) {
             Ok(read_len) if read_len >= 4 => {
                 let read_rate = u32::from_le_bytes(readback);
@@ -218,6 +229,7 @@ pub(crate) fn program_sample_rate(
         let mut last_err_code = -32; // EPIPE (STALL) default
 
         // Retry once if the control is supported but SET_CUR stalls
+        let mut timed_out = false;
         for attempt in 0..2 {
             if attempt > 0 {
                 std::thread::sleep(Duration::from_millis(10));
@@ -229,7 +241,7 @@ pub(crate) fn program_sample_rate(
                     w_value,
                     idx,
                     &rate_data,
-                    Duration::from_millis(1000),
+                    Duration::from_millis(CONTROL_TIMEOUT_MS),
                 ) {
                     Ok(_) => {
                         success_index = Some(idx);
@@ -238,15 +250,18 @@ pub(crate) fn program_sample_rate(
                     Err(e) => {
                         last_err_code = match e {
                             rusb::Error::Pipe => -32,
-                            rusb::Error::Timeout => -110,
-                            rusb::Error::NoDevice => -19,
+                            rusb::Error::Timeout => {
+                                timed_out = true;
+                                -110
+                            }
+                            rusb::Error::NoDevice => return Err(-19),
                             rusb::Error::Busy => -16,
                             _ => -71, // EPROTO
                         };
                     }
                 }
             }
-            if success_index.is_some() {
+            if success_index.is_some() || timed_out {
                 break;
             }
         }
@@ -282,7 +297,7 @@ pub(crate) fn program_sample_rate(
             w_value,
             idx,
             &mut readback,
-            Duration::from_millis(1000),
+            Duration::from_millis(CONTROL_TIMEOUT_MS),
         ) {
             Ok(read_len) if read_len >= 3 => {
                 let read_rate = (readback[0] as u32)
@@ -471,13 +486,12 @@ impl UsbDeviceSession {
         audio_interfaces.sort();
         audio_interfaces.dedup();
 
-        let max_attempts = 10;
-        let delay_ms = 30;
+        let claim_start = Instant::now();
         let mut claimed_interfaces = Vec::new();
 
         for &iface in &audio_interfaces {
             let mut claimed = false;
-            for attempt in 1..=max_attempts {
+            for attempt in 1..=CLAIM_MAX_ATTEMPTS {
                 let detach_code = match handle.detach_kernel_driver(iface) {
                     Ok(_) => 0,
                     Err(e) => match e {
@@ -511,8 +525,13 @@ impl UsbDeviceSession {
                             iface as i32,
                             ((attempt as i64) << 16) | (err_code as i64 & 0xFFFF),
                         );
-                        if attempt < max_attempts {
-                            std::thread::sleep(Duration::from_millis(delay_ms));
+                        if !is_retryable_claim_error(e)
+                            || claim_start.elapsed() >= Duration::from_millis(CLAIM_TOTAL_BUDGET_MS)
+                        {
+                            break;
+                        }
+                        if attempt < CLAIM_MAX_ATTEMPTS {
+                            std::thread::sleep(Duration::from_millis(CLAIM_RETRY_DELAY_MS));
                         }
                     }
                 }
@@ -836,7 +855,7 @@ impl UsbDeviceSession {
             w_val,
             w_idx,
             &data,
-            Duration::from_millis(500),
+            Duration::from_millis(FU_CONTROL_TIMEOUT_MS),
         ).map_err(|e| match e {
             rusb::Error::Pipe => -32,
             rusb::Error::Timeout => -110,
@@ -852,7 +871,7 @@ impl UsbDeviceSession {
             w_val,
             w_idx,
             &mut readback,
-            Duration::from_millis(500),
+            Duration::from_millis(FU_CONTROL_TIMEOUT_MS),
         ) {
             Ok(2) => {
                 let read_val = i16::from_le_bytes(readback);
@@ -912,7 +931,7 @@ impl UsbDeviceSession {
             w_val,
             w_idx,
             &data,
-            Duration::from_millis(500),
+            Duration::from_millis(FU_CONTROL_TIMEOUT_MS),
         ).map_err(|e| match e {
             rusb::Error::Pipe => -32,
             rusb::Error::Timeout => -110,
@@ -928,7 +947,7 @@ impl UsbDeviceSession {
             w_val,
             w_idx,
             &mut readback,
-            Duration::from_millis(500),
+            Duration::from_millis(FU_CONTROL_TIMEOUT_MS),
         ) {
             Ok(1) => {
                 let is_muted = readback[0] != 0;
@@ -964,13 +983,17 @@ impl UsbDeviceSession {
         });
         for ch in 0..=2 {
             if !state.mutes.iter().any(|&(f, a, c, _)| f == fu_id && a == ac_iface && c == ch) {
-                if let Ok(m) = self.read_hardware_mute(fu_id, ac_iface, ch) {
-                    state.mutes.push((fu_id, ac_iface, ch, m));
+                match self.read_hardware_mute(fu_id, ac_iface, ch) {
+                    Ok(m) => state.mutes.push((fu_id, ac_iface, ch, m)),
+                    Err(-110) | Err(-19) => break,
+                    Err(_) => {}
                 }
             }
             if !state.volumes.iter().any(|&(f, a, c, _)| f == fu_id && a == ac_iface && c == ch) {
-                if let Ok(v) = self.read_hardware_volume(fu_id, ac_iface, ch) {
-                    state.volumes.push((fu_id, ac_iface, ch, v));
+                match self.read_hardware_volume(fu_id, ac_iface, ch) {
+                    Ok(v) => state.volumes.push((fu_id, ac_iface, ch, v)),
+                    Err(-110) | Err(-19) => break,
+                    Err(_) => {}
                 }
             }
         }
@@ -1257,5 +1280,18 @@ mod tests {
         let (rel_dup, att_dup) = interface_release_and_reattach_plan(&[0, 1, 1]);
         assert_eq!(rel_dup, vec![1, 0]);
         assert_eq!(att_dup, vec![0, 1]);
+    }
+
+    #[test]
+    fn claim_retries_only_on_busy_and_timeouts_are_bounded() {
+        assert!(is_retryable_claim_error(rusb::Error::Busy));
+        assert!(!is_retryable_claim_error(rusb::Error::NoDevice));
+        assert!(!is_retryable_claim_error(rusb::Error::Access));
+        assert!(!is_retryable_claim_error(rusb::Error::NotFound));
+        assert!(!is_retryable_claim_error(rusb::Error::Timeout));
+        assert!(CLAIM_MAX_ATTEMPTS <= 4);
+        assert!(CLAIM_TOTAL_BUDGET_MS <= 500);
+        assert!(CONTROL_TIMEOUT_MS <= 300);
+        assert!(FU_CONTROL_TIMEOUT_MS <= 250);
     }
 }

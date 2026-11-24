@@ -44,6 +44,7 @@ internal object PlaybackLogging {
         Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "headphones unplugged"
         Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote control"
         Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end of song"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_SUPPRESSED_TOO_LONG -> "suppressed too long"
         else -> "$r"
     }
 
@@ -58,7 +59,7 @@ internal object PlaybackLogging {
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            PlayLog.log("player", "playWhenReady=$playWhenReady because ${why(reason)} ${at(p)}")
+            PlayLog.log("player", "playWhenReady=$playWhenReady because ${why(reason)} isPlaying=${p.isPlaying} suppression=${p.playbackSuppressionReason} state=${state(p.playbackState)} ${at(p)}")
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {

@@ -316,6 +316,17 @@ class UsbAudioManager(private val context: Context) {
                 return@synchronized false
             }
 
+            val existing = _state.value as? UsbAudioState.Connected
+            if (!forceForProbe && activeConnection != null && existing?.device?.deviceId == device.deviceId) {
+                if (PlaybackCore.usbExclusiveMode && triggerReconfigure) {
+                    UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
+                    if (PlaybackCore.userPlayIntent && PlaybackCore.playerIsPlaying) {
+                        PlaybackCore.requestReconfiguration()
+                    }
+                }
+                return@synchronized true
+            }
+
             closeCurrentConnection()
 
             val connection = usbManager.openDevice(device)
@@ -393,9 +404,20 @@ class UsbAudioManager(private val context: Context) {
             forwardingPlayer?.notifyDeviceInfoChanged()
             if (PlaybackCore.usbExclusiveMode && !forceForProbe && triggerReconfigure) {
                 logSystemAudioDevicesAndVolumeTable()
-                UsbAudioSink.currentInstance?.triggerReconfiguration()
-                if (PlaybackCore.useUnifiedBitPerfect && UnifiedUsbAudioSink.currentInstance?.isUsbModeActive != true) {
-                    PlaybackCore.requestReconfiguration()
+                val activelyPlaying = PlaybackCore.userPlayIntent && PlaybackCore.playerPlayWhenReady
+                if (PlaybackCore.useUnifiedBitPerfect) {
+                    if (UnifiedUsbAudioSink.currentInstance?.isUsbModeActive != true) {
+                        UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
+                        if (activelyPlaying) {
+                            PlaybackCore.requestReconfiguration()
+                        }
+                    }
+                } else {
+                    if (activelyPlaying) {
+                        UsbAudioSink.currentInstance?.triggerReconfiguration()
+                    } else {
+                        UsbAudioSink.currentInstance?.applyPendingReconfigure()
+                    }
                 }
             }
             true

@@ -144,7 +144,7 @@ internal object AndroidUsbDacBackend : io.max.paperplay.player.usb.UsbDacControl
             mainHandler.post {
                 refreshStatus()
                 val h = hooks
-                if (h != null) h.onRebuildRequested() else PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+                if (h != null) h.onRebuildRequested() else PlaybackCore.onRebuildPlayerForBitPerfect?.invoke(true)
             }
         }
     }
@@ -161,7 +161,7 @@ internal object AndroidUsbDacBackend : io.max.paperplay.player.usb.UsbDacControl
         }
         if (PlaybackCore.useUnifiedBitPerfect) {
             val h = hooks
-            if (h != null) h.onRebuildRequested() else PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+            if (h != null) h.onRebuildRequested() else PlaybackCore.onRebuildPlayerForBitPerfect?.invoke(true)
         }
     }
 
@@ -493,12 +493,21 @@ class AndroidPlayerEngine : PlayerEngine {
             onMain {
                 val mc = controller?.takeIf { it.isConnected }
                 if (PlaybackCore.useUnifiedBitPerfect && changed) {
+                    val args = Bundle().apply { putBoolean(PlaybackCore.EXTRA_REBUILD_EXPLICIT, true) }
                     if (mc != null) {
-                        mc.sendCustomCommand(PlaybackCore.CMD_REBUILD_FOR_BIT_PERFECT, Bundle.EMPTY)
+                        mc.sendCustomCommand(PlaybackCore.CMD_REBUILD_FOR_BIT_PERFECT, args)
                     } else {
-                        PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+                        PlaybackCore.onRebuildPlayerForBitPerfect?.invoke(true)
                     }
-                } else if (changed && mc != null && (mc.isPlaying || mc.playWhenReady)) {
+                } else if (changed && mc != null && io.max.paperplay.player.usb.BitPerfectRebuildPolicy.shouldSeekOnUsbAttach(
+                        playbackState = mc.playbackState,
+                        mediaItemCount = mc.mediaItemCount,
+                        playWhenReady = mc.playWhenReady,
+                        isPlaying = mc.isPlaying,
+                        playbackSuppressionReason = mc.playbackSuppressionReason,
+                        userPlayIntent = PlaybackCore.userPlayIntent,
+                    )
+                ) {
                     val pos = mc.currentPosition
                     mc.seekTo(pos)
                 }
@@ -517,10 +526,11 @@ class AndroidPlayerEngine : PlayerEngine {
         override fun onRebuildRequested() {
             onMain {
                 val mc = controller?.takeIf { it.isConnected }
+                val args = Bundle().apply { putBoolean(PlaybackCore.EXTRA_REBUILD_EXPLICIT, true) }
                 if (mc != null) {
-                    mc.sendCustomCommand(PlaybackCore.CMD_REBUILD_FOR_BIT_PERFECT, Bundle.EMPTY)
+                    mc.sendCustomCommand(PlaybackCore.CMD_REBUILD_FOR_BIT_PERFECT, args)
                 } else {
-                    PlaybackCore.onRebuildPlayerForBitPerfect?.invoke()
+                    PlaybackCore.onRebuildPlayerForBitPerfect?.invoke(true)
                 }
                 mc?.let { publishInfo(it) }
             }
@@ -629,16 +639,22 @@ class AndroidPlayerEngine : PlayerEngine {
         PlaybackCore.onUsbReconfigurationRequested = {
             onMain {
                 val mc = controller?.takeIf { it.isConnected }
-                io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.applyPendingReconfigure()
-                if (mc != null) {
-                    if (mc.playbackState == Player.STATE_IDLE && mc.playerError != null) {
-                        mc.prepare()
-                    }
-                    if (PlaybackCore.usbExclusiveMode && !PlaybackCore.usbActive) {
-                        if (mc.playbackState != Player.STATE_IDLE && mc.mediaItemCount > 0) {
-                            val pos = mc.currentPosition
-                            mc.seekTo(pos)
-                        }
+                if (PlaybackCore.useUnifiedBitPerfect && io.max.paperplay.player.usb.UnifiedUsbAudioSink.currentInstance != null) {
+                    io.max.paperplay.player.usb.UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
+                } else {
+                    io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.applyPendingReconfigure()
+                    if (mc != null && PlaybackCore.usbExclusiveMode && !PlaybackCore.usbActive &&
+                        io.max.paperplay.player.usb.BitPerfectRebuildPolicy.shouldSeekOnUsbAttach(
+                            playbackState = mc.playbackState,
+                            mediaItemCount = mc.mediaItemCount,
+                            playWhenReady = mc.playWhenReady,
+                            isPlaying = mc.isPlaying,
+                            playbackSuppressionReason = mc.playbackSuppressionReason,
+                            userPlayIntent = PlaybackCore.userPlayIntent,
+                        )
+                    ) {
+                        val pos = mc.currentPosition
+                        mc.seekTo(pos)
                     }
                 }
                 AndroidUsbDacBackend.refreshStatus()
@@ -651,13 +667,22 @@ class AndroidPlayerEngine : PlayerEngine {
                 val mc = controller?.takeIf { it.isConnected }
                 if (mc != null) {
                     if (state is io.max.paperplay.player.usb.UsbAudioState.Connected && PlaybackCore.usbExclusiveMode && !PlaybackCore.usbActive) {
-                        io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.applyPendingReconfigure()
-                        if (mc.playbackState == Player.STATE_IDLE && mc.playerError != null) {
-                            mc.prepare()
-                        }
-                        if (mc.playbackState != Player.STATE_IDLE && mc.mediaItemCount > 0) {
-                            val pos = mc.currentPosition
-                            mc.seekTo(pos)
+                        if (PlaybackCore.useUnifiedBitPerfect && io.max.paperplay.player.usb.UnifiedUsbAudioSink.currentInstance != null) {
+                            io.max.paperplay.player.usb.UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
+                        } else {
+                            io.max.paperplay.player.usb.UsbAudioSink.currentInstance?.applyPendingReconfigure()
+                            if (io.max.paperplay.player.usb.BitPerfectRebuildPolicy.shouldSeekOnUsbAttach(
+                                    playbackState = mc.playbackState,
+                                    mediaItemCount = mc.mediaItemCount,
+                                    playWhenReady = mc.playWhenReady,
+                                    isPlaying = mc.isPlaying,
+                                    playbackSuppressionReason = mc.playbackSuppressionReason,
+                                    userPlayIntent = PlaybackCore.userPlayIntent,
+                                )
+                            ) {
+                                val pos = mc.currentPosition
+                                mc.seekTo(pos)
+                            }
                         }
                     }
                     publishInfo(mc)

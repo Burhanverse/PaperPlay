@@ -26,6 +26,8 @@ class UnifiedUsbAudioSinkContractTest {
         var supportsCalls = 0
         var supportCalls = 0
         var configureCalls = 0
+        var playCalls = 0
+        var handleBufferCalls = 0
 
         override fun setListener(listener: AudioSink.Listener) {}
         override fun supportsFormat(format: Format): Boolean {
@@ -43,9 +45,12 @@ class UnifiedUsbAudioSinkContractTest {
         override fun configure(config: AudioSink.AudioSinkConfig) {
             configureCalls++
         }
-        override fun play() {}
+        override fun play() { playCalls++ }
         override fun handleDiscontinuity() {}
-        override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int) = true
+        override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
+            handleBufferCalls++
+            return true
+        }
         override fun playToEndOfStream() {}
         override fun isEnded() = false
         override fun hasPendingData() = false
@@ -383,5 +388,80 @@ class UnifiedUsbAudioSinkContractTest {
         assertEquals(0x80, recordedEpAttr)
         assertEquals(96000, ctrl.confirmedRateHz)
         assertEquals(2, ctrl.confirmedAlt)
+    }
+
+    @Test
+    fun `slow or hanging DAC reopen is bounded off playback thread and falls back quickly to normalSink`() {
+        PlaybackCore.usbExclusiveMode = true
+        val delegate = FakeDelegateAudioSink(AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY)
+        var fakeClock = 1_000L
+        var runnerCalls = 0
+        val sink = UnifiedUsbAudioSink(
+            context = null,
+            normalSink = delegate,
+            sessionApi = unusedSessionApi,
+            openWaitBudgetMs = 60L,
+            reopenCooldownMs = 2_000L,
+            usbOpenRunner = {
+                runnerCalls++
+                Thread.sleep(500L) // simulates hung usbfs / control transfer
+                true
+            },
+            clockMs = { fakeClock },
+        )
+        val fmt = pcmFormat("audio/raw", C.ENCODING_PCM_24BIT, rate = 96000, channels = 2)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(fmt).build())
+        sink.markPendingUsbAttach()
+
+        val startNs = System.nanoTime()
+        sink.play()
+        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000L
+
+        assertTrue(elapsedMs < 350L, "play() must not block past openWaitBudgetMs (took ${elapsedMs}ms)")
+        assertFalse(sink.isUsbModeActive)
+        assertEquals(1, runnerCalls)
+        assertEquals(1, delegate.playCalls, "Should fall back to normalSink.play() immediately after timeout")
+
+        // Second buffer within cooldown must not block or re-invoke runner
+        val buf = ByteBuffer.allocateDirect(64)
+        assertTrue(sink.handleBuffer(buf, 0L, 1))
+        assertEquals(1, runnerCalls)
+        assertEquals(1, delegate.handleBufferCalls)
+
+        sink.release()
+    }
+
+    @Test
+    fun `fallback in handleBuffer never calls normalSink play while paused even if playerPlayWhenReady is stale true`() {
+        PlaybackCore.usbExclusiveMode = true
+        PlaybackCore.playerPlayWhenReady = true // stale flag!
+        val delegate = FakeDelegateAudioSink(AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY)
+        val sink = UnifiedUsbAudioSink(context = null, normalSink = delegate, sessionApi = unusedSessionApi)
+        val fmt = pcmFormat("audio/raw", C.ENCODING_PCM_24BIT, rate = 48000, channels = 2)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(fmt).build())
+        sink.markPendingUsbAttach()
+
+        // sinkPlaying is false (paused): handleBuffer must NOT trigger normalSink.play() or reopen
+        val buf = ByteBuffer.allocateDirect(64)
+        assertFalse(sink.handleBuffer(buf, 0L, 1))
+        assertEquals(0, delegate.playCalls)
+        sink.release()
+    }
+
+    @Test
+    fun `releasing old UnifiedUsbAudioSink after newer instance exists does not clobber currentInstance or usbActive`() {
+        PlaybackCore.usbExclusiveMode = true
+        val oldSink = UnifiedUsbAudioSink(context = null, normalSink = FakeDelegateAudioSink(), sessionApi = unusedSessionApi)
+        val newSink = UnifiedUsbAudioSink(context = null, normalSink = FakeDelegateAudioSink(), sessionApi = unusedSessionApi)
+        PlaybackCore.usbActive = true
+
+        assertTrue(UnifiedUsbAudioSink.currentInstance === newSink)
+        oldSink.release()
+        assertTrue(UnifiedUsbAudioSink.currentInstance === newSink, "Old sink release must not clear newer currentInstance")
+        assertTrue(PlaybackCore.usbActive, "Old sink release must not clear PlaybackCore.usbActive for new sink")
+
+        newSink.release()
+        assertEquals(null, UnifiedUsbAudioSink.currentInstance)
+        assertFalse(PlaybackCore.usbActive)
     }
 }

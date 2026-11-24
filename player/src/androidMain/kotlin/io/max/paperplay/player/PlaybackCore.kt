@@ -23,6 +23,7 @@ internal object PlaybackCore {
     const val ACTION_SET_SINK_CHAIN = "io.max.paperplay.player.SET_SINK_CHAIN"
     const val EXTRA_SINK_CHAIN = "mode"
     const val ACTION_REBUILD_FOR_BIT_PERFECT = "io.max.paperplay.player.REBUILD_BIT_PERFECT"
+    const val EXTRA_REBUILD_EXPLICIT = "explicit"
     val CMD_SET_NORMALIZE by lazy { SessionCommand(ACTION_SET_NORMALIZE, Bundle.EMPTY) }
     val CMD_SET_EQUALIZER by lazy { SessionCommand(ACTION_SET_EQUALIZER, Bundle.EMPTY) }
     val CMD_SET_SINK_CHAIN by lazy { SessionCommand(ACTION_SET_SINK_CHAIN, Bundle.EMPTY) }
@@ -68,12 +69,16 @@ internal object PlaybackCore {
     @Volatile var usbStatus: String? = null
     @Volatile var devDirectTestActive = false
     @Volatile var onUsbReconfigurationRequested: (() -> Unit)? = null
-    @Volatile var onRebuildPlayerForBitPerfect: (() -> Unit)? = null
+    @Volatile var onRebuildPlayerForBitPerfect: ((Boolean) -> Unit)? = null
     @Volatile var activePlayer: ExoPlayer? = null
     @Volatile var playerPlaybackState: Int = androidx.media3.common.Player.STATE_IDLE
     @Volatile var playerPlayWhenReady: Boolean = false
     @Volatile var playerIsPlaying: Boolean = false
     @Volatile var playerHasError: Boolean = false
+    val playIntentTracker = io.max.paperplay.player.usb.UserPlayIntentTracker()
+    var userPlayIntent: Boolean
+        get() = playIntentTracker.userWantsPlayback
+        set(value) { playIntentTracker.reset(value) }
     val sources = ConcurrentHashMap<String, StreamSource>()
 
     private const val PREFS_NAME = "paperplay_prefs"
@@ -278,6 +283,7 @@ internal object PlaybackCore {
         p.addAnalyticsListener(PlaybackLogging.analytics)
         p.addListener(object : androidx.media3.common.Player.Listener {
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                if (activePlayer !== p) return
                 updateWakeModeForItem(mediaItem)
                 val id = mediaItem?.mediaId ?: "none"
                 val reasonStr = when (reason) {
@@ -290,7 +296,9 @@ internal object PlaybackCore {
                 io.max.paperplay.player.usb.UsbRingLog.record("Player", "TRACK_SWITCH mediaId=$id reason=$reasonStr", io.max.paperplay.player.usb.UsbRingLog.CODE_GENERIC)
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (activePlayer !== p) return
                 playerPlaybackState = playbackState
+                playIntentTracker.onPlaybackStateChanged(playbackState, p.mediaItemCount)
                 if (playbackState == androidx.media3.common.Player.STATE_BUFFERING || playbackState == androidx.media3.common.Player.STATE_READY) {
                     updateWakeModeForItem(p.currentMediaItem)
                 }
@@ -299,12 +307,16 @@ internal object PlaybackCore {
                 }
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (activePlayer !== p) return
                 playerPlayWhenReady = playWhenReady
+                playIntentTracker.onPlayWhenReadyChanged(playWhenReady, reason)
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (activePlayer !== p) return
                 playerIsPlaying = isPlaying
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                if (activePlayer !== p) return
                 playerHasError = true
             }
         })

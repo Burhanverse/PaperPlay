@@ -807,6 +807,7 @@ class UsbAudioSink(
 
     override fun release() {
         UsbRingLog.record("UsbAudioSink", "release", UsbRingLog.CODE_GENERIC)
+        val isCurrent = currentInstance === this
         playerIsPlaying = false
         lastConfiguredFormat = null
         lastConfig = null
@@ -819,8 +820,11 @@ class UsbAudioSink(
                 PlayLog.log("usb", "release failed in USB mode: ${t.message}")
             }
         }
-        PlaybackCore.usbActive = false
-        PlaybackCore.usbStatus = null
+        if (isCurrent) {
+            currentInstance = null
+            PlaybackCore.usbActive = false
+            PlaybackCore.usbStatus = null
+        }
         activeMode = ActiveSinkMode.DELEGATE
         DelegateSinkDiag.onResetOrFlush()
         super.release()
