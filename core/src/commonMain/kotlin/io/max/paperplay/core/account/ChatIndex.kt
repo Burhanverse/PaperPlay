@@ -218,8 +218,8 @@ class ChatIndex(
         }
         // Newer posts that arrived since the stop are caught first, then the stopped read goes on from where it ended.
         if (cp != null) {
-            read(c.id, c.title, after = c.newestMessageId, complete = false)
-            read(c.id, c.title, after = 0, complete = true, resume = cp)
+            // Paused during the first part: the long read must not start.
+            if (read(c.id, c.title, after = c.newestMessageId, complete = false)) read(c.id, c.title, after = 0, complete = true, resume = cp)
         } else read(c.id, c.title, after = 0, complete = true)
     }
 
@@ -229,8 +229,9 @@ class ChatIndex(
     /** Called after a batch added or changed posts, for example to send them to a linked device. */
     var onPostsSaved: (() -> Unit)? = null
 
-    private suspend fun read(chatId: Long, title: String, after: Long, complete: Boolean, resume: ReadCheckpoint? = null) {
-        if (!account.loggedIn.value) return
+    /** True when the read came to its end, false when it was stopped. */
+    private suspend fun read(chatId: Long, title: String, after: Long, complete: Boolean, resume: ReadCheckpoint? = null): Boolean {
+        if (!account.loggedIn.value) return false
         var found = 0
         val ids = HashSet<Long>()
         var newest = 0L
@@ -272,9 +273,11 @@ class ChatIndex(
             if (after == 0L && resume == null) fullRead = fullRead + (chatId to ids)
         } catch (_: StopRun) {
             // Stopped by the owner; what was read is kept and the chat stays marked as not complete.
+            return false
         } finally {
             _progress.value = null
         }
+        return true
     }
 
     private class Main(val ids: Set<String>, val byKey: Map<String, List<Song>>) {
@@ -426,8 +429,10 @@ class ChatIndex(
         // A read that saw only a part of the chat must not wipe the library (listed posts and repeats counted together).
         if (gone.size + goneCopies.size > (rows.size + copies.size) / 2) return -2
         // Missing repeats go first, so a missing listed post is never replaced by a repeat that is missing too.
-        for (c in goneCopies) library.removePost(c.chat_id, c.message_id)
-        for (s in gone) library.removePost(s.chat_id, s.message_id)
+        library.batch {
+            for (c in goneCopies) library.repo.removePost(c.chat_id, c.message_id)
+            for (s in gone) library.repo.removePost(s.chat_id, s.message_id)
+        }
         return gone.size
     }
 

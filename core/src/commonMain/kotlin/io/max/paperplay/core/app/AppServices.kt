@@ -420,9 +420,11 @@ class AppServices(
             // seconds after the library or the index changed, never while a list is drawn.
             @OptIn(kotlinx.coroutines.FlowPreview::class)
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                kotlinx.coroutines.flow.combine(index.changes, library.changes) { _, _ -> }
+                // Not while a chat is being read: every page would go through the whole post table again. Once the read ends it runs.
+                kotlinx.coroutines.flow.combine(index.changes, library.changes, kotlinx.coroutines.flow.flow { index.progress.collect { emit(it != null) } }) { _, _, reading -> reading }
                     .debounce(3_000)
-                    .collect {
+                    .collect { reading ->
+                        if (reading) return@collect
                         runCatching { index.updateFlags() }
                         // Songs whose post was deleted in Telegram leave the library once a full read shows them gone.
                         runCatching { index.pruneDeadRows() }

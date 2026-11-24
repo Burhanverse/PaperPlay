@@ -406,7 +406,7 @@ class Scanner(
 
     /** Removes the songs in [gone] from the library (not from Telegram). */
     fun removeGone() {
-        for (s in _gone.value) repo.removePost(s.chat_id, s.message_id)
+        repo.batch { for (s in _gone.value) repo.repo.removePost(s.chat_id, s.message_id) }
         _gone.value = emptyList()
     }
 
@@ -456,7 +456,7 @@ class Scanner(
         } finally {
             _progress.value = null
         }
-        if (prune) for (s in missing) repo.removePost(s.chat_id, s.message_id)
+        if (prune) repo.batch { for (s in missing) repo.repo.removePost(s.chat_id, s.message_id) }
         else _gone.value = _gone.value.filter { it.chat_id != chat.id } + missing
         return true
     }
@@ -586,6 +586,7 @@ class Scanner(
                     recovered += found.size
                 }
                 val messages: List<JsonObject> = got
+                val changedBefore = added + claimed
                 holes += requested.size - messages.size
                 // One transaction and one change notice for the whole page.
                 repo.repo.db.transaction {
@@ -600,7 +601,8 @@ class Scanner(
                         else if (song.message_id in accountOnly) { repo.repo.upsertBotSong(song.copy(remote_id = botRemote(owner, song.remote_id))); claimed++ }
                     }
                 }
-                repo.invalidate()
+                // Only when the page brought something; every open list reads the whole library again after it.
+                if (added + claimed != changedBefore) repo.invalidateSoon()
                 // Saved about once a second, so a closed app continues near here; only real message ids, or later posts could be skipped.
                 if (!full && persist) {
                     if (lastWrite.elapsedNow() >= 1.seconds) { repo.setScan(chat.id, newest, chat.walk_done); lastWrite = clockMark.markNow() }
