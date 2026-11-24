@@ -60,6 +60,7 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     private val player = factory.mediaPlayers().newMediaPlayer()
     private val http = lazy { StreamHttpServer() }
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-cmd").apply { isDaemon = true } }
+    @Volatile private var closed = false
     private var queue = emptyList<QueueItem>()
 
     init {
@@ -67,14 +68,16 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
             // libvlc has no audio output until playback starts, so a volume set earlier is applied now.
             override fun playing(mp: MediaPlayer) {
                 _state.value = PlayerState.Playing
-                mp.audio().setVolume((volume * 100).toInt()); if (rate != 1f) mp.controls().setRate(rate)
-                val resume = resumeAtMs
-                if (resume > 0) { resumeAtMs = 0; mp.controls().setTime(resume) }
-                // The equalizer needs an audio output too, so it is applied again for each new track.
-                applyEqualizer(mp)
-                publishInfo(mp)
-                val i = _info.value
-                PlayLog.log("vlc", "playing after ${System.currentTimeMillis() - startedAt}ms codec=${i?.codec} rate=${i?.sampleRateHz}Hz ch=${i?.channels} bitrate=${i?.bitrateKbps}kbps device=${i?.device}")
+                cmd {
+                    mp.audio().setVolume((volume * 100).toInt()); if (rate != 1f) mp.controls().setRate(rate)
+                    val resume = resumeAtMs
+                    if (resume > 0) { resumeAtMs = 0; mp.controls().setTime(resume) }
+                    // The equalizer needs an audio output too, so it is applied again for each new track.
+                    applyEqualizer(mp)
+                    publishInfo(mp)
+                    val i = _info.value
+                    PlayLog.log("vlc", "playing after ${System.currentTimeMillis() - startedAt}ms codec=${i?.codec} rate=${i?.sampleRateHz}Hz ch=${i?.channels} bitrate=${i?.bitrateKbps}kbps device=${i?.device}")
+                }
             }
             override fun paused(mp: MediaPlayer) { _state.value = PlayerState.Paused }
             override fun error(mp: MediaPlayer) { _state.value = PlayerState.Error }
@@ -99,7 +102,13 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
         })
     }
 
-    private fun cmd(block: () -> Unit) { io.execute(block) }
+    private fun cmd(block: () -> Unit) {
+        if (closed || io.isShutdown) return
+        try {
+            io.execute(block)
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+        }
+    }
 
     private fun start(index: Int, retry: Boolean = false, startPositionMs: Long = 0L) {
         val item = queue[index]
@@ -216,6 +225,7 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     }
 
     override fun release() {
+        closed = true
         io.shutdown()
         io.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
         player.release()
