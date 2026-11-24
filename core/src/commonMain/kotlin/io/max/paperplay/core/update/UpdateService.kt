@@ -187,7 +187,15 @@ class UpdateService(
     /** Starts the install of a downloaded update. Null when it started; otherwise the reason it could not. */
     suspend fun install(): InstallBlocked? {
         val s = _state.value as? UpdateState.Ready ?: return null
-        return installer?.install(s.path)
+        return try {
+            installer?.install(s.path)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The file can be gone by now (cache cleared, antivirus) or the disk full; that is a message, not a crash.
+            _state.value = UpdateState.Failed(e.message ?: "The update could not be installed")
+            null
+        }
     }
 
     /** A connect timeout is often one dead address of several; try again a few times. */
