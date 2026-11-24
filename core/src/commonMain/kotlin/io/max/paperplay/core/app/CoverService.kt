@@ -3,6 +3,7 @@ package io.max.paperplay.core.app
 import io.max.paperplay.core.backup.Fs
 import io.max.paperplay.core.integrations.HttpFetcher
 import io.max.paperplay.core.integrations.defaultHttpFetcher
+import io.max.paperplay.core.library.newUuid
 import io.max.paperplay.core.library.Song
 import io.max.paperplay.core.metadata.CoverImage
 import io.max.paperplay.core.metadata.TagSource
@@ -790,7 +791,17 @@ class CoverService(
         val path = "$dir/${coverContentName(data)}.jpg"
         return runCatching {
             Fs.mkdirs(dir)
-            if (!Fs.exists(path)) Fs.write(path, data)
+            // A file cut short by a full disk or a kill has another size and is written again; the name only appears once the file is whole.
+            if (!Fs.exists(path) || Fs.size(path) != data.size.toLong()) {
+                val tmp = "$path.${newUuid()}.tmp"
+                try {
+                    Fs.write(tmp, data)
+                    if (Fs.exists(path)) Fs.deleteRecursively(path)
+                    Fs.rename(tmp, path)
+                } finally {
+                    if (Fs.exists(tmp)) Fs.deleteRecursively(tmp)
+                }
+            }
             path
         }.getOrNull()
     }
