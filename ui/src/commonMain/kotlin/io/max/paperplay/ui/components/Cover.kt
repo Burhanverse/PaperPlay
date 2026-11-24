@@ -63,8 +63,9 @@ fun CoverImage(
     val fade = androidx.compose.runtime.remember(coverId) { androidx.compose.animation.core.Animatable(if (painter != null) 1f else 0f) }
     val fadeSpec = io.max.paperplay.ui.theme.motionTween<Float>(io.max.paperplay.ui.theme.Motion.STANDARD)
     LaunchedEffect(painter != null) { if (painter != null) fade.animateTo(1f, fadeSpec) }
+    val fading = androidx.compose.runtime.remember(coverId) { androidx.compose.runtime.derivedStateOf { fade.value < 1f } }
     Box(modifier.size(size).clip(shape)) {
-        if (painter == null || fade.value < 1f) {
+        if (painter == null || fading.value) {
             // While a cover is being looked up or decoded, the placeholder shimmers; the mosaic stays only for a song that has no cover.
             if ((uri == null && LocalCoversPending.current) || (uri != null && painter == null)) androidx.compose.foundation.layout.Spacer(Modifier.size(size).then(io.max.paperplay.ui.app.skeletonFill()))
             else CoverMosaic(key, Modifier.size(size))

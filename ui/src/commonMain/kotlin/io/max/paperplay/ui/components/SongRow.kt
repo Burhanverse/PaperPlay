@@ -7,7 +7,6 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.draw.clip
@@ -79,9 +78,8 @@ fun SongRow(
     val effectiveCoverUri = coverUriOverride ?: song.coverUri
     val coverKey = song.album.ifBlank { song.title.ifBlank { song.id } }
 
-    BoxWithConstraints(modifier.fillMaxWidth()) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = io.max.paperplay.ui.app.appShape(16.dp),
         color = containerColor,
         tonalElevation = if (current) 3.dp else 1.dp,
@@ -195,8 +193,9 @@ fun SongRow(
             if (actions != null) SongMenu(song, actions, openState = menuOpen) else Box(Modifier.size(8.dp))
         }
     }
-    }
 }
+
+private val HI_RES_REGEX = Regex("""(\d+)/([\d.]+)""")
 
 /** Lossless with more than 16 bits or a rate above 48 kHz, read from labels like "FLAC 24/96". */
 /** The one chip a song earns for its format: "Hi-Res", or the first word of its quality label such as FLAC or MP3. */
@@ -205,7 +204,7 @@ internal fun formatChipOf(song: SongUi): String? =
 
 private fun isHiRes(song: SongUi): Boolean {
     if (!song.lossless) return false
-    val m = Regex("""(\d+)/([\d.]+)""").find(song.qualityLabel.orEmpty()) ?: return false
+    val m = HI_RES_REGEX.find(song.qualityLabel.orEmpty()) ?: return false
     return m.groupValues[1].toInt() > 16 || (m.groupValues[2].toDoubleOrNull() ?: 0.0) > 48
 }
 

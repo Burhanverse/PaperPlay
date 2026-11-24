@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -32,8 +33,9 @@ import io.max.paperplay.ui.theme.LocalReduceMotion
 fun Modifier.skeleton(shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(10.dp)): Modifier {
     val reduce = LocalReduceMotion.current
     val base = MaterialTheme.colorScheme.surfaceContainerHigh
+    if (reduce) return this.clip(shape).background(base)
     val light = androidx.compose.ui.graphics.lerp(base, MaterialTheme.colorScheme.onSurface, 0.10f)
-    val sweep by rememberInfiniteTransition(label = "skeleton").animateFloat(
+    val sweep = rememberInfiniteTransition(label = "skeleton").animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(1300, easing = androidx.compose.animation.core.LinearEasing), RepeatMode.Restart), label = "skeleton sweep",
     )
@@ -41,10 +43,15 @@ fun Modifier.skeleton(shape: androidx.compose.ui.graphics.Shape = RoundedCornerS
         val w = size.width.coerceAtLeast(1f)
         val brush = androidx.compose.ui.graphics.Brush.linearGradient(
             listOf(androidx.compose.ui.graphics.Color.Transparent, light, androidx.compose.ui.graphics.Color.Transparent),
-            start = androidx.compose.ui.geometry.Offset(-w + sweep * 2f * w, 0f),
-            end = androidx.compose.ui.geometry.Offset(sweep * 2f * w, size.height * 0.4f),
+            start = androidx.compose.ui.geometry.Offset(0f, 0f),
+            end = androidx.compose.ui.geometry.Offset(w, size.height * 0.4f),
         )
-        onDrawWithContent { drawContent(); if (!reduce) drawRect(brush) }
+        onDrawWithContent {
+            drawContent()
+            withTransform({ translate(left = -w + sweep.value * 2f * w) }) {
+                drawRect(brush)
+            }
+        }
     }
 }
 
