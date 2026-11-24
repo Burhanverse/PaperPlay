@@ -27,6 +27,7 @@ val layoutPrefs = listOf(
     "upload_skip_known", "keep_running", "listenbrainz_on", "weather_city", "weather_lat", "weather_lon",
     "bit_perfect_mode.android", "bit_perfect_mode.desktop",
     "lyrics_text_size", "lyrics_secondary", "lyrics_secondary_kind",
+    "player_style", "modern_player_blur",
 ) + backgroundPrefs + standbyPrefs
 
 /** Prefs tied to one device (Flutter `AppDb.devicePrefs`): kept from this device, never taken from a backup. */

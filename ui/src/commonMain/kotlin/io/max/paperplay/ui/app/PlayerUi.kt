@@ -109,8 +109,8 @@ import io.max.paperplay.ui.state.SongUi
 import io.max.paperplay.ui.theme.schemeFromSeed
 
 /**
- * The full-screen player: a dark theme in the cover's colours over a gradient to black. On a
- * phone the queue replaces the song; from 900dp the two sit side by side.
+ * The full-screen player host: switches between [DefaultFullPlayer] and [ModernFullPlayer] from
+ * [UiPrefs.playerStyle] while sharing state, queue, and dialogs.
  */
 @Composable
 fun FullPlayer(
@@ -124,10 +124,100 @@ fun FullPlayer(
     val scheme = coverScheme(song.coverUri) ?: remember(base.primary) { schemeFromSeed(base.primary.toArgb(), dark = true) }
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    var outputInfoOpen by remember { mutableStateOf(false) }
+    var showSleep by remember { mutableStateOf(false) }
+    var showSpeed by remember { mutableStateOf(false) }
+    var showEq by remember { mutableStateOf(false) }
+    var devicesOpen by remember { mutableStateOf(false) }
     val fullscreen by WindowFullscreen.on.collectAsState()
     val canFullscreen by WindowFullscreen.supported.collectAsState()
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { WindowFullscreen.on.value = false } }
     PlatformBackHandler(showQueue) { showQueue = false }
+
+    val standbyPrefs = if (io.max.paperplay.ui.isPhone) LocalUiPrefs.current?.standby else null
+    var standby by remember { mutableStateOf(false) }
+    val openStandby: (() -> Unit)? = if (standbyPrefs != null) ({ standby = true }) else null
+    if (standby && standbyPrefs != null) StandbyScreen(state, backend, standbyPrefs) { standby = false }
+
+    val style = resolveEffectivePlayerStyle(LocalUiPrefs.current)
+    if (style == PlayerStyle.Modern) {
+        ModernFullPlayer(
+            state = state,
+            error = error,
+            backend = backend,
+            actions = actions,
+            scheme = scheme,
+            showQueue = showQueue,
+            showLyrics = showLyrics,
+            fullscreen = fullscreen,
+            canFullscreen = canFullscreen,
+            onClose = onClose,
+            onSetShowQueue = { showQueue = it },
+            onSetShowLyrics = { showLyrics = it },
+            onOpenEq = onOpenEq ?: { showEq = true },
+            onOpenLyrics = onOpenLyrics,
+            onOpenOutputInfo = { outputInfoOpen = true },
+            onOpenSleep = { showSleep = true },
+            onOpenSpeed = { showSpeed = true },
+            onOpenDevices = onOpenSettings?.let { { devicesOpen = true } },
+            onOpenStandby = openStandby,
+            modifier = modifier,
+        )
+    } else {
+        DefaultFullPlayer(
+            song = song,
+            state = state,
+            error = error,
+            backend = backend,
+            actions = actions,
+            scheme = scheme,
+            showQueue = showQueue,
+            showLyrics = showLyrics,
+            fullscreen = fullscreen,
+            canFullscreen = canFullscreen,
+            onClose = onClose,
+            onSetShowQueue = { showQueue = it },
+            onSetShowLyrics = { showLyrics = it },
+            onOpenSettings = onOpenSettings,
+            onOpenEq = onOpenEq,
+            onOpenLyrics = onOpenLyrics,
+            onOpenStandby = openStandby,
+            modifier = modifier,
+        )
+    }
+
+    if (outputInfoOpen) OutputInfoDialog(song, backend) { outputInfoOpen = false }
+    if (showSleep) SleepTimerDialog(backend) { showSleep = false }
+    if (showSpeed) SpeedDialog(backend) { showSpeed = false }
+    if (showEq) EqualizerDialog(backend) { showEq = false }
+    if (devicesOpen && onOpenSettings != null) {
+        val switchOutput = io.max.paperplay.ui.rememberOutputSwitcher()
+        val activeId = LocalOutputSwitch.current?.active?.collectAsState()?.value
+        PhoneDevicesDialog({ id -> onClose(); onOpenSettings(id) }, switchOutput, if (activeId == null) song else null) { devicesOpen = false }
+    }
+}
+
+@Composable
+private fun DefaultFullPlayer(
+    song: SongUi,
+    state: PlaybackUiState,
+    error: String?,
+    backend: PlayerControls,
+    actions: ListActions,
+    scheme: ColorScheme,
+    showQueue: Boolean,
+    showLyrics: Boolean,
+    fullscreen: Boolean,
+    canFullscreen: Boolean,
+    onClose: () -> Unit,
+    onSetShowQueue: (Boolean) -> Unit,
+    onSetShowLyrics: (Boolean) -> Unit,
+    onOpenSettings: ((String) -> Unit)?,
+    onOpenEq: (() -> Unit)?,
+    onOpenLyrics: (() -> Unit)?,
+    onOpenStandby: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
     val top by animateColorAsState(lerp(scheme.primaryContainer, Color.Black, 0.25f), tween(500))
     val mid by animateColorAsState(lerp(scheme.surfaceContainerLow, Color.Black, 0.75f), tween(500))
     val insets = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -139,11 +229,6 @@ fun FullPlayer(
                 .padding(top = insets, bottom = bottom),
         ) {
             val wide = maxWidth >= 900.dp && !(io.max.paperplay.ui.isPhone && maxWidth > maxHeight)
-            // Held here so turning the phone does not close it.
-            val standbyPrefs = if (io.max.paperplay.ui.isPhone) LocalUiPrefs.current?.standby else null
-            var standby by remember { mutableStateOf(false) }
-            val openStandby: (() -> Unit)? = if (standbyPrefs != null) ({ standby = true }) else null
-            if (standby && standbyPrefs != null) StandbyScreen(state, backend, standbyPrefs) { standby = false }
             when {
                 wide -> Row(Modifier.fillMaxSize()) {
                     // The song gets the larger share and sits a little right of centre; the queue and lyrics take the rest.
@@ -155,7 +240,7 @@ fun FullPlayer(
                                 AppIcon(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, if (fullscreen) "Exit full screen" else "Full screen", Modifier.size(28.dp))
                             }
                         }
-                        PlayerBody(song, state, error, backend, actions, onClose, grabber = false, Modifier.weight(1f), contentMax = 720.dp, onOpenEq = onOpenEq, onOpenLyrics = { showLyrics = true })
+                        PlayerBody(song, state, error, backend, actions, onClose, grabber = false, Modifier.weight(1f), contentMax = 720.dp, onOpenEq = onOpenEq, onOpenLyrics = { onSetShowLyrics(true) })
                     }
                     Column(Modifier.weight(1f).fillMaxHeight().padding(end = 16.dp)) {
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -163,7 +248,7 @@ fun FullPlayer(
                                 val sel = showLyrics == lyr
                                 Text(
                                     name,
-                                    Modifier.clip(RoundedCornerShape(50)).clickable { showLyrics = lyr }
+                                    Modifier.clip(RoundedCornerShape(50)).clickable { onSetShowLyrics(lyr) }
                                         .background(if (sel) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) else Color.Transparent)
                                         .padding(horizontal = 14.dp, vertical = 6.dp),
                                     style = MaterialTheme.typography.titleMedium,
@@ -178,13 +263,13 @@ fun FullPlayer(
                 else -> androidx.compose.animation.Crossfade(showQueue, animationSpec = io.max.paperplay.ui.theme.motionTween(), label = "queue") { queueShown ->
                     if (queueShown) Column(Modifier.fillMaxSize()) {
                         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton({ showQueue = false }) { AppIcon(Icons.Rounded.KeyboardArrowDown, "Back to the song", Modifier.size(32.dp)) }
+                            IconButton({ onSetShowQueue(false) }) { AppIcon(Icons.Rounded.KeyboardArrowDown, "Back to the song", Modifier.size(32.dp)) }
                             Text("Queue", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                             Text("${state.queue.size} songs", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.width(12.dp))
                         }
                         QueueList(state, backend, Modifier.weight(1f))
-                    } else PlayerBody(song, state, error, backend, actions, onClose, grabber = true, Modifier.fillMaxSize(), onQueue = { showQueue = true }, onStandby = openStandby, onDevices = onOpenSettings?.let { open -> { id: String -> onClose(); open(id) } }, onOpenEq = onOpenEq, onOpenLyrics = onOpenLyrics)
+                    } else PlayerBody(song, state, error, backend, actions, onClose, grabber = true, Modifier.fillMaxSize(), onQueue = { onSetShowQueue(true) }, onStandby = onOpenStandby, onDevices = onOpenSettings?.let { open -> { id: String -> onClose(); open(id) } }, onOpenEq = onOpenEq, onOpenLyrics = onOpenLyrics)
                 }
             }
         }
@@ -459,7 +544,7 @@ private fun SongInfoDialog(song: SongUi, onDismiss: () -> Unit) {
 
 /** The queue; tap to play, the row menu moves or removes a song. */
 @Composable
-private fun QueueList(state: PlaybackUiState, backend: PlayerControls, modifier: Modifier = Modifier) {
+internal fun QueueList(state: PlaybackUiState, backend: PlayerControls, modifier: Modifier = Modifier) {
     val keys = remember(state.queue) {
         val seen = HashMap<String, Int>()
         state.queue.map { s -> val n = seen.merge(s.id, 1, Int::plus)!!; "${s.id}#$n" }
@@ -585,7 +670,7 @@ private fun SongInfoDialogPreview() {
 
 private val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
-private fun speedLabel(s: Float) = (if (s % 1f == 0f) s.toInt().toString() else s.toString().trimEnd('0')) + "x"
+internal fun speedLabel(s: Float) = (if (s % 1f == 0f) s.toInt().toString() else s.toString().trimEnd('0')) + "x"
 
 /** Playback speed. */
 @Composable

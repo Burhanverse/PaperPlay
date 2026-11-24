@@ -63,6 +63,30 @@ fun BackgroundSettings(prefs: UiPrefs) {
     }
 }
 
+/** Full-screen player style selector under Settings > Appearance > Display (Android only). */
+@Composable
+fun PlayerStyleSettings(prefs: UiPrefs) {
+    SectionLabel("Full-screen player")
+    ChoiceRow(PlayerStyle.entries, prefs.playerStyle, { it.label }, prefs::putPlayerStyle)
+    Text(
+        when (prefs.playerStyle) {
+            PlayerStyle.Default -> "Cover-tinted theme with classic controls."
+            PlayerStyle.Modern -> "Blurred cover backdrop with dark frosted glass controls and quality badges."
+        },
+        Modifier.padding(horizontal = 20.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (prefs.playerStyle == PlayerStyle.Modern) {
+        SliderRow(
+            title = "Backdrop blur: ${prefs.modernPlayerBlur.toInt()} dp",
+            value = prefs.modernPlayerBlur,
+            range = 0f..40f,
+            onChange = { prefs.putModernPlayerBlur(it) },
+        )
+    }
+}
+
 /** Progress Bar Style selector with a compact interactive live preview on Settings > Appearance. */
 @Composable
 fun ProgressBarStyleSettings(prefs: UiPrefs, backend: CoreBackend? = null) {
