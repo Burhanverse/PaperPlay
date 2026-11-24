@@ -17,6 +17,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -364,7 +365,7 @@ class AppServices(
                 val key = platform.secrets.get(Keys.TD_KEY)
                 if (apiId == null || apiHash.isNullOrEmpty() || key == null) null
                 else {
-                    val rt = runtime ?: TdRuntime(platform.native, scope, platform.receiveDispatcher).also { runtime = it }
+                    val rt = tdRuntime()
                     TdClient(
                         rt,
                         TdConfig(
@@ -381,7 +382,7 @@ class AppServices(
     /** The owner's own account (login, chats, copying). The real one replaces the stand-in. */
     val account: io.max.paperplay.core.account.AccountApi by lazy {
         io.max.paperplay.core.account.UserSession(
-            scope, { runtime ?: TdRuntime(platform.native, scope, platform.receiveDispatcher).also { runtime = it } },
+            scope, { tdRuntime() },
             platform.dataDir, platform.secrets, platform.settings, library::pref, library::setPref, platform.deviceModel, platform.appVersion,
         )
     }
@@ -635,7 +636,17 @@ class AppServices(
     }
 
     @Volatile private var client: TdClient? = null
-    private var runtime: TdRuntime? = null
+    @Volatile private var runtime: TdRuntime? = null
+    private val runtimeLock = Any()
+
+    /** The one TDLib runtime; two at once would receive each other's answers. */
+    private fun tdRuntime(): TdRuntime = synchronized(runtimeLock) {
+        runtime ?: TdRuntime(platform.native, scope, platform.receiveDispatcher).also { runtime = it }
+    }
+
+    private val connecting = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var connectedBefore = false
+    private var connectJob: Job? = null
     private val cachePending = HashMap<String, Pair<Long, Boolean>>()
     private val clockMs = clock
     private var lastEvict = 0L
@@ -674,20 +685,8 @@ class AppServices(
         activityLog("Library", "Fixed the title and artist of ${fixed.size} songs")
     }
 
-    /**
-     * Logs the bot in and then reads the library chats. Returns at once; watch [auth], [ready] and [error].
-     * Does nothing when already connected.
-     */
-    fun connect() {
-        if (client != null) return
-        val apiId = platform.settings.get(Keys.API_ID)?.toIntOrNull()
-        val apiHash = platform.settings.get(Keys.API_HASH)
-        val token = platform.secrets.get(Keys.BOT_TOKEN)
-        if (apiId == null || apiHash.isNullOrEmpty() || token.isNullOrEmpty()) {
-            _error.value = "Enter the API id, API hash and bot token first."
-            return
-        }
-        _error.value = null
+    /** Jobs that run beside the connection and are started once, however often connecting is tried. */
+    private fun startOnce() {
         // Songs whose names were split badly ("Song - Lofi - Artist", "Song - Artist" read the other way round) get their title and artist
         // right, and are looked up again. Runs now and after every scan, because new uploads arrive split by the file name alone.
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -705,10 +704,34 @@ class AppServices(
                 if (fixed.isNotEmpty()) activityLog("Library", "Fixed shifted forum topic ids in ${fixed.size} chat(s)")
             }
         }
-        scope.launch {
+    }
+
+    /**
+     * Logs the bot in and then reads the library chats. Returns at once; watch [auth], [ready] and [error].
+     * Does nothing when already connected.
+     */
+    fun connect() {
+        if (client != null) return
+        val apiId = platform.settings.get(Keys.API_ID)?.toIntOrNull()
+        val apiHash = platform.settings.get(Keys.API_HASH)
+        val token = platform.secrets.get(Keys.BOT_TOKEN)
+        if (apiId == null || apiHash.isNullOrEmpty() || token.isNullOrEmpty()) {
+            _error.value = "Enter the API id, API hash and bot token first."
+            return
+        }
+        // The setup form and the first screen both ask; only one may build a client.
+        if (!connecting.compareAndSet(false, true)) return
+        _error.value = null
+        if (!connectedBefore) {
+            connectedBefore = true
+            startOnce()
+        }
+        connectJob = scope.launch {
+            var mine: TdClient? = null
+            var ready = false
             try {
                 val key = platform.secrets.get(Keys.TD_KEY) ?: (newUuid() + newUuid()).also { platform.secrets.put(Keys.TD_KEY, it) }
-                val rt = runtime ?: TdRuntime(platform.native, scope, platform.receiveDispatcher).also { runtime = it }
+                val rt = tdRuntime()
                 val c = TdClient(
                     rt,
                     TdConfig(
@@ -718,6 +741,7 @@ class AppServices(
                     ),
                 )
                 client = c
+                mine = c
                 scanner.attach(c)
                 launch { c.auth.collect { _auth.value = it } }
                 launch { c.authError.collect { _error.value = it } }
@@ -727,7 +751,19 @@ class AppServices(
                     }
                 }
                 c.start()
-                c.ready()
+                while (true) {
+                    try {
+                        c.ready()
+                        break
+                    } catch (e: TdError) {
+                        // No answer yet (no network): TDLib goes on trying, and the rest starts when it gets there.
+                        if (e.code != 408 || client !== c) throw e
+                        _error.value = e.message
+                    }
+                }
+                ready = true
+                connecting.set(false)
+                _error.value = null
                 playlistSync.start()
                 botPool.load()
                 // A minute after startup (extra bots log in first) the full cleanup, then every 10 minutes only the cheap trim of open sessions, not only when the main bot downloads, or songs played through the account or extra bots pile up.
@@ -786,9 +822,17 @@ class AppServices(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: TdError) {
+                if (!ready) {
+                    // A refused login gives the client up, so corrected details get a new one; the reason stays on screen.
+                    kotlin.coroutines.coroutineContext.cancelChildren()
+                    mine?.let { c -> if (client === c) client = null; runCatching { c.shutdown() } }
+                    _auth.value = ""
+                }
                 _error.value = e.message
             } catch (e: Throwable) {
                 _error.value = e.message ?: e::class.simpleName
+            } finally {
+                if (!ready) connecting.set(false)
             }
         }
     }
@@ -1056,6 +1100,8 @@ class AppServices(
 
     /** Disconnects; the session stays on disk, so [connect] logs in again without a code. */
     suspend fun disconnect() {
+        // Its loops and collectors belong to this login; the next one starts its own.
+        connectJob?.cancel()
         val c = client ?: return
         client = null
         resolver.retain(emptyList())
