@@ -81,7 +81,10 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         )
         (base + options).forEach { (k, v) -> val rc = lib.mpv_set_option_string(ctx, k, v); if (rc < 0) PlayLog.log("mpv", "option $k=$v: ${lib.mpv_error_string(rc)}") }
         val rc = lib.mpv_initialize(ctx)
-        check(rc >= 0) { "mpv_initialize failed: ${lib.mpv_error_string(rc)}" }
+        if (rc < 0) {
+            lib.mpv_terminate_destroy(ctx)
+            error("mpv_initialize failed: ${lib.mpv_error_string(rc)}")
+        }
         lib.mpv_request_log_messages(ctx, "warn")
         lib.mpv_observe_property(ctx, 1, "time-pos", MpvC.FORMAT_DOUBLE)
         lib.mpv_observe_property(ctx, 2, "duration", MpvC.FORMAT_DOUBLE)
@@ -110,13 +113,19 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
 
     private fun int(name: String): Int? = str(name)?.toIntOrNull()
 
-    private fun cmd(block: () -> Unit) { if (!closed) io.execute { runCatching(block).onFailure { PlayLog.log("mpv", "error: $it") } } }
+    private fun cmd(block: () -> Unit) {
+        if (closed || io.isShutdown) return
+        try {
+            io.execute { runCatching(block).onFailure { PlayLog.log("mpv", "error: $it") } }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+        }
+    }
 
     // ---- events
 
     private fun eventLoop() {
         while (!closed) {
-            val ev = lib.mpv_wait_event(ctx, 0.25)
+            val ev = lib.mpv_wait_event(ctx, -1.0)
             when (ev.getInt(0)) {
                 MpvC.EVENT_NONE -> {}
                 MpvC.EVENT_SHUTDOWN -> return
@@ -409,7 +418,11 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         exclusive = on
         _bitPerfectStatus.value = if (on) BitPerfectStatus.Standby(reason = "Exclusive output requested") else BitPerfectStatus.Off
         // Bit-perfect needs the device opened at each song's own rate. "yes" would keep the first song's rate and convert every later song to it.
-        cmd { setProp("gapless-audio", if (on) "weak" else "yes"); setProp("audio-exclusive", if (on) "yes" else "no"); publishInfo() }
+        cmd {
+            setProp("gapless-audio", if (on) "weak" else "yes")
+            setProp("audio-exclusive", if (on) "yes" else "no")
+            applyFilters()
+        }
     }
 
     private fun buildParametricAf(profile: ParametricEqProfile): String? {
@@ -442,15 +455,20 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     }
 
     private fun applyFilters() {
-        val peq = parametricEq
-        val peqActive = !exclusive && parametricEnabled && peq != null && peq.hasActiveShaping()
-        val g = if (peqActive && peq != null) {
+        val g = if (exclusive) {
             plan = null
-            buildParametricAf(peq)
+            null
         } else {
-            val p = MpvFilters.plan(eqGains, bass)
-            plan = p
-            MpvFilters.graph(p, normalize, profile, width, crossfeed)
+            val peq = parametricEq
+            val peqActive = parametricEnabled && peq != null && peq.hasActiveShaping()
+            if (peqActive && peq != null) {
+                plan = null
+                buildParametricAf(peq)
+            } else {
+                val p = MpvFilters.plan(eqGains, bass)
+                plan = p
+                MpvFilters.graph(p, normalize, profile, width, crossfeed)
+            }
         }
         graph = g
         val rc = lib.mpv_set_property_string(ctx, "af", MpvFilters.afValue(g))
