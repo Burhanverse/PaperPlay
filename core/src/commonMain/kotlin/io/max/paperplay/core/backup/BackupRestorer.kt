@@ -152,7 +152,7 @@ class BackupRestorer {
         removeDb(newDb)
         val songCount: Int
         try {
-            songCount = buildLibrary(manifest, scan, target, options, newDb)
+            songCount = buildLibrary(manifest, scan, target, options, newDb, keepLogin = sessionKey == null)
         } catch (e: IndexKeepFailed) {
             removeDb(newDb)
             throw BackupException("Your chat index could not be carried over, so nothing was restored. Your library is unchanged.")
@@ -223,7 +223,7 @@ class BackupRestorer {
         }
         try {
             for (k in listOf("chats", "songs", "playlists", "playlistSongs", "prefs")) json.getValue(k).jsonArray
-            for (k in listOf("missingTracks", "moodVotes", "forumTopics", "postCopies")) json[k]?.let { if (it !is JsonNull) it.jsonArray }
+            for (k in listOf("missingTracks", "moodVotes", "forumTopics", "postCopies", "listenStats", "eqPresets")) json[k]?.let { if (it !is JsonNull) it.jsonArray }
         } catch (_: Exception) {
             throw BackupException("This backup is damaged.")
         }
@@ -285,7 +285,7 @@ class BackupRestorer {
 
     // ---- library --------------------------------------------------------------------------------------------
 
-    private fun ProducerScope<RestoreEvent>.buildLibrary(m: Manifest, scan: Scanned, target: RestoreTarget, options: RestoreOptions, path: String): Int {
+    private fun ProducerScope<RestoreEvent>.buildLibrary(m: Manifest, scan: Scanned, target: RestoreTarget, options: RestoreOptions, path: String, keepLogin: Boolean): Int {
         val ownPrefs = readDevicePrefs(target)
         val driver = target.openDriver(path)
         try {
@@ -330,32 +330,45 @@ class BackupRestorer {
                 ins("mood_votes", m.rows("moodVotes"))
                 ins("forum_topics", m.rows("forumTopics"))
                 ins("post_copies", m.rows("postCopies"))
+                ins("eq_presets", m.rows("eqPresets"))
                 // Readies rows from backups that predate sync (Flutter prepareOlderRows).
                 driver.execute(null, "UPDATE songs SET tags_at = 1 WHERE tags_at = 0 AND (user_edited = 1 OR enrich_state <> 0)", 0)
                 driver.execute(null, "UPDATE songs SET favorite_at = 1 WHERE favorite_at = 0 AND favorite = 1", 0)
                 driver.execute(null, "UPDATE playlists SET uuid = 'legacy-' || id || '-' || name WHERE uuid = ''", 0)
             }
             progress("Keeping your chat index", 0.9)
-            keepIndex(driver, target, scan)
+            keepIndex(driver, target, scan, m, keepLogin)
             return songs.size
         } finally {
             driver.close()
         }
     }
 
+    private val KEPT_TABLES = listOf(
+        "index_chats", "index_posts", "index_copied", "index_removed", "listen_stats", "play_events", "eq_presets", "eq_device_map", "audio_features",
+    )
+
     private class IndexKeepFailed(cause: Throwable) : RuntimeException(cause)
 
     /**
      * A restore never loses the chat index: this device's own index is copied into the new library as it is, then the backup's index is
      * merged on top (nothing is deleted, the further read wins). If this device's index can't be copied, the whole restore stops.
+     *
+     * The same goes for everything else of this device that a library backup is not about: listening time, the play log, EQ presets and
+     * their devices, measured audio features. Whether the account is signed in stays as it is here too unless the backup brought its
+     * session ([keepLogin] false).
      */
-    private fun keepIndex(driver: SqlDriver, target: RestoreTarget, scan: Scanned) {
+    private fun keepIndex(driver: SqlDriver, target: RestoreTarget, scan: Scanned, m: Manifest, keepLogin: Boolean) {
         val store = io.max.paperplay.core.account.IndexStore(driver)
         if (Fs.exists(target.libraryPath)) try {
             val old = target.openDriver(target.libraryPath)
             try {
                 LibraryDatabase(driver).transaction {
-                    for (table in listOf("index_chats", "index_posts", "index_copied")) copyTable(old, driver, table)
+                    for (table in KEPT_TABLES) copyTable(old, driver, table)
+                    if (keepLogin) {
+                        val was = old.executeQuery(null, "SELECT value FROM prefs WHERE key = 'user_session'", { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 0).value
+                        setLogin(driver, was)
+                    }
                 }
             } finally {
                 old.close()
@@ -363,6 +376,17 @@ class BackupRestorer {
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             throw IndexKeepFailed(e)
+        } else if (keepLogin) setLogin(driver, null)
+        // Listening time of the backup joins what is here; the larger value of a row wins, so nothing is counted twice.
+        m.rows("listenStats")?.let { rows ->
+            val list = rows.mapNotNull { e ->
+                runCatching {
+                    val o = e.jsonObject
+                    fun s(k: String) = o.getValue(k).jsonPrimitive.content
+                    listOf<Any>(s("origin"), s("day"), s("trackKey"), s("ms").toLong(), s("plays").toLong())
+                }.getOrNull()
+            }
+            io.max.paperplay.core.library.LibraryRepo(LibraryDatabase(driver)) { 0L }.mergeListen(list, self = "")
         }
         // Counts and keys follow the copied rows.
         io.max.paperplay.core.account.IndexStore(driver)
@@ -379,10 +403,20 @@ class BackupRestorer {
             QueryResult.Value<Map<String, String>>(out)
         }, 0).value
 
+    private fun setLogin(driver: SqlDriver, value: String?) {
+        if (value == null) driver.execute(null, "DELETE FROM prefs WHERE key = 'user_session'", 0)
+        else driver.execute(null, "INSERT OR REPLACE INTO prefs (key, value) VALUES ('user_session', ?)", 1) { bindString(0, value) }
+    }
+
     /** Copies every row of [table] from [from] to [to] (the columns both have), replacing rows with the same key. */
     private fun copyTable(from: SqlDriver, to: SqlDriver, table: String) {
         val have = columnsOf(from, table)
         if (have.isEmpty()) return
+        // Some tables are made by the part of the app that uses them, so a new library does not have them yet.
+        if (columnsOf(to, table).isEmpty()) {
+            val ddl = from.executeQuery(null, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 1) { bindString(0, table) }.value
+            to.execute(null, ddl ?: return, 0)
+        }
         val cols = columnsOf(to, table).filterKeys { it in have }.toList()
         val names = cols.joinToString(",") { "\"${it.first}\"" }
         val insert = "INSERT OR REPLACE INTO $table ($names) VALUES (${cols.joinToString(",") { "?" }})"

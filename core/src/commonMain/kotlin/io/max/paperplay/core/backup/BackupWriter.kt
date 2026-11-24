@@ -62,6 +62,8 @@ object BackupWriter {
                 "moodVotes" to rows(driver, "mood_votes"),
                 "forumTopics" to rows(driver, "forum_topics"),
                 "postCopies" to rows(driver, "post_copies"),
+                "listenStats" to rows(driver, "listen_stats"),
+                "eqPresets" to rows(driver, "eq_presets"),
                 "prefs" to prefs,
                 "layout" to JsonObject(layoutPrefs.filter { it in prefMap }.associateWith { JsonPrimitive(prefMap.getValue(it)) }),
             ),

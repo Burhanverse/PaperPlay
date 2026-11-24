@@ -238,6 +238,32 @@ class BackupRestorerTest {
     }
 
     @Test
+    fun restoreKeepsListeningTimeEqAndTheAccountLogin() {
+        val env = Env()
+        run(env, zip(mapOf("library.json" to manifest())))
+        fun sql(vararg s: String) = DriverManager.getConnection("jdbc:sqlite:${env.db}").use { c -> s.forEach { c.createStatement().execute(it) } }
+        sql(
+            "insert into listen_stats values ('me','2026-11-01','u1',500,2)",
+            "insert into eq_presets (id, name, bands_json, preamp_db) values ('p1','Mine','[]',-3.5)",
+            "insert into eq_device_map (device_key, device_label, profile_json) values ('d1','IEM','{}')",
+            "create table play_events (id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT NOT NULL, at INTEGER NOT NULL, hour INTEGER NOT NULL, heard_ms INTEGER NOT NULL, dur_ms INTEGER NOT NULL, prev_uid TEXT)",
+            "insert into play_events (uid, at, hour, heard_ms, dur_ms) values ('u1', 1, 2, 3, 4)",
+            "insert or replace into prefs values ('user_session','1')",
+        )
+        val backup = manifest(songs = song(2)).decodeToString().replace(
+            "\"forumTopics\":[]",
+            """"listenStats":[{"origin":"me","day":"2026-11-01","trackKey":"u1","ms":400,"plays":1},{"origin":"old","day":"2026-10-01","trackKey":"u9","ms":70,"plays":1}],"forumTopics":[]""",
+        )
+        run(env, zip(mapOf("library.json" to backup.toByteArray())))
+        assertEquals(listOf(listOf("2")), env.query("select message_id from songs"))
+        assertEquals(listOf(listOf("me", "500", "2"), listOf("old", "70", "1")), env.query("select origin, ms, plays from listen_stats order by origin"))
+        assertEquals(listOf(listOf("Mine", "-3.5")), env.query("select name, preamp_db from eq_presets"))
+        assertEquals(listOf(listOf("IEM")), env.query("select device_label from eq_device_map"))
+        assertEquals(listOf(listOf("u1", "3")), env.query("select uid, heard_ms from play_events"))
+        assertEquals(listOf(listOf("1")), env.query("select value from prefs where key = 'user_session'"))
+    }
+
+    @Test
     fun dpapiRoundTripOnWindows() {
         if (!System.getProperty("os.name").startsWith("Windows")) return
         val dir = Files.createTempDirectory("sec").toFile().also { it.deleteOnExit() }
