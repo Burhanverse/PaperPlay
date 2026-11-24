@@ -98,9 +98,12 @@ data class ParametricEqProfile(
     /** True when at least one band actively shapes the curve or manual preamp is non-zero. */
     fun hasActiveShaping(): Boolean {
         if (abs(preampDb) >= 0.01f) return true
-        return bands.take(MAX_PEQ_BANDS).any { b ->
-            b.enabled && (!b.type.usesGain || abs(b.gainDb) >= 0.01f)
+        val limit = minOf(bands.size, MAX_PEQ_BANDS)
+        for (i in 0 until limit) {
+            val b = bands[i]
+            if (b.enabled && (!b.type.usesGain || abs(b.gainDb) >= 0.01f)) return true
         }
+        return false
     }
 
     /** Compact semicolon-delimited wire format for offline AutoEQ DB rows: `kind,ch,en,freq,gain,q;...`. */

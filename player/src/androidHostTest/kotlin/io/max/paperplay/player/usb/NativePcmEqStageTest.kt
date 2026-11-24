@@ -166,4 +166,25 @@ class NativePcmEqStageTest {
         assertNull(stage.processToDirectBufferIfActive(src, isDoP = false))
         assertEquals(0, fakeApi.processCalls)
     }
+
+    @Test
+    fun `repeated configure with identical format does not re-upload parametric EQ bands`() {
+        val fakeApi = FakeEqNativeApi()
+        val stage = NativePcmEqStage(fakeApi)
+        PlaybackCore.parametricEq = activeProfile()
+        PlaybackCore.parametricEnabled = true
+        PlaybackCore.allowEqInUsbExclusive = true
+
+        val buf = ByteBuffer.allocateDirect(8).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(100).putShort(-100).putShort(200).putShort(-200).apply { flip() }
+
+        repeat(10) {
+            stage.configure(sampleRate = 96000, channelCount = 2, pcmEncoding = C.ENCODING_PCM_16BIT)
+            buf.position(0)
+            stage.processToDirectBufferIfActive(buf, isDoP = false)
+        }
+
+        assertEquals(1, fakeApi.setPeqCalls, "Identical configure() calls must not re-upload PEQ bands per buffer")
+        assertEquals(10, fakeApi.processCalls)
+    }
 }

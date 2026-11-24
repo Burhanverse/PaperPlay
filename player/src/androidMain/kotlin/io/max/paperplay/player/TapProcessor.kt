@@ -320,10 +320,11 @@ internal class NativePcmEqStage(
 
     fun configure(sampleRate: Int, channelCount: Int, pcmEncoding: Int) {
         val changed = sampleRate != rate || channelCount != channels || pcmEncoding != encoding
+        if (!changed) return
         rate = sampleRate
         channels = channelCount
         encoding = pcmEncoding
-        if (handle != 0L && changed && sampleRate > 0 && channelCount > 0) {
+        if (handle != 0L && sampleRate > 0 && channelCount > 0) {
             nativeApi.reconfigure(handle, sampleRate, channelCount)
         }
         appliedPeq = null
@@ -493,12 +494,13 @@ internal class TapProcessor(
         out.put(inputBuffer)
         out.flip()
         directEq?.processInPlaceIfActive(out, isDoP = false)
+        if (!AudioTap.wanted) return
         val src = out.duplicate().order(ByteOrder.nativeOrder())
         val ch = inputAudioFormat.channelCount.coerceAtLeast(1)
         val rate = inputAudioFormat.sampleRate
         val enc = inputAudioFormat.encoding
         val step = when (enc) { C.ENCODING_PCM_16BIT -> 2; C.ENCODING_PCM_24BIT -> 3; else -> 4 }
-        if (AudioTap.wanted) while (src.remaining() >= step * ch) {
+        while (src.remaining() >= step * ch) {
             var sum = 0f
             for (c in 0 until ch) sum += when (enc) {
                 C.ENCODING_PCM_FLOAT -> src.getFloat()
