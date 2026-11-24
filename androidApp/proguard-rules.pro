@@ -1,3 +1,7 @@
+# The source is public, so shrinking stays and renaming goes: crash logs and heap summaries of a release are readable without a map.
+-dontobfuscate
+-keepattributes SourceFile,LineNumberTable
+
 # JNA resolves native methods and Structure fields reflectively.
 -keep class com.sun.jna.** { *; }
 -keep class * implements com.sun.jna.** { *; }

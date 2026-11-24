@@ -12,6 +12,7 @@ class PaperPlayApp : Application() {
         CrashLog.install(this)
         CrashLog.recordPreviousExits(this)
         CrashLog.startLogcat(this)
+        CrashLog.startDiagnostics(this)
         io.max.paperplay.core.app.MemoryProbe.sample = {
             val rt = Runtime.getRuntime()
             val mb = 1024.0 * 1024.0

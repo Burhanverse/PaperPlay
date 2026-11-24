@@ -433,6 +433,8 @@ class MainActivity : ComponentActivity() {
                     pickPhoto = { onPicked -> photoPending[0] = onPicked; photoPicker.launch(arrayOf("image/*")) },
                     lastCrash = { crashFile.takeIf { it.exists() }?.readText() },
                     clearCrash = { crashFile.delete() },
+                    crashDiagnostics = { CrashLog.diagnostics(applicationContext) },
+                    setCrashDiagnostics = { CrashLog.setDiagnostics(applicationContext, it) },
                     pickAudioFolder = { onPicked ->
                         folderPending[0] = onPicked
                         if (granted(audioPermission)) folderPicker.launch(null) else audioAccess.launch(audioPermission)

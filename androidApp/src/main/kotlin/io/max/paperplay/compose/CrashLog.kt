@@ -39,9 +39,65 @@ internal object CrashLog {
                 val old = if (f.exists()) f.readText() else ""
                 f.writeText((stamp.format(Date()) + "  " + text + "\n\n" + old).take(20_000))
             }
+            if (e is OutOfMemoryError && diagnostics(c) && dumping.compareAndSet(false, true)) runCatching {
+                // The snapshot is about as big as the heap; it is written only with plenty of room and lives until the next start.
+                if (c.filesDir.usableSpace > 2L * 1024 * 1024 * 1024) android.os.Debug.dumpHprofData(snapshot(c).path)
+            }
             previous?.uncaughtException(t, e)
         }
         append(c, "app", "process started (pid ${android.os.Process.myPid()})")
+    }
+
+    // ---- crash diagnostics (a developer option, also in release builds) ----
+
+    private val dumping = java.util.concurrent.atomic.AtomicBoolean(false)
+    private fun flag(c: Context) = File(c.filesDir, "crash-diagnostics")
+    private fun snapshot(c: Context) = File(c.filesDir, "oom.hprof")
+
+    /** A file, not a library preference: the crash handler runs before the library opens and when nothing else can be trusted. */
+    fun diagnostics(c: Context): Boolean = flag(c).exists()
+
+    fun setDiagnostics(c: Context, on: Boolean) {
+        runCatching { if (on) flag(c).writeText("1") else flag(c).delete() }
+        if (on) watchHeap(c) else snapshot(c).delete()
+    }
+
+    /**
+     * Turns the snapshot of the last out of memory crash into a short list of the classes that filled the heap, in the log and the crash
+     * box, and deletes it: a snapshot is hundreds of MB and holds login secrets, so it never leaves the app.
+     */
+    fun startDiagnostics(c: Context) {
+        val f = snapshot(c)
+        if (diagnostics(c)) watchHeap(c)
+        if (!f.exists()) return
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            val text = runCatching { io.max.paperplay.core.app.HeapHistogram.of(f) }.getOrElse { "the heap snapshot could not be read: $it" }
+            f.delete()
+            append(c, "HEAP", text)
+            runCatching {
+                val box = File(c.filesDir, "crash.txt")
+                box.writeText((text + "\n" + (if (box.exists()) box.readText() else "")).take(20_000))
+            }
+        }, "heap-histogram").apply { isDaemon = true; start() }
+    }
+
+    @Volatile private var watching = false
+
+    /** Logs the Java heap whenever it moved by 24 MB, so a jump between two of the once-a-minute memory lines shows when it happened. */
+    private fun watchHeap(c: Context) {
+        if (watching) return
+        watching = true
+        Thread({
+            val rt = Runtime.getRuntime()
+            var last = 0L
+            while (diagnostics(c)) {
+                val used = (rt.totalMemory() - rt.freeMemory()) shr 20
+                if (kotlin.math.abs(used - last) >= 24) { last = used; io.max.paperplay.player.PlayLog.log("heap", "$used MB of ${rt.maxMemory() shr 20} MB") }
+                Thread.sleep(2_000)
+            }
+            watching = false
+        }, "heap-watch").apply { isDaemon = true; start() }
     }
 
     /**

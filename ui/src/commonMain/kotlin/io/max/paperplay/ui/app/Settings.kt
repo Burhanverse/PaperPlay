@@ -533,6 +533,13 @@ internal fun SettingsPage(
                     Icons.Rounded.Tune,
                     "Switch between the unified Bit-perfect path (default) and legacy USB sink at runtime without rebuilding.",
                 )
+                env?.crashDiagnostics?.let { isOn ->
+                    var diag by remember { mutableStateOf(isOn()) }
+                    SwitchRow(
+                        "Crash diagnostics", diag, { diag = it; env.setCrashDiagnostics(it) }, Icons.Rounded.BugReport,
+                        "Adds memory jumps to the log. After an out of memory crash the log lists what filled the memory; the snapshot behind it (up to about 500 MB) is deleted at the next start.",
+                    )
+                }
                 NavRow("USB probe", "Hardware descriptor probe and bit-perfect mixer spike", Icons.Rounded.BugReport) { stack.add("usb_probe") }
                 SwitchRow(
                     "API 34+ bit-perfect mixer",

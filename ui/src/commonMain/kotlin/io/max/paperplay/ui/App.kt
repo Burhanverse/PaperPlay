@@ -48,6 +48,9 @@ class AppEnv(
     /** The error text of the last crash, if one was saved; null otherwise. */
     val lastCrash: () -> String? = { null },
     val clearCrash: () -> Unit = {},
+    /** The developer option that records what filled the memory when the app runs out of it. Null where unsupported. */
+    val crashDiagnostics: (() -> Boolean)? = null,
+    val setCrashDiagnostics: (Boolean) -> Unit = {},
     /** Opens a multi-file audio picker; calls back with file paths and whether they are temporary copies. Null where unsupported. */
     val pickAudio: ((onPicked: (List<String>, Boolean) -> Unit) -> Unit)? = null,
     /** Opens a folder picker and calls back with what the folder holds: its own songs, and each subfolder's songs apart. Null where unsupported. */
