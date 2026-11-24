@@ -288,25 +288,18 @@ pub fn probe_dac(
             } else {
                 // UAC 1.0 volume control range query
                 let mut vol_buf = [0u8; 2];
-                let mut min_raw = 0i16;
-                let mut max_raw = 0i16;
-                let mut res_raw = 256u16;
-                match usbfs::control_transfer(fd, 0xA1, 0x82, w_val, w_idx, &mut vol_buf, 250) {
-                    Ok(2) => {
-                        min_raw = i16::from_le_bytes(vol_buf);
-                        if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x83, w_val, w_idx, &mut vol_buf, 250) {
-                            max_raw = i16::from_le_bytes(vol_buf);
-                        }
-                        if let Ok(2) = usbfs::control_transfer(fd, 0xA1, 0x84, w_val, w_idx, &mut vol_buf, 250) {
-                            res_raw = u16::from_le_bytes(vol_buf);
-                        }
-                    }
-                    Err(e) if e == libc::ETIMEDOUT || e == libc::ENODEV => {}
-                    _ => {}
-                }
-                min_db = min_raw as f32 / 256.0;
-                max_db = max_raw as f32 / 256.0;
-                res_db = (res_raw as f32 / 256.0).max(0.1);
+                let min_res = usbfs::control_transfer(fd, 0xA1, 0x82, w_val, w_idx, &mut vol_buf, 250)
+                    .map(|_| vol_buf);
+                let (max_res, res_res) = if min_res.is_ok() {
+                    let max_r = usbfs::control_transfer(fd, 0xA1, 0x83, w_val, w_idx, &mut vol_buf, 250)
+                        .map(|_| vol_buf);
+                    let res_r = usbfs::control_transfer(fd, 0xA1, 0x84, w_val, w_idx, &mut vol_buf, 250)
+                        .map(|_| vol_buf);
+                    (max_r, res_r)
+                } else {
+                    (Err(libc::EIO), Err(libc::EIO))
+                };
+                (min_db, max_db, res_db) = parse_uac1_volume_range(min_res, max_res, res_res);
             }
         }
     }
@@ -334,6 +327,24 @@ pub fn probe_dac(
     })
 }
 
+fn parse_uac1_volume_range(
+    min_res: Result<[u8; 2], i32>,
+    max_res: Result<[u8; 2], i32>,
+    res_res: Result<[u8; 2], i32>,
+) -> (f32, f32, f32) {
+    let Ok(min_bytes) = min_res else {
+        return (-64.0, 0.0, 0.5);
+    };
+    let min_raw = i16::from_le_bytes(min_bytes);
+    let max_raw = max_res.map(i16::from_le_bytes).unwrap_or(0);
+    let res_raw = res_res.map(u16::from_le_bytes).unwrap_or(256);
+    (
+        min_raw as f32 / 256.0,
+        max_raw as f32 / 256.0,
+        (res_raw as f32 / 256.0).max(0.1),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +357,14 @@ mod tests {
             res: 1,
         };
         assert!(subrange.min <= 96000 && 96000 <= subrange.max);
+    }
+
+    #[test]
+    fn uac1_volume_range_preserves_safe_defaults_when_get_min_fails() {
+        assert_eq!(parse_uac1_volume_range(Err(-110), Err(-110), Err(-110)), (-64.0, 0.0, 0.5));
+        let min_bytes = (-40i16 * 256).to_le_bytes();
+        let max_bytes = 0i16.to_le_bytes();
+        let res_bytes = 128u16.to_le_bytes();
+        assert_eq!(parse_uac1_volume_range(Ok(min_bytes), Ok(max_bytes), Ok(res_bytes)), (-40.0, 0.0, 0.5));
     }
 }

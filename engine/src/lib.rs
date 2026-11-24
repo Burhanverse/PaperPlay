@@ -47,33 +47,48 @@ fn eq<'a>(handle: jlong) -> Option<&'a mut Eq> {
 
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_create(_env: JNIEnv, _c: JClass, rate: jint, channels: jint) -> jlong {
-    Box::into_raw(Box::new(Eq::new(rate.max(0) as u32, channels.max(1) as u32))) as jlong
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Box::into_raw(Box::new(Eq::new(rate.max(0) as u32, channels.max(1) as u32))) as jlong
+    })).unwrap_or(0)
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_destroy(_env: JNIEnv, _c: JClass, handle: jlong) {
-    if handle != 0 { drop(unsafe { Box::from_raw(handle as *mut Eq) }); }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if handle != 0 { drop(unsafe { Box::from_raw(handle as *mut Eq) }); }
+    }));
 }
 
 /// An empty or wrong-sized array turns the equalizer off.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setEq(env: JNIEnv, _c: JClass, handle: jlong, gains: JFloatArray) {
-    let Some(eq) = eq(handle) else { return };
-    let n = env.get_array_length(&gains).unwrap_or(0).max(0) as usize;
-    let mut v = vec![0f32; n];
-    if env.get_float_array_region(&gains, 0, &mut v).is_err() { v.clear(); }
-    eq.set_gains(&v);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(eq) = eq(handle) else { return };
+        let Ok(n) = env.get_array_length(&gains) else { return };
+        if n as usize != eq::N {
+            eq.set_gains(&[]);
+            return;
+        }
+        let mut buf = [0f32; eq::N];
+        if env.get_float_array_region(&gains, 0, &mut buf).is_err() {
+            eq.set_gains(&[]);
+            return;
+        }
+        eq.set_gains(&buf);
+    }));
 }
 
 /// `buf` is a direct buffer of interleaved native-endian f32; processed in place.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_process(env: JNIEnv, _c: JClass, handle: jlong, buf: JByteBuffer, samples: jint) {
-    if samples <= 0 { return; }
-    let Some(eq) = eq(handle) else { return };
-    let (Ok(ptr), Ok(cap)) = (env.get_direct_buffer_address(&buf), env.get_direct_buffer_capacity(&buf)) else { return };
-    let n = (samples as usize).min(cap / 4);
-    if ptr.is_null() || (ptr as usize) % 4 != 0 { return; }
-    eq.process(unsafe { std::slice::from_raw_parts_mut(ptr as *mut f32, n) });
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if samples <= 0 { return; }
+        let Some(eq) = eq(handle) else { return };
+        let (Ok(ptr), Ok(cap)) = (env.get_direct_buffer_address(&buf), env.get_direct_buffer_capacity(&buf)) else { return };
+        let n = (samples as usize).min(cap / 4);
+        if ptr.is_null() || (ptr as usize) % 4 != 0 { return; }
+        eq.process(unsafe { std::slice::from_raw_parts_mut(ptr as *mut f32, n) });
+    }));
 }
 
 /// Reads `samples` PCM samples of `kind` (a `PCM_*` value) from direct buffer `src` at byte `offset`, writes them as float
@@ -82,25 +97,29 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_process(env: JN
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_processPcm(
     env: JNIEnv, _c: JClass, handle: jlong, src: JByteBuffer, offset: jint, kind: jint, samples: jint, out: JByteBuffer,
 ) -> jint {
-    let step = pcm_bytes(kind);
-    if samples <= 0 || offset < 0 || step == 0 { return 0; }
-    let Some(eq) = eq(handle) else { return 0 };
-    let (Ok(sp), Ok(scap)) = (env.get_direct_buffer_address(&src), env.get_direct_buffer_capacity(&src)) else { return 0 };
-    let (Ok(op), Ok(ocap)) = (env.get_direct_buffer_address(&out), env.get_direct_buffer_capacity(&out)) else { return 0 };
-    if sp.is_null() || op.is_null() || (op as usize) % 4 != 0 { return 0; }
-    let offset = offset as usize;
-    let n = (samples as usize).min(scap.saturating_sub(offset) / step).min(ocap / 4);
-    if n == 0 { return 0; }
-    let src = unsafe { std::slice::from_raw_parts(sp.add(offset), n * step) };
-    let out = unsafe { std::slice::from_raw_parts_mut(op as *mut f32, n) };
-    let n = convert_pcm(src, kind, out);
-    eq.process(&mut out[..n]);
-    n as jint
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let step = pcm_bytes(kind);
+        if samples <= 0 || offset < 0 || step == 0 { return 0; }
+        let Some(eq) = eq(handle) else { return 0 };
+        let (Ok(sp), Ok(scap)) = (env.get_direct_buffer_address(&src), env.get_direct_buffer_capacity(&src)) else { return 0 };
+        let (Ok(op), Ok(ocap)) = (env.get_direct_buffer_address(&out), env.get_direct_buffer_capacity(&out)) else { return 0 };
+        if sp.is_null() || op.is_null() || (op as usize) % 4 != 0 { return 0; }
+        let offset = offset as usize;
+        let n = (samples as usize).min(scap.saturating_sub(offset) / step).min(ocap / 4);
+        if n == 0 { return 0; }
+        let src = unsafe { std::slice::from_raw_parts(sp.add(offset), n * step) };
+        let out = unsafe { std::slice::from_raw_parts_mut(op as *mut f32, n) };
+        let n = convert_pcm(src, kind, out);
+        eq.process(&mut out[..n]);
+        n as jint
+    })).unwrap_or(0)
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_reset(_env: JNIEnv, _c: JClass, handle: jlong) {
-    if let Some(eq) = eq(handle) { eq.reset(); }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(eq) = eq(handle) { eq.reset(); }
+    }));
 }
 
 /// Reconfigures sample rate and channel count dynamically (clamps band frequencies to `0.49 * rate`
@@ -149,52 +168,76 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_processPcmInPla
 /// Extra bass in dB, 0 to 12.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setBass(_env: JNIEnv, _c: JClass, handle: jlong, db: jni::sys::jfloat) {
-    if let Some(eq) = eq(handle) { eq.set_bass(db); }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(eq) = eq(handle) { eq.set_bass(db); }
+    }));
 }
 
 /// Earphone correction: `filters` holds 4 floats per filter (kind 0 peak / 1 low shelf / 2 high shelf, Hz, Q, gain dB);
 /// an empty array turns it off.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setCorrection(env: JNIEnv, _c: JClass, handle: jlong, filters: JFloatArray) {
-    let Some(eq) = eq(handle) else { return };
-    let n = env.get_array_length(&filters).unwrap_or(0).max(0) as usize;
-    let mut v = vec![0f32; n];
-    if env.get_float_array_region(&filters, 0, &mut v).is_err() { v.clear(); }
-    let f: Vec<(u8, f64, f64, f64)> = v.chunks_exact(4).map(|c| (c[0] as u8, c[1] as f64, c[2] as f64, c[3] as f64)).collect();
-    eq.set_correction(&f);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(eq) = eq(handle) else { return };
+        let Ok(raw_len) = env.get_array_length(&filters) else { return };
+        let n = (raw_len.max(0) as usize).min(eq::MAX_CORR * 4);
+        let mut buf = [0f32; eq::MAX_CORR * 4];
+        if n > 0 && env.get_float_array_region(&filters, 0, &mut buf[..n]).is_err() {
+            eq.set_correction(&[]);
+            return;
+        }
+        let mut parsed = [(0u8, 0.0f64, 0.0f64, 0.0f64); eq::MAX_CORR];
+        let mut count = 0usize;
+        for c in buf[..n].chunks_exact(4) {
+            parsed[count] = (c[0] as u8, c[1] as f64, c[2] as f64, c[3] as f64);
+            count += 1;
+        }
+        eq.set_correction(&parsed[..count]);
+    }));
 }
 
 /// Stereo width above 180 Hz, 0.5 to 1.6 (1 = as recorded).
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setWidth(_env: JNIEnv, _c: JClass, handle: jlong, w: jni::sys::jfloat) {
-    if let Some(eq) = eq(handle) { eq.set_width(w); }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(eq) = eq(handle) { eq.set_width(w); }
+    }));
 }
 
 /// Option bits: 1 dynamic bass, 2 de-esser, 4 crossfeed.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setOptions(_env: JNIEnv, _c: JClass, handle: jlong, bits: jint) {
-    if let Some(eq) = eq(handle) { eq.set_options(bits.max(0) as u32); }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(eq) = eq(handle) { eq.set_options(bits.max(0) as u32); }
+    }));
 }
 
 /// Exact level mode (the heard balance is the drawn curve) instead of Loud.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setExact(_env: JNIEnv, _c: JClass, handle: jlong, on: jboolean) {
-    if let Some(eq) = eq(handle) { eq.set_exact(on != 0); }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(eq) = eq(handle) { eq.set_exact(on != 0); }
+    }));
 }
 
 /// A/B: plays the untouched input at the processed level and timing.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_setDry(_env: JNIEnv, _c: JClass, handle: jlong, on: jboolean) {
-    if let Some(eq) = eq(handle) { eq.set_dry(on != 0); }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(eq) = eq(handle) { eq.set_dry(on != 0); }
+    }));
 }
 
 /// Writes the 7 values of [`Eq::take_stats`] into `out` and restarts the limiter meters.
 #[no_mangle]
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_stats(env: JNIEnv, _c: JClass, handle: jlong, out: JFloatArray) {
-    let Some(eq) = eq(handle) else { return };
-    let st = eq.take_stats();
-    let n = env.get_array_length(&out).unwrap_or(0).clamp(0, st.len() as i32) as usize;
-    let _ = env.set_float_array_region(&out, 0, &st[..n]);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(eq) = eq(handle) else { return };
+        let st = eq.take_stats();
+        let Ok(raw_n) = env.get_array_length(&out) else { return };
+        let n = raw_n.clamp(0, st.len() as i32) as usize;
+        let _ = env.set_float_array_region(&out, 0, &st[..n]);
+    }));
 }
 
 /// Measures the first `n` samples of mono `pcm` at `rate` Hz into `out` (`features::N_FEATURES` values); false when too short or silent.
@@ -202,13 +245,17 @@ pub extern "system" fn Java_io_max_paperplay_player_EngineNative_stats(env: JNIE
 pub extern "system" fn Java_io_max_paperplay_player_EngineNative_analyze(
     env: JNIEnv, _c: JClass, pcm: JFloatArray, n: jint, rate: jint, out: JFloatArray,
 ) -> jboolean {
-    let len = env.get_array_length(&pcm).unwrap_or(0).clamp(0, n.max(0)) as usize;
-    let mut v = vec![0f32; len];
-    if len == 0 || rate <= 0 || env.get_float_array_region(&pcm, 0, &mut v).is_err() { return 0; }
-    let Some(f) = features::analyze(&v, rate as u32) else { return 0 };
-    if env.get_array_length(&out).unwrap_or(0) < f.len() as i32 { return 0; }
-    if env.set_float_array_region(&out, 0, &f).is_err() { return 0; }
-    1
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Ok(raw_len) = env.get_array_length(&pcm) else { return 0 };
+        let len = raw_len.clamp(0, n.max(0)) as usize;
+        let mut v = vec![0f32; len];
+        if len == 0 || rate <= 0 || env.get_float_array_region(&pcm, 0, &mut v).is_err() { return 0; }
+        let Some(f) = features::analyze(&v, rate as u32) else { return 0 };
+        let Ok(out_len) = env.get_array_length(&out) else { return 0 };
+        if out_len < f.len() as i32 { return 0; }
+        if env.set_float_array_region(&out, 0, &f).is_err() { return 0; }
+        1
+    })).unwrap_or(0)
 }
 
 /// Version of the feature layout; stored with each vector so a new layout measures songs again.
