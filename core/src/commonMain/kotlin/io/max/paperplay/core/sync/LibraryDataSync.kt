@@ -165,6 +165,7 @@ class LibraryDataSync(
         return buildJsonObject {
             if ((q["first"] as? JsonPrimitive)?.contentOrNull == "true") {
                 put("chats", chatsJson(store))
+                put("removed", buildJsonArray { for ((id, gone, at) in store.removedRows()) add(buildJsonArray { add(JsonPrimitive(id)); add(JsonPrimitive(gone)); add(JsonPrimitive(at)) }) })
                 put("copied", buildJsonArray {
                     for (c in store.copiedRows()) add(buildJsonArray { add(JsonPrimitive(c.uniqueId)); add(JsonPrimitive(c.chatId)); add(JsonPrimitive(c.messageId)); add(JsonPrimitive(c.at)) })
                 })
@@ -193,7 +194,13 @@ class LibraryDataSync(
             val a = ask(buildJsonObject { put("k", "index"); put("at", at); put("chat", chat); put("msg", msg); put("first", first) })
             if (a["none"] != null) return
             if (first) {
-                (a["chats"] as? JsonArray)?.let { IndexFile.mergeChats(it, store, 0, own = true) }
+                // Removed chats first, so a chat the owner removed on either device is not added back by the list below.
+                val removed = (a["removed"] as? JsonArray).orEmpty().mapNotNull { e ->
+                    val r = e as? JsonArray ?: return@mapNotNull null
+                    runCatching { Triple((r[0] as JsonPrimitive).content.toLong(), (r[1] as JsonPrimitive).content == "true", (r[2] as JsonPrimitive).content.toLong()) }.getOrNull()
+                }
+                store.mergeRemoved(removed)
+                (a["chats"] as? JsonArray)?.let { chats -> IndexFile.mergeChats(JsonArray(chats.filterNot { c -> ((c as? JsonObject)?.get("id") as? JsonPrimitive)?.longOrNull?.let(store::isGone) == true }), store, 0, own = true) }
                 for (e in (a["copied"] as? JsonArray).orEmpty()) {
                     val c = e as? JsonArray ?: continue
                     runCatching { store.markCopied((c[0] as JsonPrimitive).content, (c[1] as JsonPrimitive).content.toLong(), (c[2] as JsonPrimitive).content.toLong(), (c[3] as JsonPrimitive).content.toLong()) }
@@ -211,7 +218,7 @@ class LibraryDataSync(
                 }.getOrNull()
             }
             if (posts.isNotEmpty()) {
-                store.upsertSynced(posts, peerId)
+                store.upsertSynced(posts.filterNot { store.isGone(it.first.chatId) }, peerId)
                 val last = posts.last()
                 at = last.second; chat = last.first.chatId; msg = last.first.messageId
                 library.setPref(key, "$at:$chat:$msg")

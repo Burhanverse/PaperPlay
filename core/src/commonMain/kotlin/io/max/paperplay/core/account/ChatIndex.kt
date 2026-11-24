@@ -144,12 +144,15 @@ class ChatIndex(
     override val progress: StateFlow<IndexProgress?> = _progress
 
     override suspend fun indexChat(chat: ChatInfo, full: Boolean) {
-        if (delegate?.invoke("index", chat) == true) { store.saveChat(chat.id, chat.title, clock()); chatsChanged(); setPaused(false); return }
+        if (delegate?.invoke("index", chat) == true) { store.saveChat(chat.id, chat.title, clock()); store.addBack(chat.id, clock()); chatsChanged(); setPaused(false); return }
+        // No account, no reading: the account is the only way in, and an empty read would mark the chat finished.
+        if (!account.loggedIn.value) return
         runLock.withLock {
             // Starting a read by hand is also a resume.
             setPaused(false)
             val had = store.chat(chat.id)
             store.saveChat(chat.id, chat.title, clock())
+            store.addBack(chat.id, clock())
             saveLinks(chat.id, chat.isChannel)
             chatsChanged()
             // Already indexed: only what is new, or the rest of a stopped read; never the whole chat again unless asked.
@@ -226,6 +229,7 @@ class ChatIndex(
     var onPostsSaved: (() -> Unit)? = null
 
     private suspend fun read(chatId: Long, title: String, after: Long, complete: Boolean, resume: ReadCheckpoint? = null) {
+        if (!account.loggedIn.value) return
         var found = 0
         val ids = HashSet<Long>()
         var newest = 0L
@@ -255,6 +259,8 @@ class ChatIndex(
                     }
                 }
             }
+            // Logged out part way: what came is kept, but the chat is not finished.
+            if (!account.loggedIn.value) throw StopRun()
             store.setState(chatId, newest, clock(), complete)
             if (cp != null) library.setPref(ckptKey(chatId), "")
             if (after == 0L && resume == null) fullRead = fullRead + (chatId to ids)
@@ -369,6 +375,7 @@ class ChatIndex(
 
     override suspend fun copyToMain(post: ChatPost) {
         val main = mainChat() ?: throw IllegalStateException("No main chat is set.")
+        if (!account.loggedIn.value) throw IllegalStateException("Log in with your own account first.")
         account.copyPost(post.chatId, post.messageId, main)
         store.markCopied(post, clock())
     }
@@ -474,7 +481,7 @@ class ChatIndex(
         _chatRows.value.firstOrNull { it.id == chatId }?.let { ChatIndexDetails(it.postCount, it.lastRefreshAt, it.complete) }
 
     override fun forget(chatId: Long) {
-        store.deleteChat(chatId)
+        store.removeChat(chatId, clock())
         library.setPref(ckptKey(chatId), "")
         chatsChanged()
     }

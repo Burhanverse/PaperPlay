@@ -58,6 +58,8 @@ class IndexStore(private val driver: SqlDriver) {
             "CREATE TABLE IF NOT EXISTS index_posts (chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, unique_id TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, " +
                 "duration_sec INTEGER NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, file_name TEXT NOT NULL, date INTEGER NOT NULL, PRIMARY KEY (chat_id, message_id))",
         )
+        // One row per chat the owner removed from the index (gone = 1) or added back (0); the later change wins on every linked device.
+        exec("CREATE TABLE IF NOT EXISTS index_removed (chat_id INTEGER NOT NULL PRIMARY KEY, gone INTEGER NOT NULL, at INTEGER NOT NULL)")
         exec("CREATE TABLE IF NOT EXISTS index_copied (unique_id TEXT NOT NULL PRIMARY KEY, chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, copied_at INTEGER NOT NULL)")
         addColumns(
             "index_chats",
@@ -292,6 +294,43 @@ class IndexStore(private val driver: SqlDriver) {
 
     /** The newest change time of any post, for "what changed since" questions from the other device. */
     fun lastUpdate(): Long = query("SELECT COALESCE(MAX(updated_at), 0) FROM index_posts") { it.getLong(0)!! }.first()
+
+    /** The removed or added-back marks of chats, as (chat, gone, change time). */
+    fun removedRows(): List<Triple<Long, Boolean, Long>> =
+        query("SELECT chat_id, gone, at FROM index_removed") { Triple(it.getLong(0)!!, it.getLong(1) == 1L, it.getLong(2)!!) }
+
+    fun isGone(id: Long): Boolean =
+        query("SELECT gone FROM index_removed WHERE chat_id = ?", 1, { bindLong(0, id) }) { it.getLong(0) == 1L }.firstOrNull() == true
+
+    /** The owner removed [id] from the index: it is deleted here and the mark tells linked devices to delete it too. */
+    fun removeChat(id: Long, at: Long) {
+        deleteChat(id)
+        setRemoved(id, true, at)
+    }
+
+    /** The owner added [id] again. Only matters when it was removed before, so no mark is kept for chats that never were. */
+    fun addBack(id: Long, at: Long) {
+        if (query("SELECT 1 FROM index_removed WHERE chat_id = ?", 1, { bindLong(0, id) }) { it.getLong(0) }.isNotEmpty()) setRemoved(id, false, at)
+    }
+
+    private fun setRemoved(id: Long, gone: Boolean, at: Long) {
+        exec("INSERT INTO index_removed (chat_id, gone, at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET gone = excluded.gone, at = excluded.at WHERE excluded.at > at", 3) {
+            bindLong(0, id); bindLong(1, if (gone) 1 else 0); bindLong(2, at)
+        }
+        touch()
+    }
+
+    /** Takes the marks of a linked device: a newer mark replaces ours, and a chat that ends up removed is deleted here. Returns how many chats were deleted. */
+    fun mergeRemoved(rows: List<Triple<Long, Boolean, Long>>): Int {
+        var deleted = 0
+        for ((id, gone, at) in rows) {
+            val mine = removedRows().firstOrNull { it.first == id }
+            if (mine != null && mine.third >= at) continue
+            setRemoved(id, gone, at)
+            if (gone && chat(id) != null) { deleteChat(id); deleted++ }
+        }
+        return deleted
+    }
 
     fun deleteChat(id: Long) {
         db.transaction {
