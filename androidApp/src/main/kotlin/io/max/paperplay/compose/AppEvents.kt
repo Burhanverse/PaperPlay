@@ -41,7 +41,7 @@ internal object AppEvents {
         app.registerComponentCallbacks(object : ComponentCallbacks2 {
             override fun onTrimMemory(level: Int) {
                 PlayLog.log("memory", "system asks to trim memory, level $level")
-                if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+                if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
                     io.max.paperplay.ui.app.SharedCovers.loader.clear()
                 }
             }
