@@ -48,8 +48,9 @@ fun Modifier.skeleton(shape: androidx.compose.ui.graphics.Shape = RoundedCornerS
         )
         onDrawWithContent {
             drawContent()
-            withTransform({ translate(left = -w + sweep.value * 2f * w) }) {
-                drawRect(brush)
+            val tx = -w + sweep.value * 2f * w
+            withTransform({ translate(left = tx) }) {
+                drawRect(brush, topLeft = androidx.compose.ui.geometry.Offset(-tx, 0f), size = size)
             }
         }
     }
