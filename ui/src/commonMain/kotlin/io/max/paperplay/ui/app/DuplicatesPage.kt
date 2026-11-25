@@ -133,7 +133,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
     }
 
     // Posts that are gone leave the page at once; a group with no extra copy left goes with them.
-    val goneNow = jobs.filter { it.isDuplicate && it.status == DeleteStatus.Done }.map { it.postChat to it.postMessage }.toSet()
+    val goneNow = jobs.filter { it.isDuplicate && it.status == DeleteStatus.Done }.mapNotNull { j -> j.postChat?.let { c -> j.postMessage?.let { m -> c to m } } }.toSet()
     // Out of the list itself, the copy to keep too: a deleted post must not count as the one that stays, not even after the next run
     // cleared the finished jobs.
     LaunchedEffect(goneNow) { if (goneNow.isNotEmpty()) groups = groups?.mapNotNull { it.without(goneNow) } }
