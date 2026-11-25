@@ -106,7 +106,8 @@ class ScannerTakeOverTest {
                         },
                     )
                 }
-                else -> emptyList()
+                // Without an answer each of these waits for the 60 s timeout.
+                else -> listOf(buildJsonObject { put("@type", "error"); put("code", 404); put("message", "not faked"); extra?.let { put("@extra", it) } })
             }
         }
         val client = TdClient(TdRuntime(fake, scope, Dispatchers.IO), config).also { it.start() }
