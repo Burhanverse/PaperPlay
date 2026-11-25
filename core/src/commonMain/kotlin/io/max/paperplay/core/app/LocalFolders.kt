@@ -44,7 +44,8 @@ class LocalFolders(
 
     /** Adds [path]. Syncing starts off: the owner turns it on per folder. Returns false when it was there already. */
     fun add(path: String): Boolean {
-        val clean = path.trim().trimEnd('/', '\\')
+        // A whole drive keeps its slash: "C:" alone means the folder a program is in.
+        val clean = path.trim().trimEnd('/', '\\').let { if (it.length == 2 && it[1] == ':') "$it\\" else it }
         if (clean.isEmpty()) return false
         val now = list()
         if (now.any { it.path.equals(clean, ignoreCase = true) }) return false

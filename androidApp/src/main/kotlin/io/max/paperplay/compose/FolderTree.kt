@@ -12,12 +12,28 @@ private fun volumePath(docId: String): java.io.File? {
     val i = docId.indexOf(':')
     if (i <= 0) return null
     val volume = docId.substring(0, i)
-    val root = if (volume == "primary") android.os.Environment.getExternalStorageDirectory() else java.io.File("/storage/$volume")
+    val shared = android.os.Environment.getExternalStorageDirectory()
+    val root = when (volume) {
+        "primary" -> shared
+        "home" -> java.io.File(shared, "Documents")
+        else -> java.io.File("/storage/$volume")
+    }
     return java.io.File(root, docId.substring(i + 1))
 }
 
 /** The real folder of a picked tree, on the phone or an SD card. Whether it can be read is up to the audio permission. */
-internal fun treeFolder(tree: Uri): java.io.File? = volumePath(DocumentsContract.getTreeDocumentId(tree))
+internal fun treeFolder(tree: Uri): java.io.File? {
+    val id = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull() ?: return null
+    return when (tree.authority) {
+        "com.android.externalstorage.documents" -> volumePath(id)
+        "com.android.providers.downloads.documents" -> when {
+            id == "downloads" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            id.startsWith("raw:") -> java.io.File(id.removePrefix("raw:"))
+            else -> null
+        }
+        else -> null
+    }
+}
 
 /** The real file of a picked song when it lives on the phone's or an SD card's storage and can be read now; null means copy it. */
 internal fun pickedFile(uri: Uri): java.io.File? {

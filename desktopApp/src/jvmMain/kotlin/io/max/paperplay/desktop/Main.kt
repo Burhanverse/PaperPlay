@@ -255,7 +255,7 @@ fun main() {
                 }.start()
             },
             pickFolderPath = { onPicked ->
-                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { onPicked(it.path) } }.start()
+                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { javax.swing.SwingUtilities.invokeLater { onPicked(it.path) } } }.start()
             },
             authRedirect = LoopbackAuth(),
             authRedirectUri = SPOTIFY_REDIRECT,

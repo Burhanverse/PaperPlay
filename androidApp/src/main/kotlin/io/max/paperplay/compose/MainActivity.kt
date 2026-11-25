@@ -403,6 +403,12 @@ class MainActivity : ComponentActivity() {
             }
             // Asked once, when a folder is first chosen. Declined: the folder is still read, but its songs are copied first.
             val audioAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { folderPicker.launch(null) }
+            // Music folders: only the folder's path; the songs are read later, where they are, with the audio access.
+            val pathPending = remember { arrayOfNulls<(String?) -> Unit>(1) }
+            val pathPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+                if (tree != null) pathPending[0]?.invoke(treeFolder(tree)?.path)
+            }
+            val pathAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { pathPicker.launch(null) }
             val env = remember {
                 AppEnv(
                     restore = RestoreHooks(
@@ -443,6 +449,10 @@ class MainActivity : ComponentActivity() {
                     pickAudioFolder = { onPicked ->
                         folderPending[0] = onPicked
                         if (granted(audioPermission)) folderPicker.launch(null) else audioAccess.launch(audioPermission)
+                    },
+                    pickFolderPath = { onPicked ->
+                        pathPending[0] = onPicked
+                        if (granted(audioPermission)) pathPicker.launch(null) else pathAccess.launch(audioPermission)
                     },
                     pickAudio = { onPicked -> audioPending[0] = onPicked; audioPicker.launch(arrayOf("audio/*", "application/ogg", "application/octet-stream")) },
                     pickImage = { onPicked -> imagePending[0] = onPicked; imagePicker.launch(arrayOf("image/*")) },

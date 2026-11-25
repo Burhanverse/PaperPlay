@@ -41,8 +41,8 @@ class AppEnv(
     val open: kotlinx.coroutines.flow.MutableStateFlow<String?> = kotlinx.coroutines.flow.MutableStateFlow(null),
     /** Starts or stops the background keep-alive notification; nothing on desktop. */
     val setKeepRunning: (Boolean) -> Unit = {},
-    /** Opens a folder picker and calls back with the folder's path only; nothing inside is read. Null where unsupported. */
-    val pickFolderPath: ((onPicked: (String) -> Unit) -> Unit)? = null,
+    /** Opens a folder picker and calls back with the folder's path only, or null when that place has no path (a cloud folder); nothing inside is read. Null where unsupported. */
+    val pickFolderPath: ((onPicked: (String?) -> Unit) -> Unit)? = null,
     /** Opens an image picker and calls back with a copied file path, or null if canceled. Null where unsupported. */
     val pickPhoto: ((onPicked: (String?) -> Unit) -> Unit)? = null,
     /** The error text of the last crash, if one was saved; null otherwise. */

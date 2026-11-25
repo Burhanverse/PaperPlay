@@ -46,14 +46,25 @@ internal fun LocalFoldersPage(backend: CoreBackend) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         val pick = env?.pickFolderPath
-        if (pick != null) Button({ pick { path -> if (folders.add(path)) bump++ else note = "That folder is already in the list." } }, Modifier.fillMaxWidth()) { Text("Add a folder") }
-        OutlinedTextField(
-            typed, { typed = it }, Modifier.fillMaxWidth(), singleLine = true,
-            label = { Text("Folder path") }, placeholder = { Text("/storage/emulated/0/Music") },
-        )
-        OutlinedButton({
-            if (folders.add(typed)) { typed = ""; bump++ } else note = "Enter a path that is not in the list yet."
-        }, Modifier.fillMaxWidth(), enabled = typed.isNotBlank()) { Text("Add this path") }
+        var typing by remember { mutableStateOf(pick == null) }
+        if (pick != null) {
+            Button({
+                pick { path ->
+                    note = when {
+                        path == null -> "That place can't be used. Choose a folder on this device or an SD card."
+                        folders.add(path) -> { bump++; null }
+                        else -> "That folder is already in the list."
+                    }
+                }
+            }, Modifier.fillMaxWidth()) { Text("Choose a folder") }
+            if (!typing) TextButton({ typing = true }) { Text("Type a path instead") }
+        }
+        if (typing) {
+            OutlinedTextField(typed, { typed = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Folder path") })
+            OutlinedButton({
+                note = if (folders.add(typed)) { typed = ""; bump++; null } else "Enter a path that is not in the list yet."
+            }, Modifier.fillMaxWidth(), enabled = typed.isNotBlank()) { Text("Add this path") }
+        }
         note?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         if (entries.isEmpty()) Text("No folders yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -73,7 +84,7 @@ internal fun LocalFoldersPage(backend: CoreBackend) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Send new songs to Telegram")
-                            Text("Off: nothing is read or sent from this folder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (f.sync) "On: new songs go to your main chat" else "Off: nothing is sent from this folder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Switch(f.sync, { folders.setSync(f.path, it); bump++ })
                     }
