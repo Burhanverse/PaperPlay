@@ -898,8 +898,17 @@ elease` must say Java 25 and the setup exe must start.
 - [~] File updates of one bot no longer touch songs of another
 - [~] First setup connects once; a corrected token is used; logging out and in again leaves no old loops (no test, compiles)
 - [~] Crash diagnostics developer option; release stacks are readable
-- [ ] USB bit-perfect: endings cut at a track change (needs a DAC and testing by ear)
-- [ ] Frames over the network are limited only after pairing, so a stranger on the Wi-Fi can crash the phone app
-- [ ] A song deleted on one device can come back from the other while the index still lists its post
-- [ ] About 60 smaller findings
+- [~] Network: a device that has not shown who it is can send 64 KB at most; faked announcements no longer push saved addresses out
+- [~] Sync: deleted posts stay deleted on both devices (`index_gone_posts`), merging keeps changes made meanwhile, new index posts fetch only those
+- [~] Indexing: pause holds, flags wait for the end of a read; scanning reloads lists only when something came
+- [~] Database on the PC: transactions that read first take the write lock first (`lockForWrite`)
+- [~] Uploads, filing, previews, covers, duplicates page, Spotify, lyrics, mood scan, ListenBrainz, updates (Android 8 to 12 too), backup: see the commits of 25 Nov
+- [~] Restore and erase belong to the process (`LifeWork`); choosing a backup is off the main thread
+- [~] PC package: `engine.dll` and the Normalise plugin are in it; the installer clears old files; the window no longer redraws all on each song
+- [~] USB: a cut sample no longer shifts the next ones (test), sound after a fault, permission asked once, play after switching at the end (not tried on a DAC)
+- [ ] USB: song endings cut at a track change, and what happens when Bluetooth connects during bit-perfect (need a DAC and testing by ear)
+- [ ] USB (not proven): a slow reopen, swallowed AudioTrack errors
+- [ ] Pairing code can be guessed offline by a device the owner dials on purpose (needs a new protocol)
+- [ ] Basic groups in the index; the recommender is rebuilt after every song once a queue ended; picking a cover or photo reads it on the main thread
+- [ ] Copying library-only songs stops when the chats page is left
 - [ ] Memory while the PC window is hidden, measured again (142 MB before the backend was kept)

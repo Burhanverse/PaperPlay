@@ -101,6 +101,10 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Delete a post only after the new one is confirmed: use `TdClient.sendAndWait`; TDLib answers a send before anything was sent.
 - The thread that reads a device link must never write to it (`JavaLanSync.Peer.send` queues).
 - Work that must outlive the window runs on the one `CoreBackend` of the services or on `services.scope`, never on a composition.
+- A library transaction that reads before it writes starts with `lockForWrite()` (`library.batch` does it).
+- Only posts Telegram itself said are deleted go to `IndexStore.markGonePosts`; never a guess, it deletes on linked devices too.
+- Shutting down, restoring and erasing run on `LifeWork.app`, not on a screen's scope.
+- Before a commit build the UI and both apps, not only `core`.
 - TDLib file ids belong to one client; check which client an update came from.
 
 ## Git
