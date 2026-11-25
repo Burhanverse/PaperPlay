@@ -237,7 +237,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     LaunchedEffect(Unit) {
         val updates = backend.services.updates
         if (!updates.prefs.auto) return@LaunchedEffect
-        updates.check()
+        if (updates.autoCheckDue()) updates.check()
         updatePrompt = (updates.state.value as? io.max.paperplay.core.update.UpdateState.Available)?.release
     }
     updatePrompt?.let { r ->

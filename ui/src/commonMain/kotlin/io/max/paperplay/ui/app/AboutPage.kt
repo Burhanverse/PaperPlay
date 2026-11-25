@@ -149,6 +149,8 @@ private fun UpdateHeader(
     val hooks = io.max.paperplay.ui.LocalAppEnv.current?.permissions
     LaunchedEffect(blocked) {
         if (blocked == null || hooks == null) return@LaunchedEffect
+        // Only a missing permission can be waited for; any other reason (Shizuku not running, refused) would just come again at once, for ever.
+        if (hooks.check().firstOrNull { it.id == "install" }?.granted != false) return@LaunchedEffect
         while (hooks.check().firstOrNull { it.id == "install" }?.granted == false) kotlinx.coroutines.delay(1000)
         blocked = updates.install()
     }

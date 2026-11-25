@@ -97,6 +97,8 @@ class UpdateService(
     fun autoCheckDue() = prefs.auto && now() - prefs.lastCheck > DAY_MS
 
     suspend fun check() {
+        // A download that runs or is ready is not thrown away by a look for something newer.
+        if (_state.value is UpdateState.Downloading || _state.value is UpdateState.Ready) return
         _state.value = UpdateState.Checking
         try {
             val r = http.send(
@@ -111,6 +113,8 @@ class UpdateService(
             cachedReleases = releases
             val found = ReleaseFeed.newest(releases, installed, prefs.beta, prefs.skipped)
             _state.value = if (found == null) UpdateState.UpToDate(now()) else UpdateState.Available(found, ReleaseFeed.assetFor(found, platform))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             _state.value = UpdateState.Failed(e.message ?: "The update check failed")
         }
@@ -161,7 +165,10 @@ class UpdateService(
         if ((_state.value as? UpdateState.Available)?.release?.tag == tag) _state.value = UpdateState.UpToDate(now())
     }
 
-    suspend fun download() {
+    /** Goes on when the page it was started from is left. */
+    suspend fun download() = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { downloadNow() }
+
+    private suspend fun downloadNow() {
         val s = _state.value as? UpdateState.Available ?: return
         val asset = s.asset ?: return
         val inst = installer ?: return
