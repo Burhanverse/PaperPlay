@@ -3,6 +3,8 @@ package io.max.paperplay.ui.app
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.runtime.MonotonicFrameClock
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.unit.IntSize
 import io.max.paperplay.ui.theme.PlayerMotionTokens
 import io.max.paperplay.ui.theme.playerCloseSpringSpec
 import io.max.paperplay.ui.theme.playerOpenSpringSpec
@@ -272,5 +274,46 @@ class PlayerTransitionTest {
             assertTrue(navBarAlpha(p, false) in 0f..1f)
             assertTrue(sheetTranslationY(p, 1000f, false) in 0f..1000f)
         }
+    }
+
+    @Test
+    fun coverBoundsRegistryRespectsQueueAndSizeAndFlightEligibility() = runWithTestController { c, _ ->
+        val bounds = CoverBoundsRegistry()
+        assertFalse(bounds.canFly)
+        bounds.miniRect = Rect(10f, 700f, 54f, 744f)
+        bounds.fullRect = Rect(40f, 120f, 340f, 420f)
+        bounds.fullSizeState = IntSize(300, 300)
+        assertTrue(bounds.canFly)
+
+        // Flight active only while transitioning in (0, 1) without reduceMotion
+        assertFalse(c.isCoverFlightActive(bounds))
+        c.snapOpen()
+        assertFalse(c.isCoverFlightActive(bounds))
+        c.backProgress(0.5f)
+        assertTrue(c.isCoverFlightActive(bounds))
+
+        bounds.queueOpen = true
+        assertFalse(bounds.canFly)
+        assertFalse(c.isCoverFlightActive(bounds))
+        bounds.queueOpen = false
+
+        c.setReduceMotion(true)
+        assertFalse(c.isCoverFlightActive(bounds))
+    }
+
+    @Test
+    fun motionStatsAggregatorComputesP95AndDetectsAnomalies() {
+        val acc = MotionStatsAccumulator(cycles = 2)
+        for (i in 1..20) {
+            acc.recordFrame(dtMs = i.toFloat(), progress = i / 20f, visualProgress = i / 20f)
+        }
+        acc.recordFrame(dtMs = 22f, progress = 1.02f, visualProgress = 1.02f)
+        val report = acc.finish()
+        assertEquals(21, report.totalFrames)
+        assertEquals(22f, report.maxFrameMs)
+        assertTrue(report.p95FrameMs >= 19f)
+        assertTrue(report.framesOver16ms >= 5)
+        assertEquals(1, report.framesOver20ms)
+        assertTrue(report.anomalies.any { it.startsWith("progress_out_of_bounds=") })
     }
 }

@@ -118,25 +118,6 @@ val LocalReduceMotion = staticCompositionLocalOf { false }
 fun <T> motionTween(durationMs: Int = Motion.STANDARD, easing: Easing = Motion.Standard): FiniteAnimationSpec<T> =
     if (LocalReduceMotion.current) snap() else tween(durationMs, easing = easing)
 
-internal const val SHEET_OPEN_STIFFNESS = 320f
-internal const val SHEET_CLOSE_STIFFNESS = 460f
-
-internal fun <T> sheetOpenSpringSpec(): FiniteAnimationSpec<T> =
-    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = SHEET_OPEN_STIFFNESS)
-
-internal fun <T> sheetCloseSpringSpec(): FiniteAnimationSpec<T> =
-    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = SHEET_CLOSE_STIFFNESS)
-
-/** The spring the player sheet settles open with (critically damped so it never overshoots). */
-@Composable
-fun <T> sheetSpring(): FiniteAnimationSpec<T> =
-    if (LocalReduceMotion.current) snap() else sheetOpenSpringSpec()
-
-/** The spring the player sheet settles closed with (critically damped, slightly quicker than open). */
-@Composable
-fun <T> sheetCloseSpring(): FiniteAnimationSpec<T> =
-    if (LocalReduceMotion.current) snap() else sheetCloseSpringSpec()
-
 /** A lightly bouncy spring for things that settle, such as the nav bar pill. */
 @Composable
 fun <T> motionSpring(): FiniteAnimationSpec<T> =

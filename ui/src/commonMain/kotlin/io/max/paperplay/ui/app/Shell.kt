@@ -163,6 +163,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
     var showEqFullScreen by remember { mutableStateOf(false) }
     var showLyricsFullScreen by remember { mutableStateOf(false) }
+    var runMotionHarness by remember { mutableStateOf(false) }
     LaunchedEffect(pb.current == null) {
         if (pb.current == null) {
             showLyricsFullScreen = false
@@ -292,6 +293,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             "player" -> if (pb.current != null) playerController.open()
             "upload" -> { page = "upload"; detail = null; settings = false; playerController.close() }
             "tasks" -> { navigate { tab = 3; profilePage = "tasks"; detail = null; settings = false }; page = "tasks"; playerController.close() }
+            "motion_test" -> if (backend.devOptionsUnlocked.value && pb.current != null) runMotionHarness = true
         }
         if (openRequest != null) open?.value = null
     }
@@ -722,6 +724,19 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 // On a desktop it sits bottom right above the player bar, clear of page titles and the panel button.
                 else Modifier.align(Alignment.BottomEnd).padding(bottom = 96.dp, end = 8.dp),
             )
+            if (isPhone && runMotionHarness) {
+                PlayerMotionHarness(
+                    active = true,
+                    controller = playerController,
+                    onDone = { report ->
+                        runMotionHarness = false
+                        scope.launch {
+                            snack.showSnackbar("Motion bench: p95=${report.p95FrameMs.toInt()}ms max=${report.maxFrameMs.toInt()}ms >20ms=${report.framesOver20ms}")
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 12.dp),
+                )
+            }
         }
 
         pickFor?.let { ids ->
