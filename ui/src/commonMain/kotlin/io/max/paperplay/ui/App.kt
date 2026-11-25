@@ -111,10 +111,11 @@ private val backends = io.max.paperplay.ui.logic.OnePerOwner<io.max.paperplay.co
 @Composable
 private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onRestore: () -> Unit, onErased: () -> Unit) {
     var closing by remember { mutableStateOf(false) }
-    val closeScope = rememberCoroutineScope()
     // The database, services and backend are built off the UI thread; a blank themed screen shows meanwhile.
     val built by produceState<CoreBackend?>(null) {
         val b = withContext(Dispatchers.Default) {
+            // A restore or an erase started before this window was opened finishes first.
+            io.max.paperplay.ui.logic.LifeWork.app.idle()
             run {
                 val sv = env.createServices()
                 // The last page is read while the backend is still being built, so it is ready as soon as the screen is.
@@ -141,7 +142,7 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
         if (!erase) return@LaunchedEffect
         // Like a restore: the services stop first, on a scope that outlives this screen.
         closing = true
-        closeScope.launch {
+        io.max.paperplay.ui.logic.LifeWork.app.launch {
             backend.services.eraseEverything()
             env.eraseEverything.value = false
             onErased()
@@ -161,7 +162,7 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
     val restore = {
         // Everything holding the library file, a socket or TDLib must stop before a restore replaces the library.
         closing = true
-        closeScope.launch {
+        io.max.paperplay.ui.logic.LifeWork.app.launch {
             backend.services.shutdown()
             onRestore()
         }

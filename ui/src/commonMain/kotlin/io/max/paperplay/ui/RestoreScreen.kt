@@ -69,6 +69,7 @@ fun isBackupEncrypted(source: BackupSource): Boolean {
             val name = entry.name
             if (name == "credentials.enc" || name == "usersession.enc" || name.endsWith(".enc")) {
                 encrypted = true
+                throw IllegalStateException("found") // the rest of the file need not be read
             }
         }
     } catch (_: Exception) {
@@ -94,7 +95,8 @@ fun RestorePage(
     fun runRestore(source: BackupSource, pwd: String?) {
         if (hooks == null) return
         state = RestoreState.Running("Reading the backup", null)
-        scope.launch {
+        // Not on the page's own scope: a restore that is under way finishes even when the window is closed.
+        io.max.paperplay.ui.logic.LifeWork.app.launch {
             state = try {
                 var result: RestoreResult? = null
                 hooks.restore(source, pwd?.ifEmpty { null }).collect {
@@ -119,10 +121,11 @@ fun RestorePage(
     fun pickFile() {
         hooks?.pickBackup { source ->
             chosenSource = source
-            val encrypted = isBackupEncrypted(source)
-            isEncrypted = encrypted
-            if (!encrypted) {
-                runRestore(source, null)
+            // A full backup is hundreds of MB, and this goes through it; never where the screen is drawn.
+            scope.launch {
+                val encrypted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { isBackupEncrypted(source) }
+                isEncrypted = encrypted
+                if (!encrypted) runRestore(source, null)
             }
         }
     }
