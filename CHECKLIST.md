@@ -364,6 +364,12 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [ ] RAM: earlier build used about 450 MB (heap 40 MB, metaspace 67 MB, Intel D3D12 driver files about 175 MB, TDLib and libvlc about 100 MB). Not a Rust problem. Test `-Dskiko.renderApi=OPENGL` and `SOFTWARE`, lazy libvlc, fewer classes
 - [ ] Not done: live level meter in the equalizer (curve only), channel last-scanned time, panel toggle also hidden in the now playing view, VLC output rate not shown on desktop
 
+## Update 2026-11-25 (Desktop motion rewrite; Linux/JVM verified, Windows unverified)
+- [~] Desktop motion tokens (`Motion.Desktop`), `desktopPageTransition`, `desktopPaneTransition`, critically damped `animatedWidth` clamped to window constraints, and `panelEnter`/`panelExit` (`Motion.kt`, `PageTransitions.kt`).
+- [~] Desktop input & scroll system (`DesktopMotion.kt`): `desktopInteractive` (hover/press/focus ring + `PointerIcon.Hand`), delayed `DesktopTooltip`, frame-rate-independent `SmoothWheelScrollPhysics` + `DesktopScrollHost` fading scrollbar, and `DesktopFileDropOverlay` (`IncomingDrops.dragging`/`dragCount`).
+- [~] Desktop Shell, Now Playing state machine + drag-and-drop queue reordering (`moveInQueue`), `HoverSeek` preview/hover grow, `ThinSeek` hover grow, scoped `MiniTimeReadout`/`MiniProgressTrack` + `DesktopMiniWindow` width glide, and `MotionLabPage` desktop suite (`devUnlocked`).
+- [~] Windows first-frame surface pre-paint (`WindowsTitleBar.applySurfaceColor`/`reapply`, `BorderlessFullscreen`), zero-idle gating (`AppForegroundState.isMiniVisible`), and deterministic benchmark (`DesktopMotionBench`, `scripts/bench_desktop_motion.sh`, `DesktopMotionTest`). Not yet tried on Windows hardware.
+
 ## Update 2026-11-13 (late: sync, bots, search, volume, icons; compiles, not tried on a device)
 - [x] Search no longer stops after the first query (the result flow was collected, never cancelled: `collectLatest` in `SearchScreen`); search also matches the year; film songs match through the album tag
 - [x] Desktop bit-perfect seek: no static or jitter after fast seeks (the stream pauses, seeks, the device is reopened once, then it resumes); only in exclusive mode
