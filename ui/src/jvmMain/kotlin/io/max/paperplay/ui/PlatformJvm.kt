@@ -13,7 +13,15 @@ import java.net.HttpURLConnection
 import java.net.URI
 
 @Composable
-actual fun PlatformBackHandler(enabled: Boolean, onProgress: (Float) -> Unit, onBack: () -> Unit) = Unit
+actual fun PlatformBackHandler(
+    enabled: Boolean,
+    onProgress: (Float) -> Unit,
+    onCancel: () -> Unit,
+    onBack: () -> Unit,
+) = Unit
+
+@Composable
+actual fun SystemBarAppearanceEffect(darkIcons: Boolean) = Unit
 
 @Composable
 actual fun rememberAppForeground(): Boolean {

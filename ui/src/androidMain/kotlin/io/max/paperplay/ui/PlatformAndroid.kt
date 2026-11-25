@@ -1,17 +1,21 @@
 package io.max.paperplay.ui
 
+import android.app.Activity
+import android.content.ContextWrapper
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
-import android.content.ContextWrapper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -24,14 +28,38 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 
 @Composable
-actual fun PlatformBackHandler(enabled: Boolean, onProgress: (Float) -> Unit, onBack: () -> Unit) {
+actual fun PlatformBackHandler(
+    enabled: Boolean,
+    onProgress: (Float) -> Unit,
+    onCancel: () -> Unit,
+    onBack: () -> Unit,
+) {
     PredictiveBackHandler(enabled = enabled) { progress: Flow<BackEventCompat> ->
+        var started = false
         try {
-            progress.collect { onProgress(it.progress) }
+            progress.collect {
+                started = true
+                onProgress(it.progress)
+            }
             onBack()
         } catch (_: CancellationException) {
-            // Back gesture cancelled by user
-            onProgress(0f)
+            if (started) onCancel() else onProgress(0f)
+        }
+    }
+}
+
+@Composable
+actual fun SystemBarAppearanceEffect(darkIcons: Boolean) {
+    val view = LocalView.current
+    val ctx = LocalContext.current
+    SideEffect {
+        val window = generateSequence(ctx) { (it as? ContextWrapper)?.baseContext }
+            .filterIsInstance<Activity>()
+            .firstOrNull()
+            ?.window ?: return@SideEffect
+        WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = darkIcons
+            isAppearanceLightNavigationBars = darkIcons
         }
     }
 }

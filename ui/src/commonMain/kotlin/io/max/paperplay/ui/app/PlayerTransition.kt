@@ -3,16 +3,48 @@ package io.max.paperplay.ui.app
 import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animateTo
+import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import io.max.paperplay.ui.PreviewFrame
 import io.max.paperplay.ui.theme.PlayerMotionTokens
 import io.max.paperplay.ui.theme.playerCloseSpringSpec
 import io.max.paperplay.ui.theme.playerOpenSpringSpec
@@ -22,6 +54,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.math.abs
 
 /**
@@ -543,3 +576,222 @@ internal fun nextPlayerSystemBars(wasPlayerBars: Boolean, phase: PlayerSheetPhas
 
 internal fun lerpFloat(start: Float, stop: Float, fraction: Float): Float =
     start + (stop - start) * fraction
+
+private val SheetTopRoundedShape = RoundedCornerShape(
+    topStart = PlayerMotionTokens.SHEET_CORNER_RADIUS_DP.dp,
+    topEnd = PlayerMotionTokens.SHEET_CORNER_RADIUS_DP.dp,
+)
+
+/**
+ * Creates and owns a [PlayerTransitionController] tied to the composition lifecycle.
+ * Schedules [PlayerContentStage.SettledEffects] one frame after landing on [PlayerSheetPhase.Open]
+ * and disposes any running animations when removed from composition.
+ */
+@Composable
+fun rememberPlayerTransitionController(
+    initiallyOpen: Boolean = false,
+    reduceMotion: Boolean = false,
+): PlayerTransitionController {
+    val scope = rememberCoroutineScope()
+    val controller = remember {
+        PlayerTransitionController(
+            scope = scope,
+            reduceMotion = reduceMotion,
+            standalone = false,
+            initiallyOpen = initiallyOpen,
+        )
+    }
+    LaunchedEffect(reduceMotion) {
+        controller.setReduceMotion(reduceMotion)
+    }
+    LaunchedEffect(controller.phase) {
+        if (controller.phase == PlayerSheetPhase.Open) {
+            if (!controller.reduceMotion) {
+                withFrameNanos { }
+            }
+            controller.setSettledEffectsReady(true)
+        } else {
+            controller.setSettledEffectsReady(false)
+        }
+    }
+    DisposableEffect(controller) {
+        onDispose { controller.dispose() }
+    }
+    return controller
+}
+
+/**
+ * Hosts the full player sheet driven by [controller]:
+ * - Unmounts [content] completely when [PlayerTransitionController.isComposed] is false.
+ * - Renders the dim scrim behind the sheet and blocks touches to underlying pages while active.
+ * - Reads [PlayerTransitionController.progress] and [PlayerTransitionController.visualProgress]
+ *   only inside `graphicsLayer` lambdas, never during composition.
+ * - Manages TalkBack pane semantics and focus handoff on open/close.
+ */
+@Composable
+fun PlayerSheetHost(
+    controller: PlayerTransitionController,
+    coverBounds: CoverBoundsRegistry? = null,
+    onRequestFocusReturn: (() -> Unit)? = null,
+    overlayActive: Boolean = false,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val playerFocusRequester = remember { FocusRequester() }
+    var wasOpenForFocus by remember { mutableStateOf(false) }
+
+    LaunchedEffect(controller.phase) {
+        when (controller.phase) {
+            PlayerSheetPhase.Open -> {
+                wasOpenForFocus = true
+                runCatching { playerFocusRequester.requestFocus() }
+            }
+            PlayerSheetPhase.Closed -> {
+                if (wasOpenForFocus) {
+                    wasOpenForFocus = false
+                    onRequestFocusReturn?.invoke()
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    if (!controller.isComposed) return
+
+    CompositionLocalProvider(
+        LocalPlayerTransition provides controller,
+        LocalCoverBounds provides coverBounds,
+    ) {
+        Box(modifier.fillMaxSize()) {
+            // Backdrop dim scrim behind the rising sheet; blocks touches to underlying pages.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = backdropDimAlpha(controller.progress) }
+                    .background(Color.Black)
+                    .blockTouchesBehind(),
+            )
+            // Sheet container: translationY / alpha / top-corner clip all in graphicsLayer.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned { coords ->
+                        coverBounds?.playerRootCoords = coords
+                    }
+                    .graphicsLayer {
+                        val rm = controller.reduceMotion
+                        val p = controller.progress
+                        val vp = controller.visualProgress
+                        translationY = sheetTranslationY(vp, size.height, rm)
+                        alpha = sheetAlpha(p, rm)
+                        if (overlayActive && !rm) {
+                            scaleX = PlayerMotionTokens.OVERLAY_UNDER_SCALE
+                            scaleY = PlayerMotionTokens.OVERLAY_UNDER_SCALE
+                        }
+                        if (sheetClipsTopCorners(p, rm)) {
+                            shape = SheetTopRoundedShape
+                            clip = true
+                        } else {
+                            clip = false
+                        }
+                        compositingStrategy = if (controller.isTransitioning) {
+                            CompositingStrategy.Offscreen
+                        } else {
+                            CompositingStrategy.Auto
+                        }
+                    }
+                    .blockTouchesBehind()
+                    .semantics {
+                        paneTitle = "Now playing"
+                        isTraversalGroup = true
+                    }
+                    .focusRequester(playerFocusRequester)
+                    .focusable(),
+            ) {
+                content()
+            }
+        }
+    }
+}
+
+/**
+ * Unified drag gesture for the full-player cover/header area:
+ * - Downward drags track 1:1 with the finger and dismiss past distance or velocity thresholds.
+ * - Upward drags while already pulling unwind smoothly; upward pulls from rest rubber-band.
+ * - Pure upward flicks from rest trigger [onQueue]; horizontal flicks trigger [onNext]/[onPrevious].
+ */
+fun Modifier.playerSheetDrag(
+    controller: PlayerTransitionController,
+    onQueue: (() -> Unit)? = null,
+    onNext: (() -> Unit)? = null,
+    onPrevious: (() -> Unit)? = null,
+): Modifier {
+    if (controller.standalone) return this
+    return this.then(
+        Modifier.pointerInput(controller) {
+            var dx = 0f
+            var dy = 0f
+            var pulling = false
+            val tracker = VelocityTracker()
+            val fallbackHeightPx = 640.dp.toPx()
+            detectDragGestures(
+                onDragStart = {
+                    dx = 0f
+                    dy = 0f
+                    pulling = false
+                    tracker.resetTracking()
+                },
+                onDragEnd = {
+                    val heightPx = size.height.toFloat().takeIf { it > 1f } ?: fallbackHeightPx
+                    when {
+                        pulling -> controller.release(tracker.calculateVelocity().y, heightPx)
+                        dy < -80f && dy < -abs(dx) -> onQueue?.invoke()
+                        dx < -80f -> onNext?.invoke()
+                        dx > 80f -> onPrevious?.invoke()
+                    }
+                },
+                onDragCancel = {
+                    if (pulling) controller.cancelDrag()
+                },
+            ) { change, drag ->
+                change.consume()
+                dx += drag.x
+                dy += drag.y
+                if (!pulling && dy > 0f && dy > abs(dx)) {
+                    pulling = true
+                }
+                if (pulling) {
+                    val heightPx = size.height.toFloat().takeIf { it > 1f } ?: fallbackHeightPx
+                    tracker.addPosition(change.uptimeMillis, Offset(0f, dy))
+                    controller.dragBy(drag.y, heightPx)
+                }
+            }
+        },
+    )
+}
+
+@Preview(name = "PlayerSheetHost Open", widthDp = 390, heightDp = 844)
+@Composable
+private fun PlayerSheetHostOpenPreview() = PreviewFrame(dark = true) {
+    val controller = remember { PlayerTransitionController.standalone() }
+    PlayerSheetHost(controller = controller) {
+        Box(Modifier.fillMaxSize().background(Color(0xFF1B1926)), contentAlignment = Alignment.Center) {
+            Text("Full Player Open", color = Color.White)
+        }
+    }
+}
+
+@Preview(name = "PlayerSheetHost Half Drag", widthDp = 390, heightDp = 844)
+@Composable
+private fun PlayerSheetHostHalfPreview() = PreviewFrame(dark = true) {
+    val controller = remember {
+        PlayerTransitionController(scope = null, reduceMotion = false, standalone = false, initiallyOpen = true).apply {
+            dragBy(420f, 844f)
+        }
+    }
+    PlayerSheetHost(controller = controller) {
+        Box(Modifier.fillMaxSize().background(Color(0xFF1B1926)), contentAlignment = Alignment.Center) {
+            Text("Half Dragged", color = Color.White)
+        }
+    }
+}
