@@ -79,6 +79,8 @@ private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PaperPlay/0.1"
 
 private suspend fun HttpFetcher.getJson(url: String, headers: Map<String, String> = emptyMap()): JsonElement? {
     val r = send(HttpRequest(url, headers = mapOf("user-agent" to UA) + headers))
+    // Busy or down is not "no lyrics": it must not be remembered as one.
+    if (r.status == 429 || r.status >= 500) throw IllegalStateException("The lyrics source is busy (${r.status})")
     return if (r.status == 200) runCatching { Json.parseToJsonElement(r.text) }.getOrNull() else null
 }
 

@@ -512,7 +512,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 runCatching {
                     repo.batch {
                         for ((u, text) in batch) {
-                            services.driver.execute(null, "UPDATE songs SET lyrics = ? WHERE unique_id = ?", 2) { bindString(0, text); bindString(1, u) }
+                            services.driver.execute(null, "UPDATE songs SET lyrics = ? WHERE unique_id = ? AND (lyrics IS NULL OR lyrics = '')", 2) { bindString(0, text); bindString(1, u) }
                         }
                     }
                 }

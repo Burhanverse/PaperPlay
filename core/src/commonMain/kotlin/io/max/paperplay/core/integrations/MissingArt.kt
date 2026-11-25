@@ -26,19 +26,22 @@ class MissingArt(private val http: HttpFetcher, private val dataDir: String) {
         val path = "$folder/spotify_$id.jpg"
         if (Fs.exists(path)) return path
         lock.withLock { if (known.containsKey(id)) return known[id] }
+        var answered = false
         val saved = gate.withPermit {
             runCatching {
                 val meta = http.send(HttpRequest("https://open.spotify.com/oembed?url=${percentEncode("https://open.spotify.com/track/$id")}", headers = mapOf("User-Agent" to "PaperPlay")))
+                answered = meta.status == 200 || meta.status == 404
                 if (meta.status != 200) return@runCatching null
                 val url = Json.parseToJsonElement(meta.text).jsonObject["thumbnail_url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
                 val image = http.send(HttpRequest(url))
-                if (image.status != 200 || image.body.isEmpty()) return@runCatching null
+                if (image.status != 200 || image.body.isEmpty()) { answered = false; return@runCatching null }
                 Fs.mkdirs(folder)
                 Fs.write(path, image.body)
                 path
             }.getOrNull()
         }
-        lock.withLock { known[id] = saved }
+        // A lookup that was cancelled or failed says nothing about the song; it is asked again.
+        if (saved != null || answered) lock.withLock { known[id] = saved }
         return saved
     }
 }
