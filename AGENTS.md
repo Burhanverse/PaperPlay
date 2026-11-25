@@ -13,7 +13,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Reproduce or prove the cause (log line, test, stack trace) before fixing. A fix with no evidence is a guess.
 - One change per commit. Keep diffs small; no drive-by refactors, no new dependencies without a reason.
 - Never invent API fields (TDLib, Bot API). Check the schema or a live answer.
-- A bug on the phone or PC can be proven from real data: copy `%APPDATA%\PaperPlay\library.sqlite` and query the copy, or run `adb shell dumpsys notification --noredact` for notifications. Do not write to the live file.
+- A bug on the phone or PC can be proven from real data, when the owner agrees first (a library copy or backup too): copy `%APPDATA%\PaperPlay\library.sqlite` and query the copy, or run `adb shell dumpsys notification --noredact` for notifications. Do not write to the live file.
 - A speed or smoothness claim needs a measurement before and after (`dumpsys gfxinfo` frame percentiles, a screen recording cut into frames, or a perfetto trace with `view gfx am input` categories). Several "fixes" this way changed nothing; the trace found the real cause.
 - Do not commit a change until the build for it has finished and passed. If files you did not edit change under you (another session is working), leave them alone and commit only your own files.
 
@@ -107,6 +107,9 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Shutting down, restoring and erasing run on `LifeWork.app`, not on a screen's scope.
 - Before a commit build the UI and both apps, not only `core`.
 - Devices sync only with the same app version and `SYNC_FORMAT` (`LanSync.kt`). Raise `SYNC_FORMAT` when synced data changes its meaning; a new message that carries data goes into `SYNC_TYPES` (`JavaLanSync.kt`).
+- Seconds of work (matching titles, reading thousands of rows one by one) run outside a transaction, and many writes go in small steps: whoever waits for the library may be the screen. Android uses WAL, so reads pass a writer; writes on the main thread still wait. No database reads while drawing.
+- The decoder gives float whatever the depth of the music, so a DAC setting is picked with `UsbFormatNegotiator.pickForSource`; a fall back to Android's mixer is logged with its reason. Earbuds connected after a DAC win (`UnifiedUsbAudioSink.otherOutputWins`).
+- Duplicates are ticked only when surely worse (`worseQuality` in `Duplicates.kt`); depth and rate are known only after playing, so a missing value says nothing.
 - TDLib file ids belong to one client; check which client an update came from.
 
 ## Git

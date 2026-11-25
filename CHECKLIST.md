@@ -882,8 +882,17 @@ elease` must say Java 25 and the setup exe must start.
 
 ## 25 Nov 2026 code audit and crash fixes
 
-87 findings, 75 confirmed. Core and UI tests pass where named below; nothing here was tried on a device yet (`[~]`).
+87 findings, 75 confirmed, 10 possible, 2 already fixed. Of the 85: 80 fixed, 1 half (USB endings), 4 open (2 of them not proven, the pairing
+code, and the choice between DAC and earbuds, which is built but not confirmed by the owner). `[x]` was tried by the owner on the phone,
+`[~]` has passed tests or builds only.
 
+Left, in this order: 1. the owner opens the phone app (new database mode) and looks for missing songs and freezes; 2. DAC by ear, volume low;
+3. PC; 4. both together with the version check; 5. USB endings between formats; 6. push when the owner says so.
+
+- [x] Phone: plays, full scan with the account, adding an indexed chat, the index saved to Telegram (53 MB), no crash
+- [x] Phone: the equalizer opens (the crash was an old local `libengine.so`; the build now stops on one, `fd1ff8d`)
+- [x] Phone: duplicates listed and deleted by the owner (65 of 65 posts removed, log of 25 Nov 14:51)
+- [x] Phone: a DAC that is plugged in is asked for once (`ce9bb3d`)
 - [~] Phone out of memory: the 40 MB saved index is written and read piece by piece (`JsonStream`), restored once per login
 - [~] Null row crash: full library reads go through `allSongsNow()` / `stableRead`; removals are one batch
 - [~] Index button did nothing: the device link no longer deadlocks (one writer thread per link), and the phone reads the chat itself when the PC does not answer
@@ -905,13 +914,17 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Uploads, filing, previews, covers, duplicates page, Spotify, lyrics, mood scan, ListenBrainz, updates (Android 8 to 12 too), backup: see the commits of 25 Nov
 - [~] Restore and erase belong to the process (`LifeWork`); choosing a backup is off the main thread
 - [~] PC package: `engine.dll` and the Normalise plugin are in it; the installer clears old files; the window no longer redraws all on each song
-- [~] USB: a cut sample no longer shifts the next ones (test), sound after a fault, permission asked once, play after switching at the end (not tried on a DAC)
+- [~] USB: a cut sample no longer shifts the next ones (test), sound after a fault, play after switching at the end (not tried on a DAC)
 - [~] USB: song endings are kept when the next song has the same format (the DAC just goes on); not tried on a DAC
 - [ ] USB: endings are still cut when the next song has another rate or depth
 - [~] USB: music decoded as float uses the DAC's 24 bit setting (`41a2f4f`); before, a 24 bit DAC always got Android's mixer. Not tried yet
+- [~] Index: "Missing, in Spotify lists" needs title, artist and length (`f2af3c8`); songs added wrongly before stay, the owner deletes by hand
+- [~] Spotify review writes off the main thread (`7dd0830`); a scan no longer counts repeats as added (`8e95a39`); song info lookups reload the library less often (`1923e7c`)
 - [~] USB: earbuds connected after the DAC keep the music until they are gone (`3318cf3`). Not tried yet
 - [~] Sync is blocked between different app versions (switch "Block sync when versions differ", "Force sync" per device until the link ends; `329f953`). Tested with two devices in a test, not on the real ones
 - [~] Phone: screens no longer wait up to 10 s for the only database connection (`6725ce2`, `f467064`, WAL). Not tried yet
+- [ ] Saving from the screen can still wait a moment for another writer
+- [ ] The old USB sink (`useUnifiedBitPerfect` off) still asks a second time
 - [ ] USB (not proven): a slow reopen, swallowed AudioTrack errors
 - [ ] Pairing code can be guessed offline by a device the owner dials on purpose (needs a new protocol)
 - [~] Basic groups, the recommender after an ended queue, cover and photo pickers, copying library-only songs after leaving the page

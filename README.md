@@ -6,7 +6,8 @@ other service.
 
 Built with Kotlin and Compose Multiplatform.
 
-> **Status:** everything compiles and the apps build in CI, but most features have not yet been tried on a real device.
+> **Status:** everything compiles and the apps build in CI. Playing, scanning, indexing and deleting duplicates have been tried on a
+> phone; many other features have not been tried on a real device yet.
 > [`CHECKLIST.md`](CHECKLIST.md) lists what is done, half done and not started.
 
 ## What it does
@@ -19,16 +20,21 @@ Built with Kotlin and Compose Multiplatform.
   songs the bot cannot see.
 - **Chat index** (Settings > Telegram > Chats and channels): each indexed chat is saved on the device with its song count, when it
   was last read and whether the whole history was read, and can be opened in Telegram or removed. A read keeps its place after every
-  page, so pausing it or closing the app does not start it over, and an indexed chat only reads newer posts. Indexing carries on in the
+  page, so pausing it or closing the app does not start it over, and an indexed chat only reads newer posts. While a PC is linked, the
+  phone lets it do the reading; when the PC does not answer, the phone reads by itself. Indexing carries on in the
   background and shows as a task notification. Posts are matched against your whole library: "Already have", "Better than yours"
-  (with the reason, such as FLAC instead of your AAC) and "Missing, in Spotify lists". Add copies a post into the main chat without a
+  (with the reason, such as FLAC instead of your AAC) and "Missing, in Spotify lists" (title, artist and length must agree, and only
+  the best copy in each chat is listed). Add copies a post into the main chat without a
   "forwarded from" line (a chat that blocks copying is downloaded and sent again by your account), with a speed slider and
   pause and resume; a song leaves the lists only once Telegram accepted its copy. The main chat is found by itself when you index it.
 - Songs added to the library without a copy in Telegram are greyed "Bot can't reach". Select them from the library's Filter sheet (all, or only
   those whose song is already in your chat) to delete the duplicates, or copy them to the chat so the bots can read them; a copy that
   arrives takes over the library entry.
-- Find and delete duplicate songs (Telegram is asked about every post, so a delete counts only when the post is really gone),
-  move songs between topics, upload songs from your phone or desktop. Android reads a chosen music folder where it is, with no
+- Find and delete duplicate songs (Telegram is asked about every post, so a delete counts only when the post is really gone). Ticked
+  by themselves are repeats in the same topic and surely worse copies; a smaller lossless file, a remastered or clean version and a copy
+  with another length are yours to decide. One copy always stays.
+- The recover page deletes an original only after Telegram confirmed its copy.
+- Move songs between topics, upload songs from your phone or desktop. Android reads a chosen music folder where it is, with no
   copy, asks before it takes subfolders, and skips songs under 2 MB.
 - Reading speed can adjust itself to what Telegram allows (Settings > Library > Speeds). Only a scan you start uses the
   "messages per request" setting; automatic reads stay at 100 ids and at most 50 requests a minute.
@@ -37,7 +43,7 @@ Built with Kotlin and Compose Multiplatform.
 
 **Playing**
 - Android uses Media3; desktop bundles libvlc, so nothing else needs installing.
-- Android: **Bit-perfect** playback (off by default) for direct USB Audio Class 1.0 and 2.0 class-compliant DACs (exclusive isochronous streaming, UAC hardware volume control, exact integer/float repacking, 25 s pause timeout release, composite HID safety, and verified transport reporting); normal path uses Media3 with pure zero-touch pass-through when Bit-perfect is off.
+- Android: **Bit-perfect** playback (off by default) for direct USB Audio Class 1.0 and 2.0 class-compliant DACs (exclusive isochronous streaming, UAC hardware volume control, exact integer/float repacking, 25 s pause timeout release, composite HID safety, and verified transport reporting; DACs that take 16 or 24 bit at most work too). A DAC that is plugged in is asked for once. Earbuds or headphones connected after the DAC take the music until they are gone, the DAC is plugged in again or Bit-perfect is switched on. The normal path uses Media3 with pure zero-touch pass-through when Bit-perfect is off.
 - Queue editing, play next, shuffle and repeat, sleep timer, speed, a 10-band equalizer with presets, loudness
   levelling, and restore of your last session.
 - Synced lyrics (tap a line to jump) and plain lyrics that scroll along; format badge and an output-info dialog.
@@ -73,14 +79,18 @@ Built with Kotlin and Compose Multiplatform.
 - Local sync between your own devices on the same network: encrypted, paired with a code, merges your library both ways:
   favorites, plays, playlists (with their Spotify link and waiting list), edited tags, song info, lyrics, covers and deleted
   songs. What you made by hand wins over what was found automatically; a deletion removes the song on the other device too
-  (a sync that would remove more than 2% of the library removes nothing and says so in the log).
+  (a sync that would remove more than 2% of the library removes nothing and says so in the log). Listening time adds up over all devices.
+- **App versions:** with **Block sync when versions differ** (Settings > Devices > Connection, on by default) a device neither takes
+  data from nor gives data to a device with another app version, also one too old to say its version; playing and controls go on. **Force sync**
+  allows it for one device until the two disconnect. Two devices that both block must both be forced.
 - Linked devices show what the other plays and where the sound goes (headphones, speakers), can play, pause, skip and seek it.
   **Play on** sends the song and queue to the other device while this one keeps playing, **Move to** hands playback over, and a
   device you disconnect by hand stays disconnected until you connect it again. The PC reads its real Windows output.
 - **Network play**: let other people on your Wi-Fi join a listening session with a PIN or link.
 
 **Backup**
-- Save everything to a zip (optionally password protected) and restore it on a new device. Favorites, plays, playlists
+- Save everything to a zip (optionally password protected) and restore it on a new device; listening time and equalizer presets are
+  in it. A restore goes on when the window is closed. Favorites, plays, playlists
   and edited tags also go to your Telegram Saved Messages.
 
 **Look and feel**
@@ -120,6 +130,10 @@ first time, so the first build needs internet access. Run from the repository ro
 .\gradlew.bat :core:jvmTest :player:jvmTest      # tests
 ```
 
+The sound libraries (`libengine.so`, `libusb_audio.so`, `libusb-1.0.so`) are not in Git. Build them from `engine/` with `cargo ndk` (and
+libusb with the NDK) before an Android build; the build stops when one is older than its source, and only warns when one is missing (the
+equalizer or the DAC then does not work). `scripts/build_libusb.sh` does not run on Windows. CI builds all three.
+
 The debug APK ends up in `androidApp\build\outputs\apk\debug\`. To install it on a phone: `adb devices`, then
 `adb -s <serial> install -r <apk>`.
 
@@ -133,8 +147,8 @@ desktop app, runs Inno Setup (`desktopApp\installer\PaperPlay.iss`) and copies `
 powershell -File scripts\release.ps1
 ```
 
-Versions live in `packageVersion` in `desktopApp\build.gradle.kts` and `AppVersion` in the `.iss` file (desktop), and
-`versionName` / `versionCode` in `androidApp\build.gradle.kts`. Packaging needs a full JDK with `jpackage`.
+The version of a local build is in `version.properties`, or given with `-PappVersion=1.2.3`; `versionCode` is the commit count. Builds for
+devices that sync with each other need the same version. Packaging needs a full JDK with `jpackage`.
 
 ### Desktop playback runtime (libvlc)
 
@@ -224,10 +238,15 @@ that need the database or Telegram have no preview yet.
   language. A song in Latin letters outside such a topic cannot be told.
 - **Windows:** the installer needs Windows 10 or newer, 64-bit. Windows 11 on ARM may run it through emulation (not tried); there
   is no native ARM build. It is not signed, so SmartScreen may warn.
+- **USB DACs:** direct playback was never reached on DACs that stop at 24 bit until the fix of 25 November 2026, and has not been
+  heard since. Song endings are cut when the next song has another sample rate or depth.
+- **Pairing:** a device on your network that poses as your other one could find out the code while you pair. Pair on a network you trust.
+- **App versions:** the block stops what reaches a device that has it. Two older apps still sync with each other, and a change an
+  older app makes in Telegram itself is not stopped.
 - **Not tried on two devices yet:** the shared player (what the other plays, source switch, output names), the sync of song data,
-  covers, Spotify links and deleted songs, and the PC right-click menu.
-- **Not tried on a device yet:** the chat index after the last changes (resume after a restart, copy to the chat, the re-upload of a
-  chat that blocks copying, background indexing), the greyed-out Spotify songs, deleting duplicates with the new per-post check, the language
+  listening time, covers, Spotify links and deleted songs, the version block, and the PC right-click menu.
+- **Not tried on a device yet:** direct playback on a DAC, the Android database mode that lets screens read while something is written, the
+  chat index after the last changes (resume after a restart, background indexing), the greyed-out Spotify songs, the language
   search, the self-adjusting reading speed, folder upload from an SD card, system volume on Windows, the tray, borderless full screen, the themed Spotify login page,
   the device popups, reading with extra bots, the new animations, installing an update through Shizuku, and Log out and
   delete all data.
