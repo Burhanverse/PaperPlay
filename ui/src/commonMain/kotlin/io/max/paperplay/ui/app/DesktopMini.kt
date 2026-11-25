@@ -109,6 +109,11 @@ fun DesktopMiniContent(onClose: (() -> Unit)? = null) {
 }
 
 @Composable
+fun DesktopMiniBodyForBench(state: PlaybackUiState, controls: PlayerControls?) {
+    MiniBody(state, controls, onClose = null, showFormat = true)
+}
+
+@Composable
 internal fun MiniBody(state: PlaybackUiState, controls: PlayerControls?, onClose: (() -> Unit)? = null, showFormat: Boolean = true) {
     val song = state.current
     val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current

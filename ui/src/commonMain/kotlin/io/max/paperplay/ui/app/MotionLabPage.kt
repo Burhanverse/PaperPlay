@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -38,12 +41,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.PreviewFrame
+import io.max.paperplay.ui.isPhone
+import io.max.paperplay.ui.theme.DesktopFrameMonitor
+import io.max.paperplay.ui.theme.DesktopFrameOverlay
 import io.max.paperplay.ui.theme.LocalMotionTuning
 import io.max.paperplay.ui.theme.LocalReduceMotion
 import io.max.paperplay.ui.theme.Motion
 import io.max.paperplay.ui.theme.MotionTuningState
+import io.max.paperplay.ui.theme.animatedWidth
 import io.max.paperplay.ui.theme.motionCrossfadeSpec
 import io.max.paperplay.ui.theme.motionSpatialSpring
 import io.max.paperplay.ui.theme.pressScale
@@ -226,7 +234,103 @@ internal fun MotionLabPage(modifier: Modifier = Modifier) {
                 }
             }
         }
+
+        if (!isPhone) {
+            DesktopMotionLabSection(reduceMotion)
+        }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun DesktopMotionLabSection(reduceMotion: Boolean) {
+    val monitor = remember { DesktopFrameMonitor() }
+    var overlayOn by remember { mutableStateOf(false) }
+    var deskPageStep by remember { mutableIntStateOf(0) }
+    var deskMove by remember { mutableStateOf(NavMove.Forward) }
+    var sidebarWide by remember { mutableStateOf(true) }
+    val wheelState = rememberLazyListState()
+    val shiftPx = with(LocalDensity.current) { Motion.Desktop.PageShiftDp.dp.roundToPx() }
+    val sideShiftPx = with(LocalDensity.current) { Motion.Desktop.PageSideShiftDp.dp.roundToPx() }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(16.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Desktop Motion Suite", style = MaterialTheme.typography.titleSmall)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Frame timing overlay", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { monitor.reset() }) { Text("Reset stats") }
+            Switch(checked = overlayOn, onCheckedChange = { overlayOn = it })
+        }
+        DesktopFrameOverlay(monitor = monitor, enabled = overlayOn)
+        Text(
+            "Skiko FPS flags: -Dskiko.fps.enabled=true -Dskiko.fps.periodSeconds=1.0 -Dskiko.fps.longFrames.show=true",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            DesktopTooltip("Fast non-bouncy hover, press, and focus ring") {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .desktopInteractive(RoundedCornerShape(10.dp))
+                        .clickable { deskMove = NavMove.Forward; deskPageStep++ }
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text("Card Forward", color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            OutlinedButton(onClick = { deskMove = NavMove.Back; deskPageStep-- }) { Text("Card Back") }
+            OutlinedButton(onClick = { deskMove = NavMove.Switch; deskPageStep++ }) { Text("Card Switch") }
+            OutlinedButton(onClick = { sidebarWide = !sidebarWide }) { Text(if (sidebarWide) "Narrow bar" else "Wide bar") }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .animatedWidth(if (sidebarWide) 180.dp else 72.dp)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(if (sidebarWide) "Sidebar 180dp" else "72dp", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelMedium)
+            }
+            AnimatedContent(
+                targetState = deskPageStep,
+                modifier = Modifier.weight(1f),
+                transitionSpec = { desktopPageTransition(deskMove, reduceMotion, shiftPx, sideShiftPx) },
+                label = "labDeskPage",
+            ) { step ->
+                Box(
+                    Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text("Desktop card state #$step (${deskMove.name})", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        Text("Smooth wheel scroll + fading scrollbar (120 items)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        DesktopScrollHost(wheelState, Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) { scrollMod ->
+            LazyColumn(scrollMod, state = wheelState) {
+                items(120) { idx ->
+                    Row(
+                        Modifier.fillMaxWidth().desktopInteractive(RoundedCornerShape(8.dp)).clickable {}.padding(horizontal = 12.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Sample track #${idx + 1}", style = MaterialTheme.typography.bodySmall)
+                        Text("3:${(10 + idx % 49).toString().padStart(2, '0')}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
     }
 }
 
