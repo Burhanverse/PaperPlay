@@ -84,7 +84,7 @@ internal fun netFailureText(f: NetFailure?): String = when (f) {
     NetFailure.Refused -> "The host did not let this device in."
     NetFailure.BadProof -> "The device did not prove it knows the PIN. Nothing was joined."
     NetFailure.Busy -> "This device is already in a session."
-    NetFailure.Protocol, null -> "Could not join. The other device may not be hosting a session."
+    NetFailure.Protocol, null -> "Could not join. The other device may not be hosting a session, or has an older app."
 }
 
 @Composable

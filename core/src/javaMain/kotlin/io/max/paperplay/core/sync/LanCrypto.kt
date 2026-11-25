@@ -16,7 +16,7 @@ import javax.crypto.spec.SecretKeySpec
  * Not constant time; the ephemeral keys are fresh per link and the identity key is only used for a keyed hash proof.
  */
 object X25519 {
-    private val P = BigInteger.ONE.shiftLeft(255).subtract(BigInteger.valueOf(19))
+    internal val P: BigInteger = BigInteger.ONE.shiftLeft(255).subtract(BigInteger.valueOf(19))
     private val A24 = BigInteger.valueOf(121665)
     private val random = SecureRandom()
 
@@ -27,9 +27,9 @@ object X25519 {
     /** The shared secret; all zero for a bad (low order) public key, which callers reject. */
     fun shared(priv: ByteArray, peerPublic: ByteArray): ByteArray = scalarMult(priv, peerPublic)
 
-    private fun decode(b: ByteArray): BigInteger = BigInteger(1, b.reversedArray())
+    internal fun decode(b: ByteArray): BigInteger = BigInteger(1, b.reversedArray())
 
-    private fun encode(v: BigInteger): ByteArray {
+    internal fun encode(v: BigInteger): ByteArray {
         val be = v.toByteArray()
         val out = ByteArray(32)
         var i = 0

@@ -3,11 +3,14 @@ package io.max.paperplay.core.sync.netplay
 import io.max.paperplay.core.library.newUuid
 import io.max.paperplay.core.sync.MAX_GUEST_FRAME
 import io.max.paperplay.core.sync.MAX_STRANGER_FRAME
+import io.max.paperplay.core.sync.CPace
 import io.max.paperplay.core.sync.CodeAttempt
 import io.max.paperplay.core.sync.clientHandshake
 import io.max.paperplay.core.sync.constantEq
 import io.max.paperplay.core.sync.flag
 import io.max.paperplay.core.sync.lng
+import io.max.paperplay.core.sync.pakeClient
+import io.max.paperplay.core.sync.pakeServer
 import io.max.paperplay.core.sync.proof
 import io.max.paperplay.core.sync.reqLng
 import io.max.paperplay.core.sync.reqStr
@@ -65,6 +68,8 @@ actual fun createNetplay(env: NetplayEnv): Netplay = JavaNetplay(env)
 
 /** Thrown while admitting a guest or joining; the reason goes to the other side. */
 private class NpFail(val why: NetFailure) : Exception(why.name)
+
+private const val PAKE_NETPLAY = "paperplay netplay"
 
 private fun b64(b: ByteArray): String = Base64.getEncoder().encodeToString(b)
 private fun b64d(s: String): ByteArray = Base64.getDecoder().decode(s)
@@ -252,24 +257,28 @@ internal class JavaNetplay(private val env: NetplayEnv) : Netplay {
     private fun admit(hr: HostRun, a: JsonObject, t: ByteArray, ch: SecureChannel, source: String, s: Socket): Guest {
         val id = a.reqStr("id").take(64)
         val name = a.reqStr("name").trim().take(40).ifEmpty { "Guest" }
-        val theirProof = b64d(a.reqStr("proof"))
+        val share = b64d(a.reqStr("pk"))
         if (id.isEmpty() || id == myId) throw NpFail(NetFailure.Protocol)
         if (hr.closed || source in hr.kicked) throw NpFail(NetFailure.Refused)
         if (hr.guests.size >= NETPLAY_MAX_GUESTS && !hr.guests.containsKey(id)) throw NpFail(NetFailure.Full)
-        var matched: String? = null
+        if (hr.guard.isLocked(source)) throw NpFail(NetFailure.LockedOut)
+        val active = hr.guard.currentPin() ?: throw NpFail(NetFailure.Refused)
+        val keys = pakeServer(ch, share, listOf(active), PAKE_NETPLAY, t)
+        var matched: ByteArray? = null
         val r = hr.guard.attempt(source) { pin ->
-            val ok = constantEq(proof(pin.encodeToByteArray(), "netplay", "client", t, id.encodeToByteArray()), theirProof)
-            if (ok) matched = pin
+            val (key, given) = keys[pin] ?: return@attempt false
+            val ok = constantEq(proof(key, PAKE_NETPLAY, "client", t, id.encodeToByteArray()), given)
+            if (ok) matched = key
             ok
         }
         if (r == CodeAttempt.Locked) throw NpFail(NetFailure.LockedOut)
         if (r == CodeAttempt.Wrong) throw NpFail(NetFailure.WrongPin)
-        val pin = matched ?: throw NpFail(NetFailure.Protocol)
+        val key = matched ?: throw NpFail(NetFailure.Protocol)
         ch.send(
             bytes(
                 buildJsonObject {
                     put("t", "np-ok"); put("id", myId); put("name", env.deviceName().take(64))
-                    put("proof", b64(proof(pin.encodeToByteArray(), "netplay", "server", t, myId.encodeToByteArray())))
+                    put("proof", b64(proof(key, PAKE_NETPLAY, "server", t, myId.encodeToByteArray())))
                     put("ctl", hr.guestsCanControl); put("share", hr.shareAudio)
                 },
             ),
@@ -500,23 +509,30 @@ internal class JavaNetplay(private val env: NetplayEnv) : Netplay {
             val out = DataOutputStream(BufferedOutputStream(s.getOutputStream()))
             val hs = clientHandshake(inp, out)
             val t = hs.transcript
-            val secret = pin.encodeToByteArray()
+            val pake = CPace(pin.encodeToByteArray(), PAKE_NETPLAY, t)
             hs.channel.send(
                 bytes(
                     buildJsonObject {
                         put("t", "np-hello"); put("id", myId); put("name", env.deviceName().take(40))
-                        put("proof", b64(proof(secret, "netplay", "client", t, myId.encodeToByteArray())))
+                        put("pk", b64(pake.share))
                     },
                 ),
             )
-            val reply = parseObj(hs.channel.receive())
+            var reply = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
+            // Without the exchange there is no key, and the host's proof below fails.
+            var keys = emptyList<ByteArray>()
+            if (reply.str("t") == "pake") {
+                keys = pakeClient(hs.channel, reply, pake, PAKE_NETPLAY, t, myId.encodeToByteArray())
+                reply = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
+            }
             if (reply.str("t") != "np-ok") {
                 failure = failureOf(reply.str("why"))
                 throw NpFail(failure)
             }
             val hostId = reply.reqStr("id").take(64)
             failure = NetFailure.BadProof
-            if (!constantEq(proof(secret, "netplay", "server", t, hostId.encodeToByteArray()), b64d(reply.reqStr("proof")))) throw NpFail(failure)
+            val hostProof = b64d(reply.reqStr("proof"))
+            if (keys.none { constantEq(proof(it, PAKE_NETPLAY, "server", t, hostId.encodeToByteArray()), hostProof) }) throw NpFail(failure)
             s.soTimeout = 20_000
             val created = GuestRun(s, hs.channel)
             created.hostName = reply.str("name").orEmpty().take(64)

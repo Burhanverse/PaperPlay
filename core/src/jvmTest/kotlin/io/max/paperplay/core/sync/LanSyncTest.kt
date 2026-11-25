@@ -214,6 +214,84 @@ class LanSyncTest {
         }
     }
 
+    /** A fake device that was dialled on purpose: what it gets only tells whether its one guess was right. */
+    @Test fun aFakeDeviceCanNotTryOutThePin() = runBlocking {
+        val a = node("A")
+        val ss = ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())
+        val pin = "493817"
+        val fake = async(Dispatchers.IO) {
+            ss.accept().use { s ->
+                val hs = serverHandshake(java.io.DataInputStream(s.getInputStream()), java.io.DataOutputStream(s.getOutputStream()))
+                val t = hs.transcript
+                val hello = wireJson.parseToJsonElement(hs.channel.receive().decodeToString()) as JsonObject
+                assertEquals("", hello.str("proof"))
+                val share = java.util.Base64.getDecoder().decode(hello.reqStr("pk"))
+                val spub = java.util.Base64.getDecoder().decode(hello.reqStr("spub"))
+                val (key, given) = pakeServer(hs.channel, share, listOf("000000"), "paperplay pair", t).getValue("000000")
+                // Even the right PIN, tried afterwards, does not give the proof again.
+                val later = CPace(pin.encodeToByteArray(), "paperplay pair", t).key(share, false)
+                for (k in listOf(key, later, pin.encodeToByteArray())) for (label in listOf("code", "paperplay pair")) {
+                    assertFalse(constantEq(proof(k, label, "client", t, spub), given))
+                }
+                val mine = java.util.Base64.getEncoder().encodeToString(proof(key, "paperplay pair", "server", t, spub))
+                hs.channel.send("{\"t\":\"auth-ok\",\"id\":\"x\",\"name\":\"x\",\"spub\":\"${hello.reqStr("spub")}\",\"proof\":\"$mine\"}".encodeToByteArray())
+                Thread.sleep(200)
+            }
+        }
+        try {
+            val r = a.sync.connectWithCode("127.0.0.1", ss.localPort, pin)
+            fake.await()
+            assertEquals(LanFailure.BadProof, r.failure)
+            assertTrue(a.sync.paired.value.isEmpty())
+        } finally {
+            a.sync.stop()
+            ss.close()
+        }
+    }
+
+    /** It says yes without the exchange, or speaks the old protocol: nothing is paired. */
+    @Test fun pairingWithoutTheExchangeIsRefused() = runBlocking {
+        val a = node("A")
+        val ss = ServerSocket(0, 4, java.net.InetAddress.getLoopbackAddress())
+        val answers = listOf(
+            "{\"t\":\"auth-ok\",\"id\":\"x\",\"name\":\"x\",\"spub\":\"\",\"proof\":\"\"}" to LanFailure.Protocol,
+            "{\"t\":\"auth-fail\",\"why\":\"Protocol\"}" to LanFailure.OldApp,
+            "{\"t\":\"pake\",\"pk\":[]}" to LanFailure.Protocol,
+        )
+        val fake = async(Dispatchers.IO) {
+            for ((answer, _) in answers) ss.accept().use { s ->
+                val hs = serverHandshake(java.io.DataInputStream(s.getInputStream()), java.io.DataOutputStream(s.getOutputStream()))
+                hs.channel.receive()
+                hs.channel.send(answer.encodeToByteArray())
+                Thread.sleep(200)
+            }
+        }
+        try {
+            for ((_, why) in answers) assertEquals(why, a.sync.connectWithCode("127.0.0.1", ss.localPort, "123456").failure)
+            fake.await()
+            assertTrue(a.sync.paired.value.isEmpty())
+        } finally {
+            a.sync.stop()
+            ss.close()
+        }
+    }
+
+    /** With a password set too, either one links; an app that sends the old proof does not. */
+    @Test fun pinAndPasswordBothLink() = runBlocking {
+        val a = node("A")
+        val b = node("B")
+        val c = node("C")
+        try {
+            b.sync.setPassword("secret-pw")
+            val pin = b.sync.showPin().code
+            assertEquals(LanFailure.WrongCode, a.sync.connectWithCode("127.0.0.1", b.port, "secret-pW").failure)
+            assertTrue(a.sync.connectWithCode("127.0.0.1", b.port, pin).ok)
+            assertTrue(c.sync.connectWithCode("127.0.0.1", b.port, "secret-pw").ok)
+        } finally {
+            for (n in listOf(a, b, c)) n.sync.stop()
+        }
+    }
+
     @Test fun nothingListeningIsUnreachable() = runBlocking {
         val a = node("A")
         try {

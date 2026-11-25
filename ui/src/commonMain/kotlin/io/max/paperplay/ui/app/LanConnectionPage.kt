@@ -131,6 +131,7 @@ private fun failureText(f: LanFailure?) = when (f) {
     LanFailure.LockedOut -> "Too many wrong codes. Try again in a few minutes"
     LanFailure.NotPaired -> "That device does not accept this one. Link it with a code first"
     LanFailure.BadProof -> "The other device could not prove it knows the code"
+    LanFailure.OldApp -> "That device has an older app. Update both, then pair again"
     LanFailure.NotReady -> "Not ready. Check that sync is on"
     LanFailure.VersionBlocked -> "Not synced: the app versions differ. Update both, or force the sync"
     LanFailure.VersionRefused -> "Not synced: the other device blocks this version. Update both, or force the sync there"

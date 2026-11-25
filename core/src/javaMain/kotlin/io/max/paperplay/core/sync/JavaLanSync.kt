@@ -97,6 +97,7 @@ private fun randomDigits(n: Int): String {
 }
 
 private const val MAX_COVER = 4_000_000
+private const val PAKE_PAIR = "paperplay pair"
 
 internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private val lib = env.library
@@ -299,7 +300,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         val name = a.reqStr("name").take(64)
         val desktop = a.flag("desktop") ?: false
         val spub = b64d(a.reqStr("spub"))
-        val theirProof = b64d(a.reqStr("proof"))
+        val theirProof = b64d(a.str("proof").orEmpty())
         val method = a.reqStr("m")
         val t = hs.transcript
         if (spub.size != 32 || id == deviceId || id.length > 100) throw AuthFail(LanFailure.Protocol)
@@ -315,18 +316,24 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 if (!constantEq(proof(dh, "key", "client", t, spub), theirProof)) throw AuthFail(LanFailure.BadProof)
                 serverProof = proof(dh, "key", "server", t, identityPub)
             }
-            "code" -> {
+            // An app from before CPace sends a proof that lets whoever it dialled try out all PINs. It has to update.
+            "code" -> throw AuthFail(LanFailure.OldApp)
+            "pake" -> {
                 if (_onlyPaired.value) throw AuthFail(LanFailure.NotPaired)
-                var matched: String? = null
+                if (guard.isLocked(source)) throw AuthFail(LanFailure.LockedOut)
+                var matched: ByteArray? = null
+                val active = guard.activeSecrets()
+                val keys = if (active.isEmpty()) emptyMap() else pakeServer(hs.channel, b64d(a.reqStr("pk")), active, PAKE_PAIR, t)
                 val r = guard.attempt(source) { secret ->
-                    val ok = constantEq(proof(secret.encodeToByteArray(), "code", "client", t, spub), theirProof)
-                    if (ok) matched = secret
+                    val (key, given) = keys[secret] ?: return@attempt false
+                    val ok = constantEq(proof(key, PAKE_PAIR, "client", t, spub), given)
+                    if (ok) matched = key
                     ok
                 }
                 if (r == CodeAttempt.Locked) throw AuthFail(LanFailure.LockedOut)
                 if (r == CodeAttempt.Wrong) throw AuthFail(LanFailure.WrongCode)
                 _pin.value = guard.currentPin()
-                serverProof = proof(matched!!.encodeToByteArray(), "code", "server", t, identityPub)
+                serverProof = proof(matched!!, PAKE_PAIR, "server", t, identityPub)
                 newPair = true
             }
             "token" -> {
@@ -543,6 +550,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             val secret: ByteArray
             val label: String
             var knownKey: ByteArray? = null
+            var pake: CPace? = null
             when (method) {
                 "key" -> {
                     val p = _paired.value.firstOrNull { it.id == expectId }
@@ -551,7 +559,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                     secret = X25519.shared(identityPriv, knownKey)
                     label = "key"
                 }
-                "code" -> { secret = (code ?: "").encodeToByteArray(); label = "code" }
+                "pake" -> { pake = CPace((code ?: "").encodeToByteArray(), PAKE_PAIR, t); secret = ByteArray(0); label = PAKE_PAIR }
                 else -> {
                     val tok = env.botToken()?.takeIf { it.isNotEmpty() }
                     if (tok == null) { failure = LanFailure.NotPaired; throw AuthFail(failure) }
@@ -564,10 +572,22 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                     put("spub", b64(identityPub)); put("port", _port.value)
                     put("app", env.appVersion); put("sync", SYNC_FORMAT)
                     put("addrs", buildJsonArray { for (x in _addresses.value) add(x) })
-                    put("proof", b64(proof(secret, label, "client", t, identityPub)))
+                    // An app from before CPace expects a proof and then answers that it does not know the method.
+                    if (pake != null) { put("pk", b64(pake.share)); put("proof", "") } else put("proof", b64(proof(secret, label, "client", t, identityPub)))
                 }.toString().encodeToByteArray(),
             )
-            val reply = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
+            var reply = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
+            var secrets = listOf(secret)
+            if (pake != null) {
+                if (reply.str("t") != "pake") {
+                    // Without the exchange nothing is proven, whatever the other side says.
+                    failure = failureOf(reply.str("why"))
+                    if (failure == LanFailure.Protocol && reply.str("t") == "auth-fail") failure = LanFailure.OldApp
+                    throw AuthFail(failure)
+                }
+                secrets = pakeClient(hs.channel, reply, pake, PAKE_PAIR, t, identityPub)
+                reply = parseObj(hs.channel.receive(MAX_STRANGER_FRAME))
+            }
             if (reply.str("t") != "auth-ok") {
                 failure = failureOf(reply.str("why"))
                 throw AuthFail(failure)
@@ -578,9 +598,10 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             failure = LanFailure.BadProof
             if (spub.size != 32 || sid == deviceId) { failure = LanFailure.Protocol; throw AuthFail(failure) }
             if (method == "key" && (sid != expectId || !spub.contentEquals(knownKey))) throw AuthFail(failure)
-            if (!constantEq(proof(secret, label, "server", t, spub), b64d(reply.reqStr("proof")))) throw AuthFail(failure)
+            val serverProof = b64d(reply.reqStr("proof"))
+            if (secrets.none { constantEq(proof(it, label, "server", t, spub), serverProof) }) throw AuthFail(failure)
             val sport = reply.lng("port")?.toInt()?.takeIf { it in 1..65535 } ?: port
-            if (method == "code") addPaired(sid, sname, spub)
+            if (method == "pake") addPaired(sid, sname, spub)
             val viaToken = method == "token"
             if (!viaToken) {
                 bk { learn(host, port, sid, sname) }
@@ -616,7 +637,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
 
     override suspend fun connectWithCode(host: String, port: Int, code: String): ConnectResult = withContext(Dispatchers.IO) {
         val a = parseAddress("$host:$port") ?: return@withContext ConnectResult(false, LanFailure.Unreachable)
-        result(a.key, dial(a.host, a.port, "code", code.trim(), null))
+        result(a.key, dial(a.host, a.port, "pake", code.trim(), null))
     }
 
     override suspend fun connectWithToken(host: String, port: Int): ConnectResult = withContext(Dispatchers.IO) {

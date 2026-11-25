@@ -67,6 +67,8 @@ enum class LanFailure {
     NotPaired,
     /** The other device failed to prove it knows the code, key or token. Nothing was stored. */
     BadProof,
+    /** The other device has an app from before the safe pairing; both need the same version. */
+    OldApp,
     /** This device is not listening, or has no such device. */
     NotReady,
     /** The app versions differ and this device blocks syncing then. */
