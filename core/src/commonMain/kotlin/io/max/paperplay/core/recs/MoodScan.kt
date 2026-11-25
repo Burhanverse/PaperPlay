@@ -43,7 +43,7 @@ class MoodScanner(
     private val allowed: () -> Boolean = { true },
     /** Whether metadata lookups are still running; the scan waits for them. */
     private val enrichRunning: () -> Boolean = { false },
-    private val gapMs: Long = 1500,
+    private val gapMs: Long = 3500,
 ) {
     private var job: Job? = null
     private var retry: Job? = null
@@ -72,6 +72,9 @@ class MoodScanner(
 
     fun stop() { job?.cancel(); retry?.cancel() }
 
+    /** A service that refuses for now has not answered: the song stays unscanned and the run waits. */
+    private fun busy(status: Int) { if (status == 403 || status == 429 || status >= 500) throw IllegalStateException("The service is busy ($status)") }
+
     internal suspend fun scanOne(s: Song) {
         var lyrics: String? = null
         var instrumental = false
@@ -79,9 +82,18 @@ class MoodScanner(
         val artist = firstArtist(s.artist)
         if (s.lyrics == null) {
             val r = http.send(HttpRequest("https://lrclib.net/api/search?track_name=${enc(s.title)}&artist_name=${enc(artist)}"))
+            busy(r.status)
             if (r.status == 200) {
                 val found = (runCatching { Json.parseToJsonElement(r.text) }.getOrNull() as? JsonArray)
-                    ?.filterIsInstance<JsonObject>().orEmpty()
+                    ?.filterIsInstance<JsonObject>().orEmpty().filter { o ->
+                        // The search also lists live, extended and other people's versions, whose words or timing are not this song's.
+                        val len = (o["duration"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+                        val name = comparableText(searchTitle((o["trackName"] as? JsonPrimitive)?.contentOrNull.orEmpty()))
+                        val by = comparableText((o["artistName"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+                        (s.duration_sec <= 0 || len == null || kotlin.math.abs(len - s.duration_sec) <= 5) &&
+                            (name.isEmpty() || name == comparableText(searchTitle(cleanTitle(s.title, s.artist)))) &&
+                            (by.isEmpty() || by.contains(comparableText(artist)) || comparableText(artist).contains(by))
+                    }
                 fun text(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
                 lyrics = found.firstNotNullOfOrNull { text(it, "syncedLyrics") ?: text(it, "plainLyrics") }
                 if (lyrics == null && found.any { (it["instrumental"] as? JsonPrimitive)?.booleanOrNull == true }) instrumental = true
@@ -91,6 +103,7 @@ class MoodScanner(
             val title = searchTitle(cleanTitle(s.title, s.artist))
             val want = comparableText(title)
             val r = http.send(HttpRequest("https://itunes.apple.com/search?term=${enc("$title $artist")}&media=music&entity=song&limit=8"))
+            busy(r.status)
             if (r.status == 200) {
                 val results = ((runCatching { Json.parseToJsonElement(r.text) }.getOrNull() as? JsonObject)?.get("results") as? JsonArray)
                     ?.filterIsInstance<JsonObject>().orEmpty()
@@ -104,7 +117,7 @@ class MoodScanner(
         }
         driver.execute(
             null,
-            "UPDATE songs SET mood_scanned_at = ?, lyrics = COALESCE(?, lyrics), " +
+            "UPDATE songs SET mood_scanned_at = ?, lyrics = COALESCE(lyrics, ?), " +
                 "instrumental = CASE WHEN ? = 1 THEN 1 ELSE instrumental END, genre = COALESCE(genre, ?) WHERE unique_id = ?",
             5,
         ) {
