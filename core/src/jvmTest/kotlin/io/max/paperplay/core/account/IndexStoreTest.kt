@@ -53,6 +53,26 @@ class IndexStoreTest {
         assertEquals(0, store.counts(-5, "")[4]) // copied leaves "wanted"
     }
 
+    /** Comparing titles takes seconds on a phone; a screen that reads or writes the library meanwhile must not wait for it. */
+    @Test
+    fun theLibraryIsFreeWhileTitlesAreCompared() {
+        val f = java.io.File(java.nio.file.Files.createTempDirectory("flags").toFile(), "l.sqlite").path.replace('\\', '/')
+        val store = IndexStore(libraryDriver(f))
+        val other = io.max.paperplay.core.library.LibraryRepo(io.max.paperplay.core.db.LibraryDatabase(libraryDriver(f))) { 1L }
+        store.saveChat(-5, "C")
+        store.upsertPosts(listOf(post(-5, 1, "Wanted", "B"), post(-5, 2, "Song", "Artist"), post(-5, 3, "Song", "Artist")), 1)
+        store.prepare()
+        fun writesAtOnce() = java.util.concurrent.CompletableFuture.runAsync { other.setPref("k", "v") }.get(5, java.util.concurrent.TimeUnit.SECONDS)
+        store.refreshFlags(emptySet(), setOf(looseTitleKey("Song", "Artist")), setOf(looseTitleKey("Wanted", "B")), { l -> writesAtOnce(); l.map { it.chatId to it.messageId }.toSet() }) { p ->
+            writesAtOnce()
+            // Post 3 becomes another file while it is judged, so what was found out about it does not count.
+            if (p.messageId == 3L) store.upsertPosts(listOf(post(-5, 3, "Song", "Artist", uid = "new")), 2)
+            true to null
+        }
+        assertEquals(1, store.counts(-5, "")[4])
+        assertEquals(listOf(2L), store.page(-5, IndexFilter.Have, "", 0, 10, null).map { it.post.messageId })
+    }
+
     @Test
     fun anExportIsReadBackAndSharingLeavesOutChatsNobodyCanJoin() = runBlocking {
         store.saveChat(-5, "Public"); store.setChatInfo(-5, "pubchan", "", true, true, 1)

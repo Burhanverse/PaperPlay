@@ -347,7 +347,8 @@ class ChatIndex(
             .groupBy { looseTitleKey(it.first, it.second) }.filterKeys { it.isNotEmpty() }
         val mainId = mainChat()
         val input = listOf(ids, byKey.mapValues { (_, v) -> v.map { Triple(it.unique_id, it.size, it.duration_sec) } }, wanted, mainId)
-        if (input == flagsInput && store.changes.value == flagsStamp) return@withLock
+        val stamp = store.changes.value
+        if (input == flagsInput && stamp == flagsStamp) return@withLock
         // Of each track waited for: the best copy in each chat, and only when the artist and the length agree too.
         fun pickWanted(posts: List<ChatPost>): Set<Pair<Long, Long>> = posts.groupBy { looseTitleKey(it.title, it.artist) }.flatMap { (key, sameTitle) ->
             sameTitle.groupBy { it.chatId }.flatMap { (chat, inChat) ->
@@ -363,7 +364,8 @@ class ChatIndex(
             true to (if (better) betterReason(p.asSong(), mine) else null)
         }
         flagsInput = input
-        flagsStamp = store.changes.value
+        // Posts that came while this ran may have missed it: only its own signal counts as seen.
+        flagsStamp = stamp + 1
     }
 
     /** What makes [post] better than [mine], following the order [DefaultSongRules.compareQuality] uses. */

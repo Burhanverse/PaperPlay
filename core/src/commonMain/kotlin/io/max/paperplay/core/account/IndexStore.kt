@@ -415,6 +415,8 @@ class IndexStore(private val driver: SqlDriver) {
      * one pass over the posts that share a key with the library.
      */
     fun refreshFlags(libraryIds: Set<String>, libraryKeys: Set<String>, wantedKeys: Set<String>, pickWanted: (List<ChatPost>) -> Set<Pair<Long, Long>>, judge: (ChatPost) -> Pair<Boolean, String?>) {
+        var sameTitle = emptyList<Pair<ChatPost, Long>>()
+        var sameKey = emptyList<Triple<ChatPost, Long, String?>>()
         db.transaction {
             exec("CREATE TEMP TABLE IF NOT EXISTS idx_ids (v TEXT PRIMARY KEY)")
             exec("CREATE TEMP TABLE IF NOT EXISTS idx_keys (v TEXT PRIMARY KEY)")
@@ -428,26 +430,30 @@ class IndexStore(private val driver: SqlDriver) {
             exec("UPDATE index_posts SET in_library = 1, better = NULL WHERE unique_id IN (SELECT v FROM idx_ids) AND (in_library <> 1 OR better IS NOT NULL)")
             exec("UPDATE index_posts SET in_library = 0, better = NULL WHERE in_library <> 0 AND unique_id NOT IN (SELECT v FROM idx_ids) AND loose_key NOT IN (SELECT v FROM idx_keys)")
             exec("UPDATE index_posts SET wanted = 0 WHERE wanted = 1 AND loose_key NOT IN (SELECT v FROM idx_wanted)")
-            val sameTitle = query("SELECT $postColumns, wanted FROM index_posts WHERE loose_key IN (SELECT v FROM idx_wanted)") { c -> post(c) to c.getLong(11)!! }
-            val picked = pickWanted(sameTitle.map { it.first })
-            for ((p, was) in sameTitle) {
-                val now = if ((p.chatId to p.messageId) in picked) 1L else 0L
-                if (now != was) exec("UPDATE index_posts SET wanted = ? WHERE chat_id = ? AND message_id = ?", 3) {
-                    bindLong(0, now); bindLong(1, p.chatId); bindLong(2, p.messageId)
-                }
-            }
+            sameTitle = query("SELECT $postColumns, wanted FROM index_posts WHERE loose_key IN (SELECT v FROM idx_wanted)") { c -> post(c) to c.getLong(11)!! }
             // Posts sharing a title with a library song are judged one by one (a few thousand at most).
-            val sameKey = query(
+            sameKey = query(
                 "SELECT $postColumns, in_library, better FROM index_posts WHERE unique_id NOT IN (SELECT v FROM idx_ids) AND loose_key IN (SELECT v FROM idx_keys)",
             ) { c -> Triple(post(c), c.getLong(11)!!, c.getString(12)) }
-            for ((p, was, wasBetter) in sameKey) {
-                val (same, better) = judge(p)
-                val now = if (same) 2L else 0L
-                val why = if (same) better else null
-                if (now == was && why == wasBetter) continue
-                exec("UPDATE index_posts SET in_library = ?, better = ? WHERE chat_id = ? AND message_id = ?", 4) {
-                    bindLong(0, now); bindString(1, why); bindLong(2, p.chatId); bindLong(3, p.messageId)
-                }
+        }
+        // Comparing titles takes seconds on a phone, so it is done with the library free; only what changed is written, a little at a time.
+        val picked = pickWanted(sameTitle.map { it.first })
+        val wanted = sameTitle.mapNotNull { (p, was) -> (if ((p.chatId to p.messageId) in picked) 1L else 0L).takeIf { it != was }?.let { p to it } }
+        val judged = sameKey.mapNotNull { (p, was, wasBetter) ->
+            val (same, better) = judge(p)
+            val now = if (same) 2L else 0L
+            val why = if (same) better else null
+            if (now == was && why == wasBetter) null else Triple(p, now, why)
+        }
+        // A post that became another file meanwhile is left for the next run.
+        for (part in wanted.chunked(WRITE_STEP)) db.transaction {
+            for ((p, now) in part) exec("UPDATE index_posts SET wanted = ? WHERE chat_id = ? AND message_id = ? AND unique_id = ?", 4) {
+                bindLong(0, now); bindLong(1, p.chatId); bindLong(2, p.messageId); bindString(3, p.uniqueId)
+            }
+        }
+        for (part in judged.chunked(WRITE_STEP)) db.transaction {
+            for ((p, now, why) in part) exec("UPDATE index_posts SET in_library = ?, better = ? WHERE chat_id = ? AND message_id = ? AND unique_id = ?", 5) {
+                bindLong(0, now); bindString(1, why); bindLong(2, p.chatId); bindLong(3, p.messageId); bindString(4, p.uniqueId)
             }
         }
         touch()
@@ -518,3 +524,6 @@ class IndexStore(private val driver: SqlDriver) {
 
 /** Channels and supergroups: a post has one number for everyone who sees it. */
 fun sameIdsForAll(chatId: Long) = chatId <= -1_000_000_000_000L
+
+/** Rows written in one transaction when much changes, so whoever needs the library in between gets it. */
+private const val WRITE_STEP = 300
