@@ -2016,8 +2016,12 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
         scope.launch(Dispatchers.Default) {
             var first = true
-            val activeFlow = combine(io.max.paperplay.ui.AppForegroundState.isVisibleFlow, playbackMeta.map { it.playing }) { visible, playing ->
-                visible && playing
+            val activeFlow = combine(
+                io.max.paperplay.ui.AppForegroundState.isVisibleFlow,
+                io.max.paperplay.ui.AppForegroundState.isMiniVisibleFlow,
+                playbackMeta.map { it.playing },
+            ) { visible, miniVisible, playing ->
+                (visible || miniVisible) && playing
             }
             while (isActive) {
                 val level = io.max.paperplay.player.SystemVolume.get()
@@ -2036,7 +2040,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                         player.setVolume(level)
                     }
                 }
-                if (!io.max.paperplay.ui.AppForegroundState.isVisible || !playbackMeta.value.playing) {
+                if ((!io.max.paperplay.ui.AppForegroundState.isVisible && !io.max.paperplay.ui.AppForegroundState.isMiniVisible) || !playbackMeta.value.playing) {
                     activeFlow.first { it }
                 } else {
                     delay(2500)
