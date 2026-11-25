@@ -69,7 +69,7 @@ import kotlinx.coroutines.delay
 import org.jetbrains.compose.ui.tooling.preview.Preview
 
 /**
- * Android standby: a near-black screen with a clock, the song and a slow procedural animation.
+ * Android standby: a near-black screen with a clock, the song and a live audio visualizer.
  * Tap or swipe down to leave. Callers show it on phones only.
  */
 @Composable

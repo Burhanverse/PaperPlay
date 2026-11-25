@@ -17,9 +17,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import io.max.paperplay.player.AudioTap
+import io.max.paperplay.player.SpectralOnsetDetector
 import io.max.paperplay.ui.rememberAppForeground
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.min
 import kotlin.math.sin
@@ -33,17 +33,16 @@ enum class StandbyStyle(val label: String) {
 }
 
 /**
- * A music visual that follows the audio: the player's [AudioTap] gives a live spectrum and every style reads it through
- * a smoother (fast attack, slow release) updated each frame. Where no live audio arrives (desktop, or the tap is idle)
- * it falls back to a slow procedural motion seeded by the song id. The frame loop runs only while [playing] and the
- * app is in front; the animated values are read in the draw phase so nothing recomposes.
+ * A music visual that follows the live audio: [AudioTap] provides a playout-synchronized spectrum and every style
+ * reads it through a smoother (fast attack, slow release) updated each frame. When there is no live audio (paused,
+ * silent, or DoP/DSD), it settles into a calm idle state with no invented motion. The frame loop runs only while
+ * [playing] and the app is in front; the animated values are read in the draw phase so nothing recomposes.
  */
 @Composable
 fun StandbyVisual(style: StandbyStyle, color: Color, playing: Boolean, volume: Float, seed: String, modifier: Modifier = Modifier) {
     val foreground = rememberAppForeground()
     val running = playing && foreground && !io.max.paperplay.ui.theme.LocalReduceMotion.current
     var frame by remember { mutableIntStateOf(0) }
-    val rhythm = remember(seed) { Rhythm(seed) }
     val sm = remember(seed) { Smoother() }
     LaunchedEffect(running, seed) {
         if (!running) { sm.settle(); frame++; return@LaunchedEffect }
@@ -52,7 +51,7 @@ fun StandbyVisual(style: StandbyStyle, color: Color, playing: Boolean, volume: F
             withFrameNanos { now ->
                 val dt = if (last == 0L) 0.016f else ((now - last) / 1e9f).coerceIn(0.001f, 0.1f)
                 last = now
-                sm.update(dt, rhythm, volume)
+                sm.update(dt)
                 frame++
             }
         }
@@ -77,20 +76,28 @@ fun StandbyVisual(style: StandbyStyle, color: Color, playing: Boolean, volume: F
     }
 }
 
-/** Smoothed spectrum, bass and energy with fast attack and slow release, plus phases that advance with the music. */
+/** Smoothed spectrum, bass, energy and spectral-flux onset with fast attack and slow release. Zero per-frame allocations. */
 internal class Smoother {
     val n = AudioTap.BANDS
     val v = FloatArray(n)
+    private val raw = FloatArray(n)
+    private val onsetDetector = SpectralOnsetDetector(n)
     var bass = 0f
     var energy = 0f
+    var onset = 0f
     var time = 0f
+    var motionPhase = 0f
     var ring = 0f
-    private var prevBass = 0f
+    var liveSignal = false
     val peak = FloatArray(n)
     val drop = FloatArray(64) { (it * 0.37f) % 1f }
     // Particles: x and y in 0..1 (y grows downward), speed, life in seconds.
     val px = FloatArray(140); val py = FloatArray(140); val pv = FloatArray(140); val pl = FloatArray(140); val ps = FloatArray(140)
     private var spawn = 0
+    val wavePaths = Array(3) { Path() }
+    val orbOuterColors = ArrayList<Color>(2).apply { add(Color.Transparent); add(Color.Transparent) }
+    val orbInnerColors = ArrayList<Color>(2).apply { add(Color.Transparent); add(Color.Transparent) }
+    val asciiSb = StringBuilder(64)
 
     /** A spark leaves the bottom at the x of band [band], rising faster the louder that band is. */
     private fun emit(band: Int, level: Float) {
@@ -101,49 +108,52 @@ internal class Smoother {
         ps[i] = 2f + 3f * rnd.nextFloat()
     }
 
-    fun settle() { v.fill(0f); peak.fill(0f); bass = 0f; energy = 0f; pl.fill(0f) }
+    fun settle() {
+        v.fill(0f); peak.fill(0f); pl.fill(0f)
+        bass = 0f; energy = 0f; onset = 0f; liveSignal = false
+        onsetDetector.reset()
+    }
 
-    fun update(dt: Float, r: Rhythm, volume: Float) {
+    fun update(dt: Float, nowNs: Long = System.nanoTime()) {
         time += dt
-        val live = AudioTap.fresh()
-        // No audio means no motion: a quiet baseline, never invented movement.
-        val src = if (live) AudioTap.read(DELAY_MS) else null
-        var sum = 0f; var b = 0f
+        val live = AudioTap.sample(raw, nowNs)
+        var beatHit = false
+        if (live) {
+            onsetDetector.update(raw, dt)
+            onset = onsetDetector.onset
+            beatHit = onsetDetector.beatHit
+        } else {
+            onsetDetector.reset()
+            onset = 0f
+        }
+
+        var sum = 0f
+        var b = 0f
         for (i in 0 until n) {
-            val target = src?.get(i) ?: 0.03f
-            val tau = if (target > v[i]) 0.035f else 0.22f
+            val target = if (live) raw[i] else 0f
+            val tau = if (target > v[i]) 0.032f else 0.20f
             v[i] += (target - v[i]) * (1f - exp(-dt / tau))
+            if (v[i] < 0.0005f) v[i] = 0f
             sum += v[i]
             if (i < 4) b += v[i]
         }
         bass = b / 4f
         energy = sum / n
-        // Rings travel faster on loud passages and jump forward on a bass hit.
-        ring = (ring + dt * (0.08f + 0.5f * energy) + (if (bass - prevBass > 0.08f) 0.06f else 0f)) % 1f
-        for (i in 0 until n) peak[i] = maxOf(v[i], peak[i] - dt * 0.45f)
-        for (i in drop.indices) drop[i] = (drop[i] + dt * (0.12f + 0.9f * v[i * n / drop.size])) % 1f
-        for (i in 0 until n) if (v[i] > 0.3f && kotlin.random.Random.nextFloat() < v[i] * v[i] * dt * 14f) emit(i, v[i])
-        for (i in px.indices) if (pl[i] > 0f) { pl[i] -= dt; py[i] -= pv[i] * dt; px[i] += kotlin.math.sin(time * 3f + i) * dt * 0.02f }
-        prevBass = bass
-    }
-}
+        liveSignal = live && energy > 0.004f
 
-/** Tempo and per-band phases and speeds derived from the song id, for the fallback motion. */
-private const val DELAY_MS = 120L
-
-internal class Rhythm(seed: String) {
-    private val h = seed.fold(7L) { a, c -> a * 31 + c.code }.let { abs(it) }
-    val bpm = 84f + (h % 56)
-    private fun frac(n: Int): Float = (((h * (n + 3) * 2654435761L) ushr 7) % 1000L) / 1000f
-    val phase = FloatArray(48) { frac(it) * 2f * PI.toFloat() }
-    val speed = FloatArray(48) { 1.2f + frac(it + 60) * 3.2f }
-    fun kick(t: Float): Float { val p = (t * bpm / 60f) % 1f; return exp(-p * 5f) }
-    /** 0..1 for band [i] of [n]; low bands follow the kick more. */
-    fun band(i: Int, n: Int, t: Float, kick: Float): Float {
-        val k = i % 48
-        val wob = 0.5f + 0.5f * sin(t * speed[k] + phase[k])
-        val low = 1f - i.toFloat() / n
-        return (0.12f + 0.88f * wob * (0.5f + 0.5f * (kick * low + (1f - low) * 0.6f))).coerceIn(0f, 1f)
+        // No audio means no motion: phases, rings, drops, and particle emission advance only with real sound.
+        if (energy > 0.004f) {
+            motionPhase += dt * (0.4f + 1.2f * energy)
+            ring = (ring + dt * (0.55f * energy) + (if (beatHit) 0.07f * onset else 0f)) % 1f
+            for (i in drop.indices) drop[i] = (drop[i] + dt * (0.04f + 0.9f * v[i * n / drop.size])) % 1f
+            for (i in 0 until n) if (v[i] > 0.28f && kotlin.random.Random.nextFloat() < v[i] * v[i] * dt * 14f) emit(i, v[i])
+        }
+        for (i in 0 until n) peak[i] = maxOf(v[i], (peak[i] - dt * 0.45f).coerceAtLeast(0f))
+        for (i in px.indices) if (pl[i] > 0f) {
+            pl[i] = (pl[i] - dt).coerceAtLeast(0f)
+            py[i] -= pv[i] * dt
+            px[i] += sin(motionPhase * 3f + i) * dt * 0.02f
+        }
     }
 }
 
@@ -162,8 +172,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBars(sm: Smooth
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWave(sm: Smoother, idle: Boolean, color: Color) {
     val mid = size.height / 2
     val steps = 64
+    val ripple = if (idle) 0f else (4f * sm.energy.coerceIn(0f, 1f))
     for (layer in 0 until 3) {
-        val path = Path()
+        val path = sm.wavePaths[layer].apply { rewind() }
         for (s in 0..steps) {
             val u = s.toFloat() / steps
             val env = sin(u * PI.toFloat())
@@ -172,7 +183,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWave(sm: Smooth
             val idx = lo + (u * (hi - lo - 1)).toInt()
             val a = if (idle) 0.04f else sm.v[idx]
             val sign = if ((s + layer) % 2 == 0) 1f else -1f
-            val y = mid + sign * size.height * 0.42f * env * a * (1f - layer * 0.2f) + 4f * env * sin(u * 9f + sm.time * (1f + layer))
+            val y = mid + sign * size.height * 0.42f * env * a * (1f - layer * 0.2f) + ripple * env * sin(u * 9f + sm.motionPhase * (1f + layer))
             if (s == 0) path.moveTo(0f, y) else path.lineTo(size.width * u, y)
         }
         drawPath(path, color.copy(alpha = 0.85f - layer * 0.25f), style = Stroke(width = 4f + (2 - layer) * 2f, cap = StrokeCap.Round))
@@ -182,7 +193,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWave(sm: Smooth
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRings(sm: Smoother, idle: Boolean, color: Color) {
     val c = Offset(size.width / 2, size.height / 2)
     val max = min(size.width, size.height) / 2
-    val punch = if (idle) 0f else sm.bass
+    val punch = if (idle) 0f else (0.65f * sm.bass + 0.55f * sm.onset).coerceIn(0f, 1.2f)
     for (i in 0 until 4) {
         val p = if (idle) (i + 1) / 5f else (sm.ring + i / 4f) % 1f
         val radius = max * (0.25f + 0.7f * p) * (1f + 0.08f * punch)
@@ -195,7 +206,12 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawOrb(sm: Smoothe
     val max = min(size.width, size.height) / 2
     val bass = if (idle) 0.04f else sm.bass
     val glow = if (idle) 0.2f else sm.energy
-    val core = max * (0.42f + 0.28f * bass + 0.03f * sin(sm.time * 1.3f))
-    drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.3f + 0.4f * glow), Color.Transparent), c, max), max * (0.85f + 0.3f * glow), c)
-    drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.95f), color.copy(alpha = 0.35f)), c, core), core, c)
+    val hit = if (idle) 0f else sm.onset
+    val core = max * (0.42f + 0.28f * bass + 0.10f * hit)
+    sm.orbOuterColors[0] = color.copy(alpha = 0.3f + 0.4f * glow)
+    sm.orbOuterColors[1] = Color.Transparent
+    sm.orbInnerColors[0] = color.copy(alpha = 0.95f)
+    sm.orbInnerColors[1] = color.copy(alpha = 0.35f)
+    drawCircle(Brush.radialGradient(sm.orbOuterColors, c, max), max * (0.85f + 0.3f * glow), c)
+    drawCircle(Brush.radialGradient(sm.orbInnerColors, c, core), core, c)
 }

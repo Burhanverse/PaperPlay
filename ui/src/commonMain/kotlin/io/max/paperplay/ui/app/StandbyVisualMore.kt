@@ -35,14 +35,14 @@ internal fun DrawScope.drawPeaks(sm: Smoother, idle: Boolean, color: Color) {
     val n = sm.n
     val slot = size.width / n
     val cell = size.height / 24f
-    val box = { w: Float -> Size(w, cell - 2f) }
+    val w = slot * 0.7f
+    val boxSize = Size(w, cell - 2f)
     for (i in 0 until n) {
         val a = if (idle) 0.04f else sm.v[i]
         val x = slot * i + slot * 0.15f
-        val w = slot * 0.7f
-        for (c in 0 until (a * 24).toInt()) drawRect(color.copy(alpha = 0.35f + 0.5f * c / 24f), Offset(x, size.height - (c + 1) * cell + 1f), box(w))
+        for (c in 0 until (a * 24).toInt()) drawRect(color.copy(alpha = 0.35f + 0.5f * c / 24f), Offset(x, size.height - (c + 1) * cell + 1f), boxSize)
         val cap = (sm.peak[i] * 24).toInt().coerceIn(0, 23)
-        if (!idle) drawRect(color, Offset(x, size.height - (cap + 1) * cell + 1f), box(w))
+        if (!idle) drawRect(color, Offset(x, size.height - (cap + 1) * cell + 1f), boxSize)
     }
 }
 
@@ -50,10 +50,10 @@ internal fun DrawScope.drawCircleBars(sm: Smoother, idle: Boolean, color: Color)
     val c = Offset(size.width / 2, size.height / 2)
     val max = min(size.width, size.height) / 2
     val spokes = sm.n * 2
-    val r0 = max * (0.3f + 0.05f * (if (idle) 0f else sm.bass))
+    val r0 = max * (0.3f + 0.05f * (if (idle) 0f else sm.bass) + 0.03f * (if (idle) 0f else sm.onset))
     for (k in 0 until spokes) {
         val a = if (idle) 0.04f else sm.v[if (k < sm.n) k else spokes - 1 - k]
-        val ang = (2 * PI * k / spokes + sm.time * 0.15).toFloat()
+        val ang = (2 * PI * k / spokes + sm.motionPhase * 0.15).toFloat()
         val d = Offset(cos(ang), sin(ang))
         drawLine(color.copy(alpha = 0.3f + 0.6f * a), c + d * r0, c + d * (r0 + max * 0.65f * a.coerceAtLeast(0.03f)), 5f, StrokeCap.Round)
     }
@@ -87,8 +87,9 @@ internal fun DrawScope.drawAsciiBars(sm: Smoother, idle: Boolean, color: Color, 
     val style = mono.copy(fontSize = g.fontPx.toSp())
     val lineH = size.height / g.rows
     val left = (size.width - g.cols * g.cw) / 2
+    val sb = sm.asciiSb
     for (r in 0 until g.rows) {
-        val sb = StringBuilder(g.cols)
+        sb.setLength(0)
         val from = g.rows - 1 - r
         for (c in 0 until g.cols) {
             val level = ((if (idle) 0.07f else sm.v[c * sm.n / g.cols]) * g.rows).toInt()
@@ -105,7 +106,7 @@ internal fun DrawScope.drawMatrix(sm: Smoother, idle: Boolean, color: Color, tm:
     val style = mono.copy(fontSize = g.fontPx.toSp())
     val lineH = size.height / g.rows
     val left = (size.width - g.cols * g.cw) / 2
-    val tick = (sm.time * 6f).toInt()
+    val tick = if (idle) 0 else (sm.motionPhase * 6f).toInt()
     for (c in 0 until g.cols) {
         val head = sm.drop[c] * (g.rows + 6)
         val strength = if (idle) 0.1f else 0.35f + 0.65f * sm.v[c * sm.n / g.cols]
@@ -127,15 +128,16 @@ internal fun DrawScope.drawAsciiPulse(sm: Smoother, idle: Boolean, color: Color,
     val lineH = size.height / g.rows
     val left = (size.width - g.cols * g.cw) / 2
     val bass = if (idle) 0.03f else sm.bass
-    val energy = if (idle) 0.1f else sm.energy
+    val energy = if (idle) 0f else sm.energy
+    val sb = sm.asciiSb
     for (r in 0 until g.rows) {
-        val sb = StringBuilder(g.cols)
+        sb.setLength(0)
         val y = (r + 0.5f) / g.rows * 2f - 1f
         for (c in 0 until g.cols) {
             // Aspect corrected so the shape is round.
             val x = ((c + 0.5f) / g.cols * 2f - 1f) * (g.cols * g.cw) / size.height
             val d = sqrt(x * x + y * y)
-            val v = 1f - abs(d - (0.35f + 0.35f * bass)) * 3f + 0.35f * sin(d * 14f - sm.time * 3f) * energy
+            val v = 1f - abs(d - (0.35f + 0.35f * bass)) * 3f + 0.35f * sin(d * 14f - sm.motionPhase * 3f) * energy
             sb.append(SHADES[(v.coerceIn(0f, 0.999f) * SHADES.length).toInt()])
         }
         drawText(tm.measure(sb.toString(), style), color.copy(alpha = 0.85f), Offset(left, r * lineH))
