@@ -92,7 +92,7 @@ class IndexStore(private val driver: SqlDriver) {
         for (d in defs) if (d.substringBefore(' ') !in have) exec("ALTER TABLE $table ADD COLUMN $d")
     }
 
-    /** Works out the loose title key of posts saved before keys existed, a few thousand at a time. Run off the main thread. */
+    /** Works out the loose title key of posts saved before keys existed, a thousand at a time. Run off the main thread. */
     fun prepare() {
         // Keys are worked out again when looseTitleKey changed; plain titles have the same key as before.
         exec("CREATE TABLE IF NOT EXISTS index_key_version (version INTEGER NOT NULL)")
@@ -101,14 +101,15 @@ class IndexStore(private val driver: SqlDriver) {
             exec("INSERT INTO index_key_version (version) VALUES ($KEY_VERSION)")
         }
         while (true) {
-            val rows = query("SELECT chat_id, message_id, title, artist FROM index_posts WHERE loose_key = '' LIMIT 5000") {
+            val rows = query("SELECT chat_id, message_id, title, artist FROM index_posts WHERE loose_key = '' LIMIT 1000") {
                 Triple(it.getLong(0)!! to it.getLong(1)!!, it.getString(2)!!, it.getString(3)!!)
             }
             if (rows.isEmpty()) return
+            // Worked out before the transaction, so nobody who writes waits for it.
+            // A post with no usable title still needs a key, or it would be picked again forever.
+            val keys = rows.map { (id, title, artist) -> id to looseTitleKey(title, artist).ifEmpty { "-" } }
             db.transaction {
-                for ((id, title, artist) in rows) {
-                    // A post with no usable title still needs a key, or it would be picked again forever.
-                    val key = looseTitleKey(title, artist).ifEmpty { "-" }
+                for ((id, key) in keys) {
                     exec("UPDATE index_posts SET loose_key = ? WHERE chat_id = ? AND message_id = ?", 3) { bindString(0, key); bindLong(1, id.first); bindLong(2, id.second) }
                 }
             }
