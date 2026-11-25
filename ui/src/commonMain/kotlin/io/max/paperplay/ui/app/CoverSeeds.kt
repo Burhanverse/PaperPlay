@@ -99,13 +99,38 @@ object CoverSeeds {
         seed(uri)
         return entryFor(uri).value.orEmpty()
     }
+
+    private val schemeCache = LinkedHashMap<Long, androidx.compose.material3.ColorScheme>(32, 0.75f, true)
+
+    internal fun cachedScheme(seed: Int, dark: Boolean): androidx.compose.material3.ColorScheme {
+        val key = (seed.toLong() shl 1) or (if (dark) 1L else 0L)
+        synchronized(lock) {
+            schemeCache[key]?.let { return it }
+        }
+        val built = schemeFromSeed(seed, dark)
+        synchronized(lock) {
+            schemeCache[key] = built
+            if (schemeCache.size > 64) {
+                val oldest = schemeCache.keys.firstOrNull()
+                if (oldest != null && oldest != key) schemeCache.remove(oldest)
+            }
+        }
+        return built
+    }
+
+    /** Prewarms the cover palette and derived [ColorScheme] on song change so opening the player never computes it on frame 1. */
+    fun prewarmScheme(uri: String?, dark: Boolean = true) {
+        if (uri == null) return
+        val s = seed(uri) ?: return
+        cachedScheme(s, dark)
+    }
 }
 
 /** A colour scheme in the cover's colours, or null until its seed is known. */
 @Composable
 fun coverScheme(uri: String?, dark: Boolean = true): ColorScheme? {
     val seed = CoverSeeds.seed(uri) ?: return null
-    return remember(seed, dark) { schemeFromSeed(seed, dark) }
+    return remember(seed, dark) { CoverSeeds.cachedScheme(seed, dark) }
 }
 
 /**

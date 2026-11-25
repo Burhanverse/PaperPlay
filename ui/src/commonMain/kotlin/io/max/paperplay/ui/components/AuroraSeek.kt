@@ -214,6 +214,7 @@ fun AuroraSeek(
     label: String? = null,
     longPressLabel: ((Float) -> String)? = null,
     compact: Boolean = false,
+    animateWave: Boolean = true,
 ) {
     val interaction = remember { AuroraSeekInteractionState() }
     LaunchedEffect(interaction.longPressToken) {
@@ -230,7 +231,7 @@ fun AuroraSeek(
 
     val foreground = rememberAppForeground()
     val reduceMotion = LocalReduceMotion.current
-    val waving = playing && dragging == null && foreground && !reduceMotion
+    val waving = playing && animateWave && dragging == null && foreground && !reduceMotion
 
     val waveAmp by animateFloatAsState(
         targetValue = if (waving) 1f else 0f,

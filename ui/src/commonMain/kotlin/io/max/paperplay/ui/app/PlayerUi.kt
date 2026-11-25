@@ -12,7 +12,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -80,9 +79,12 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -291,41 +293,39 @@ private fun PlayerBody(
         val short = io.max.paperplay.ui.isPhone && maxWidth > maxHeight
         // Room the controls need, so short screens shrink the cover, not them.
         val art = if (short) (maxHeight - 40.dp).coerceAtLeast(120.dp) else minOf(maxWidth - 48.dp, maxHeight - 25.dp - 410.dp).coerceAtLeast(120.dp)
-        val sheet = LocalPlayerSheet.current
-        val sheetPx = with(androidx.compose.ui.platform.LocalDensity.current) { maxHeight.toPx() }
-        val sheetOpenSpec = androidx.compose.runtime.rememberUpdatedState(io.max.paperplay.ui.theme.sheetSpring<Float>())
-        val sheetCloseSpec = androidx.compose.runtime.rememberUpdatedState(io.max.paperplay.ui.theme.sheetCloseSpring<Float>())
-        val dragScope = androidx.compose.runtime.rememberCoroutineScope()
+        val controller = LocalPlayerTransition.current
+        val stage = controller.contentStage
+        val interactive = stage >= PlayerContentStage.Interactive
+        val animateWave = stage >= PlayerContentStage.SettledEffects
+        val stage1Alpha by animateFloatAsState(
+            targetValue = if (interactive) 1f else 0f,
+            animationSpec = if (controller.standalone || controller.reduceMotion) androidx.compose.animation.core.snap() else io.max.paperplay.ui.theme.playerEffectFadeSpec(),
+            label = "playerStage1",
+        )
         val cover: @Composable (Modifier) -> Unit = { cm ->
             // Drag down on the cover and the whole player follows your finger; sideways changes song, up opens the queue.
             Column(
-                cm.pointerInput(sheet, sheetPx) {
-                    var dx = 0f; var dy = 0f
-                    var pulling = false
-                    val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
-                    detectDragGestures(
-                        onDragStart = { dx = 0f; dy = 0f; pulling = false; tracker.resetTracking() },
-                        onDragEnd = {
-                            when {
-                                pulling -> dragScope.launch { if (sheet.release(tracker.calculateVelocity().y, sheetPx, sheetOpenSpec.value, sheetCloseSpec.value)) onClose() }
-                                dy < -80f && dy < -kotlin.math.abs(dx) -> onQueue?.invoke()
-                                dx < -80f -> backend.next()
-                                dx > 80f -> backend.previous()
-                            }
-                        },
-                        onDragCancel = { sheet.pull(0f) },
-                    ) { change, drag ->
-                        change.consume(); dx += drag.x; dy += drag.y
-                        // A drag that starts downward takes the whole sheet with it.
-                        if (!pulling && dy > 0f && dy > kotlin.math.abs(dx)) pulling = true
-                        tracker.addPosition(change.uptimeMillis, androidx.compose.ui.geometry.Offset(0f, dy))
-                        if (pulling) sheet.pull(dy)
-                    }
-                },
+                cm.playerSheetDrag(
+                    controller = controller,
+                    onQueue = onQueue,
+                    onNext = backend::next,
+                    onPrevious = backend::previous,
+                ),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (grabber) Box(Modifier.padding(vertical = 10.dp).size(40.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(scheme.onSurface.copy(alpha = 0.35f)).clickable(onClick = onClose))
-                else Spacer(Modifier.height(8.dp))
+                if (grabber) {
+                    Box(
+                        Modifier
+                            .size(width = 72.dp, height = 32.dp)
+                            .semantics { contentDescription = "Close player" }
+                            .clickable(onClickLabel = "Close player", role = Role.Button, onClick = onClose),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(Modifier.size(40.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(scheme.onSurface.copy(alpha = 0.35f)))
+                    }
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                }
                 Artwork(song, state.playing, art)
             }
         }
@@ -359,7 +359,18 @@ private fun PlayerBody(
                 }
                 Column(Modifier.padding(horizontal = 12.dp)) {
                     if (error != null) Text(error, color = scheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp))
-                    PlayerProgress(song, state, backend, onBadge = { outputInfoOpen = true })
+                    if (interactive) {
+                        Box(Modifier.graphicsLayer { alpha = stage1Alpha }) {
+                            Column {
+                                PlayerProgress(song, state, backend, onBadge = { outputInfoOpen = true }, animateWave = animateWave)
+                            }
+                        }
+                    } else {
+                        // Stage 0 placeholder reserves exact height (52dp bar + 8dp spacer + 20dp time row) so Stage 1 never jumps layout.
+                        Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.CenterStart) {
+                            Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(scheme.onSurface.copy(alpha = 0.2f)))
+                        }
+                    }
                 }
                 if (outputInfoOpen) OutputInfoDialog(song, backend) { outputInfoOpen = false }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -367,89 +378,96 @@ private fun PlayerBody(
                     PlayPauseButton(state.playing, backend::togglePlay)
                     IconButton(backend::next, Modifier.size(72.dp)) { AppIcon(Icons.Rounded.FastForward, "Next", Modifier.size(48.dp)) }
                 }
-                val volume by backend.volume.collectAsState()
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AppIcon(Icons.AutoMirrored.Rounded.VolumeDown, "Quieter", Modifier.size(18.dp), tint = scheme.onSurface.copy(alpha = 0.65f))
-                    VolumeBar(volume, backend::setVolume, scheme.onSurface, Modifier.weight(1f).padding(horizontal = 10.dp))
-                    AppIcon(Icons.AutoMirrored.Rounded.VolumeUp, "Louder", Modifier.size(18.dp), tint = scheme.onSurface.copy(alpha = 0.65f))
-                }
-                // Output device pill, like the AirPods one in Apple Music.
-                val out = LocalOutputDevice.current ?: io.max.paperplay.ui.rememberOutputDevice()
-                var devicesOpen by remember { mutableStateOf(false) }
-                val switchOutput = io.max.paperplay.ui.rememberOutputSwitcher()
-                // When another linked device is the one playing, the pill says so instead of naming this phone's speaker or headphones.
-                val activeId = LocalOutputSwitch.current?.active?.collectAsState()?.value
-                val linked = LocalLanSync.current?.connected?.collectAsState()?.value.orEmpty()
-                val remoteDevice = activeId?.let { id -> linked.firstOrNull { it.id == id } }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    Row(
-                        Modifier.clip(RoundedCornerShape(50)).background(scheme.onSurface.copy(alpha = 0.14f))
-                            .clickable(enabled = switchOutput != null || onDevices != null) { if (onDevices != null) devicesOpen = true else switchOutput?.invoke() }.padding(horizontal = 20.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        AppIcon(
-                            when {
-                                remoteDevice != null -> if (remoteDevice.desktop) Icons.Rounded.Computer else Icons.Rounded.PhoneAndroid
-                                out.external -> Icons.Rounded.Headphones
-                                else -> Icons.Rounded.PhoneAndroid
-                            }, null, Modifier.size(20.dp),
-                        )
-                        // A short name with a quiet line under it: "Headphones" over "Realtek Audio", or "Playing on Phone" over "via Buds".
-                        val (title, caption) = if (remoteDevice != null) {
-                            val via = LocalLanSync.current?.remoteNow?.collectAsState()?.value?.get(remoteDevice.id)?.outName?.let { splitDeviceName(it).first }
-                            "Playing on ${remoteDevice.name}" to via?.let { "via $it" }
-                        } else splitDeviceName(out.name)
-                        Column(Modifier.widthIn(max = 220.dp)) {
-                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                            if (caption != null) Text(caption, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = scheme.onSurface.copy(alpha = 0.6f))
+                if (interactive) {
+                    val volume by backend.volume.collectAsState()
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).graphicsLayer { alpha = stage1Alpha }, verticalAlignment = Alignment.CenterVertically) {
+                        AppIcon(Icons.AutoMirrored.Rounded.VolumeDown, "Quieter", Modifier.size(18.dp), tint = scheme.onSurface.copy(alpha = 0.65f))
+                        VolumeBar(volume, backend::setVolume, scheme.onSurface, Modifier.weight(1f).padding(horizontal = 10.dp))
+                        AppIcon(Icons.AutoMirrored.Rounded.VolumeUp, "Louder", Modifier.size(18.dp), tint = scheme.onSurface.copy(alpha = 0.65f))
+                    }
+                    // Output device pill, like the AirPods one in Apple Music.
+                    val out = LocalOutputDevice.current ?: io.max.paperplay.ui.rememberOutputDevice()
+                    var devicesOpen by remember { mutableStateOf(false) }
+                    val switchOutput = io.max.paperplay.ui.rememberOutputSwitcher()
+                    // When another linked device is the one playing, the pill says so instead of naming this phone's speaker or headphones.
+                    val activeId = LocalOutputSwitch.current?.active?.collectAsState()?.value
+                    val linked = LocalLanSync.current?.connected?.collectAsState()?.value.orEmpty()
+                    val remoteDevice = activeId?.let { id -> linked.firstOrNull { it.id == id } }
+                    Row(Modifier.fillMaxWidth().graphicsLayer { alpha = stage1Alpha }, horizontalArrangement = Arrangement.Center) {
+                        Row(
+                            Modifier.clip(RoundedCornerShape(50)).background(scheme.onSurface.copy(alpha = 0.14f))
+                                .clickable(enabled = switchOutput != null || onDevices != null) { if (onDevices != null) devicesOpen = true else switchOutput?.invoke() }.padding(horizontal = 20.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            AppIcon(
+                                when {
+                                    remoteDevice != null -> if (remoteDevice.desktop) Icons.Rounded.Computer else Icons.Rounded.PhoneAndroid
+                                    out.external -> Icons.Rounded.Headphones
+                                    else -> Icons.Rounded.PhoneAndroid
+                                }, null, Modifier.size(20.dp),
+                            )
+                            // A short name with a quiet line under it: "Headphones" over "Realtek Audio", or "Playing on Phone" over "via Buds".
+                            val (title, caption) = if (remoteDevice != null) {
+                                val via = LocalLanSync.current?.remoteNow?.collectAsState()?.value?.get(remoteDevice.id)?.outName?.let { splitDeviceName(it).first }
+                                "Playing on ${remoteDevice.name}" to via?.let { "via $it" }
+                            } else splitDeviceName(out.name)
+                            Column(Modifier.widthIn(max = 220.dp)) {
+                                Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                                if (caption != null) Text(caption, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = scheme.onSurface.copy(alpha = 0.6f))
+                            }
                         }
                     }
-                }
-                if (devicesOpen && onDevices != null) PhoneDevicesDialog(onDevices, switchOutput, if (remoteDevice == null) song else null) { devicesOpen = false }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    if (onOpenLyrics != null) {
-                        IconButton(onOpenLyrics, enabled = state.current != null) { AppIcon(Icons.Outlined.Lyrics, "Lyrics") }
-                    }
-                    IconButton(backend::toggleShuffle) {
-                        AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) toggleOnColor() else scheme.onSurface)
-                    }
-                    IconButton(backend::cycleRepeat) {
-                        AppIcon(
-                            if (state.repeat == RepeatUi.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat",
-                            tint = if (state.repeat != RepeatUi.Off) toggleOnColor() else scheme.onSurface,
-                        )
-                    }
-                    if (onQueue != null) IconButton(onQueue) { AppIcon(Icons.AutoMirrored.Rounded.QueueMusic, "Queue") }
-                    if (backend.hasBass) {
-                        val bitPerfect by backend.bitPerfect.collectAsState()
-                        BitPerfectButton(bitPerfect, scheme.onSurface.copy(alpha = 0.7f), Modifier.size(22.dp)) { backend.setBitPerfect(!bitPerfect) }
-                    }
-                    // Less used controls live behind one button.
-                    var showSleep by remember { mutableStateOf(false) }
-                    val sleepAt by backend.sleepAt.collectAsState()
-                    var showSpeed by remember { mutableStateOf(false) }
-                    val speed by backend.speed.collectAsState()
-                    var more by remember { mutableStateOf(false) }
-                    var showEq by remember { mutableStateOf(false) }
-                    val eqOn by backend.eqOn.collectAsState()
-                    Box {
-                        IconButton({ more = true }) {
-                            AppIcon(Icons.Rounded.Tune, "More controls", tint = if (sleepAt != null || speed != 1f || eqOn) toggleOnColor() else scheme.onSurface)
+                    if (devicesOpen && onDevices != null) PhoneDevicesDialog(onDevices, switchOutput, if (remoteDevice == null) song else null) { devicesOpen = false }
+                    Row(Modifier.fillMaxWidth().graphicsLayer { alpha = stage1Alpha }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        if (onOpenLyrics != null) {
+                            IconButton(onOpenLyrics, enabled = state.current != null) { AppIcon(Icons.Outlined.Lyrics, "Lyrics") }
                         }
-                        androidx.compose.material3.DropdownMenu(more, { more = false }) {
-                            androidx.compose.material3.DropdownMenuItem({ Text(if (sleepAt != null) "Sleep timer (on)" else "Sleep timer") }, { more = false; showSleep = true })
-                            androidx.compose.material3.DropdownMenuItem({ Text(if (eqOn) "Equalizer (on)" else "Equalizer") }, {
-                                more = false
-                                if (onOpenEq != null) onOpenEq() else showEq = true
-                            })
-                            androidx.compose.material3.DropdownMenuItem({ Text("Speed (${speedLabel(speed)})") }, { more = false; showSpeed = true })
-                            if (onStandby != null) androidx.compose.material3.DropdownMenuItem({ Text("Standby mode") }, { more = false; onStandby() })
-                            if (onDevices != null) androidx.compose.material3.DropdownMenuItem({ Text("Devices") }, { more = false; devicesOpen = true })
+                        IconButton(backend::toggleShuffle) {
+                            AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) toggleOnColor() else scheme.onSurface)
                         }
+                        IconButton(backend::cycleRepeat) {
+                            AppIcon(
+                                if (state.repeat == RepeatUi.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat",
+                                tint = if (state.repeat != RepeatUi.Off) toggleOnColor() else scheme.onSurface,
+                            )
+                        }
+                        if (onQueue != null) IconButton(onQueue) { AppIcon(Icons.AutoMirrored.Rounded.QueueMusic, "Queue") }
+                        if (backend.hasBass) {
+                            val bitPerfect by backend.bitPerfect.collectAsState()
+                            BitPerfectButton(bitPerfect, scheme.onSurface.copy(alpha = 0.7f), Modifier.size(22.dp)) { backend.setBitPerfect(!bitPerfect) }
+                        }
+                        // Less used controls live behind one button.
+                        var showSleep by remember { mutableStateOf(false) }
+                        val sleepAt by backend.sleepAt.collectAsState()
+                        var showSpeed by remember { mutableStateOf(false) }
+                        val speed by backend.speed.collectAsState()
+                        var more by remember { mutableStateOf(false) }
+                        var showEq by remember { mutableStateOf(false) }
+                        val eqOn by backend.eqOn.collectAsState()
+                        Box {
+                            IconButton({ more = true }) {
+                                AppIcon(Icons.Rounded.Tune, "More controls", tint = if (sleepAt != null || speed != 1f || eqOn) toggleOnColor() else scheme.onSurface)
+                            }
+                            androidx.compose.material3.DropdownMenu(more, { more = false }) {
+                                androidx.compose.material3.DropdownMenuItem({ Text(if (sleepAt != null) "Sleep timer (on)" else "Sleep timer") }, { more = false; showSleep = true })
+                                androidx.compose.material3.DropdownMenuItem({ Text(if (eqOn) "Equalizer (on)" else "Equalizer") }, {
+                                    more = false
+                                    if (onOpenEq != null) onOpenEq() else showEq = true
+                                })
+                                androidx.compose.material3.DropdownMenuItem({ Text("Speed (${speedLabel(speed)})") }, { more = false; showSpeed = true })
+                                if (onStandby != null) androidx.compose.material3.DropdownMenuItem({ Text("Standby mode") }, { more = false; onStandby() })
+                                if (onDevices != null) androidx.compose.material3.DropdownMenuItem({ Text("Devices") }, { more = false; devicesOpen = true })
+                            }
+                        }
+                        if (showSleep) SleepTimerDialog(backend) { showSleep = false }
+                        if (showSpeed) SpeedDialog(backend) { showSpeed = false }
+                        if (showEq) EqualizerDialog(backend) { showEq = false }
                     }
-                    if (showSleep) SleepTimerDialog(backend) { showSleep = false }
-                    if (showSpeed) SpeedDialog(backend) { showSpeed = false }
-                    if (showEq) EqualizerDialog(backend) { showEq = false }
+                } else {
+                    // Stage 0 placeholders preserve exact spacing for SpaceEvenly without composing secondary rows.
+                    Spacer(Modifier.height(36.dp))
+                    Spacer(Modifier.height(42.dp))
+                    Spacer(Modifier.height(48.dp))
                 }
             }
         }
@@ -485,7 +503,13 @@ private fun PlayPauseButton(playing: Boolean, onToggle: () -> Unit) {
 }
 
 @Composable
-internal fun PlayerProgress(song: SongUi, state: PlaybackUiState, backend: PlayerControls, onBadge: (() -> Unit)? = null) {
+internal fun PlayerProgress(
+    song: SongUi,
+    state: PlaybackUiState,
+    backend: PlayerControls,
+    onBadge: (() -> Unit)? = null,
+    animateWave: Boolean = true,
+) {
     val scheme = MaterialTheme.colorScheme
     val muted = MaterialTheme.typography.labelMedium.copy(color = scheme.onSurface.copy(alpha = 0.65f))
     val total = if (state.durationMs > 0) state.durationMs else song.durationSec * 1000L
@@ -500,6 +524,7 @@ internal fun PlayerProgress(song: SongUi, state: PlaybackUiState, backend: Playe
             modifier = Modifier.fillMaxWidth(),
             label = label,
             longPressLabel = longPressLabel,
+            animateWave = animateWave,
         )
         ProgressBarStyle.AURORA_WAVE -> AuroraSeek(
             progress = { pos.progress(state.durationMs) }, buffered = { pos.bufferedProgress(state.durationMs) }, playing = state.playing,
@@ -508,6 +533,7 @@ internal fun PlayerProgress(song: SongUi, state: PlaybackUiState, backend: Playe
             modifier = Modifier.fillMaxWidth(),
             label = label,
             longPressLabel = longPressLabel,
+            animateWave = animateWave,
         )
     }
     Spacer(Modifier.height(8.dp))
