@@ -19,12 +19,12 @@ class LibraryDataSyncTest {
         val library = LibraryRepository(LibraryRepo(LibraryDatabase(driver)) { ++now }) { ++now }
         val index = IndexStore(driver)
         var paused = false to 0L
-        val sync = LibraryDataSync(driver, library, { index }, { paused }, { p, at -> paused = p to at }, mainChat = { -1L })
+        val sync = LibraryDataSync(driver, library, { index }, { paused }, { p, at -> paused = p to at }, mainChat = { -1_000_000_000_001L })
 
         fun song(uid: String, msg: Long) = driver.execute(
             null,
             "INSERT INTO songs (chat_id, message_id, unique_id, remote_id, title, artist, size, mime, file_name, date, cover_path, cached_bytes, plays) " +
-                "VALUES (-1, $msg, '$uid', 'r$msg', 'Song $msg', 'Art', 10, 'audio/flac', 'f.flac', 5, '/local/cover.jpg', 99, 2)", 0,
+                "VALUES (-1000000000001, $msg, '$uid', 'r$msg', 'Song $msg', 'Art', 10, 'audio/flac', 'f.flac', 5, '/local/cover.jpg', 99, 2)", 0,
         )
 
         fun count(sql: String) = driver.executeQuery(null, sql, { c -> c.next(); app.cash.sqldelight.db.QueryResult.Value(c.getLong(0)!!) }, 0).value
@@ -41,8 +41,8 @@ class LibraryDataSyncTest {
         pc.song("a", 1); pc.song("b", 2); phone.song("c", 3)
         // The phone deleted "b" on purpose: it must not come back.
         phone.library.setPref(io.max.paperplay.core.filing.GONE_KEY, """{"b":${Long.MAX_VALUE / 2}}""")
-        pc.index.saveChat(-5, "Big"); pc.index.setChatInfo(-5, "bigchan", "", true, true, 1)
-        pc.index.upsertPosts((1L..4500L).map { post(-5, it) }, 7)
+        pc.index.saveChat(-1_000_000_000_005, "Big"); pc.index.setChatInfo(-1_000_000_000_005, "bigchan", "", true, true, 1)
+        pc.index.upsertPosts((1L..4500L).map { post(-1_000_000_000_005, it) }, 7)
         phone.index.saveChat(-6, "Small"); phone.index.upsertPosts(listOf(post(-6, 1)), 8)
 
         assertEquals(1, pull(phone, pc)) // "a" only
@@ -53,13 +53,13 @@ class LibraryDataSyncTest {
         assertEquals(0L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'a' AND (cover_path IS NOT NULL OR cached_bytes <> 0)"))
         assertEquals(2L, phone.count("SELECT plays FROM songs WHERE unique_id = 'a'"))
 
-        assertEquals(4500, phone.index.chat(-5)!!.postCount)
-        assertEquals("https://t.me/bigchan", phone.index.chat(-5)!!.publicLink)
+        assertEquals(4500, phone.index.chat(-1_000_000_000_005)!!.postCount)
+        assertEquals("https://t.me/bigchan", phone.index.chat(-1_000_000_000_005)!!.publicLink)
         assertEquals(1, pc.index.chat(-6)!!.postCount)
         // Nothing is sent back to where it came from, and a second pull finds nothing new.
         assertEquals(listOf(-6L), phone.index.changedAfter(-1, 0, 0, "pc", 10).map { it.first.chatId })
         pull(phone, pc)
-        assertEquals(4500, phone.index.chat(-5)!!.postCount)
+        assertEquals(4500, phone.index.chat(-1_000_000_000_005)!!.postCount)
     }
 
     @Test
@@ -69,7 +69,7 @@ class LibraryDataSyncTest {
         pc.song("alive", 1); pc.song("elsewhere", 2)
         phone.library.setPref(io.max.paperplay.core.filing.GONE_KEY, """{"alive":5,"elsewhere":5}""")
         // The phone's index still sees "alive" posted in the main chat (-1); "elsewhere" only in another chat, which is never deleted from.
-        phone.index.saveChat(-1, "Main"); phone.index.upsertPosts(listOf(post(-1, 1).copy(uniqueId = "alive")), 1)
+        phone.index.saveChat(-1_000_000_000_001, "Main"); phone.index.upsertPosts(listOf(post(-1_000_000_000_001, 1).copy(uniqueId = "alive")), 1)
         phone.index.saveChat(-9, "Other"); phone.index.upsertPosts(listOf(post(-9, 4).copy(uniqueId = "elsewhere")), 1)
         assertEquals(1, pull(phone, pc))
         assertEquals(1L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'alive'"))
@@ -122,38 +122,38 @@ class LibraryDataSyncTest {
     fun aChatCountsAsReadOnlyAfterItsLastPostArrived() = runBlocking {
         val pc = Device("pc")
         val phone = Device("phone")
-        pc.index.saveChat(-5, "Big"); pc.index.setChatInfo(-5, "", "", true, true, 1)
-        pc.index.upsertPosts((1L..4500L).map { post(-5, it) }, 7)
-        pc.index.setState(-5, 4500, 1, true)
+        pc.index.saveChat(-1_000_000_000_005, "Big"); pc.index.setChatInfo(-1_000_000_000_005, "", "", true, true, 1)
+        pc.index.upsertPosts((1L..4500L).map { post(-1_000_000_000_005, it) }, 7)
+        pc.index.setState(-1_000_000_000_005, 4500, 1, true)
         // The link dies after the first page of 2,000 posts.
         var pages = 0
         runCatching { phone.sync.pull("pc") { q -> if (q["k"].toString() == "\"index\"" && ++pages > 1) throw java.io.IOException("link lost") else pc.sync.answer("phone", q) } }
-        assertEquals(2000, phone.index.chat(-5)!!.postCount)
-        assertEquals(false, phone.index.chat(-5)!!.complete)
-        assertEquals(0L, phone.index.chat(-5)!!.newestMessageId)
-        assertEquals(false, phone.index.isDeletedPost(-5, 4400))
+        assertEquals(2000, phone.index.chat(-1_000_000_000_005)!!.postCount)
+        assertEquals(false, phone.index.chat(-1_000_000_000_005)!!.complete)
+        assertEquals(0L, phone.index.chat(-1_000_000_000_005)!!.newestMessageId)
+        assertEquals(false, phone.index.isDeletedPost(-1_000_000_000_005, 4400))
         pull(phone, pc)
-        assertEquals(4500, phone.index.chat(-5)!!.postCount)
-        assertEquals(true, phone.index.chat(-5)!!.complete)
-        assertEquals(4500L, phone.index.chat(-5)!!.newestMessageId)
+        assertEquals(4500, phone.index.chat(-1_000_000_000_005)!!.postCount)
+        assertEquals(true, phone.index.chat(-1_000_000_000_005)!!.complete)
+        assertEquals(4500L, phone.index.chat(-1_000_000_000_005)!!.newestMessageId)
     }
 
     @Test
     fun aChatRemovedAndAddedBackGetsItsPostsAgainOnce() = runBlocking {
         val pc = Device("pc")
         val phone = Device("phone")
-        pc.index.saveChat(-5, "Big"); pc.index.setChatInfo(-5, "", "", true, true, 1)
-        pc.index.upsertPosts((1L..2500L).map { post(-5, it) }, 7)
-        pc.index.setState(-5, 2500, 1, true)
+        pc.index.saveChat(-1_000_000_000_005, "Big"); pc.index.setChatInfo(-1_000_000_000_005, "", "", true, true, 1)
+        pc.index.upsertPosts((1L..2500L).map { post(-1_000_000_000_005, it) }, 7)
+        pc.index.setState(-1_000_000_000_005, 2500, 1, true)
         pull(phone, pc)
-        assertEquals(2500, phone.index.count(-5))
+        assertEquals(2500, phone.index.count(-1_000_000_000_005))
         // Removed and added back before the PC heard of it: the cursor is already past all of its posts.
-        phone.index.deleteChat(-5); phone.index.saveChat(-5, "Big")
+        phone.index.deleteChat(-1_000_000_000_005); phone.index.saveChat(-1_000_000_000_005, "Big")
         pull(phone, pc)
-        assertEquals(2500, phone.index.count(-5))
-        assertEquals(true, phone.index.chat(-5)!!.complete)
+        assertEquals(2500, phone.index.count(-1_000_000_000_005))
+        assertEquals(true, phone.index.chat(-1_000_000_000_005)!!.complete)
         // A difference that stays is not asked for again at every sync.
-        pc.index.upsertPosts(listOf(post(-5, 2501)), 1)
+        pc.index.upsertPosts(listOf(post(-1_000_000_000_005, 2501)), 1)
         var pages = 0
         repeat(3) { phone.sync.pull("pc") { q -> if (q["k"].toString() == "\"index\"") pages++; pc.sync.answer("phone", q) } }
         assertEquals(true, pages <= 8, "$pages pages")
@@ -165,12 +165,12 @@ class LibraryDataSyncTest {
         val phone = Device("phone")
         for (d in listOf(pc, phone)) {
             d.song("a", 1); d.song("b", 2)
-            d.index.saveChat(-1, "Main"); d.index.upsertPosts(listOf(post(-1, 1).copy(uniqueId = "a"), post(-1, 2).copy(uniqueId = "b")), 1)
+            d.index.saveChat(-1_000_000_000_001, "Main"); d.index.upsertPosts(listOf(post(-1_000_000_000_001, 1).copy(uniqueId = "a"), post(-1_000_000_000_001, 2).copy(uniqueId = "b")), 1)
         }
         // Deleted on the phone: the post is gone in Telegram, the deletion is recorded, and the PC knows nothing of it yet.
         phone.driver.execute(null, "DELETE FROM songs WHERE unique_id = 'b'", 0)
         phone.library.setPref(io.max.paperplay.core.filing.GONE_KEY, """{"b":5}""")
-        phone.index.markGonePosts(listOf(-1L to 2L), 9)
+        phone.index.markGonePosts(listOf(-1_000_000_000_001L to 2L), 9)
         repeat(2) { pull(phone, pc) }
         assertEquals(0L, phone.count("SELECT COUNT(*) FROM songs WHERE unique_id = 'b'"))
         assertEquals("""{"b":5}""", phone.library.pref(io.max.paperplay.core.filing.GONE_KEY))
@@ -179,7 +179,7 @@ class LibraryDataSyncTest {
         assertEquals(emptySet(), pc.sync.stillPosted(setOf("b")))
         assertEquals(setOf("a"), pc.sync.stillPosted(setOf("a", "b")))
         // Telegram showing the post again takes the mark back.
-        pc.index.upsertPosts(listOf(post(-1, 2).copy(uniqueId = "b")), 20)
+        pc.index.upsertPosts(listOf(post(-1_000_000_000_001, 2).copy(uniqueId = "b")), 20)
         assertEquals(setOf("b"), pc.sync.stillPosted(setOf("b")))
     }
 

@@ -505,7 +505,7 @@ class ChatIndex(
     fun pruneDeadRows(): Int {
         var removed = 0
         for (c in store.chats()) {
-            if (!c.complete || !c.joined || c.postCount == 0) continue
+            if (!c.complete || !c.joined || c.postCount == 0 || !sameIdsForAll(c.id)) continue
             val rows = library.songsInChat(c.id).filter { it.message_id <= c.newestMessageId }
             if (rows.isEmpty()) continue
             val alive = store.messageIds(c.id)

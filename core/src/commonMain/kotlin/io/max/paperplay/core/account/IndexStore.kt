@@ -309,6 +309,8 @@ class IndexStore(private val driver: SqlDriver) {
     /** True when [chatId] was read in full up to this post and the post was not there, or it was seen being deleted. */
     fun isDeletedPost(chatId: Long, messageId: Long): Boolean {
         if (isGonePost(chatId, messageId)) return true
+        // In a basic group every account and bot numbers the posts in its own way, so a missing number says nothing.
+        if (!sameIdsForAll(chatId)) return false
         val c = chat(chatId) ?: return false
         if (!c.complete || !c.joined || c.postCount == 0 || messageId > c.newestMessageId) return false
         return query("SELECT 1 FROM index_posts WHERE chat_id = ? AND message_id = ?", 2, { bindLong(0, chatId); bindLong(1, messageId) }) { 1 }.isEmpty()
@@ -505,3 +507,6 @@ class IndexStore(private val driver: SqlDriver) {
             { w.forEachIndexed { i, x -> bindString(i, like(x)) } }, ::post)
     }
 }
+
+/** Channels and supergroups: a post has one number for everyone who sees it. */
+fun sameIdsForAll(chatId: Long) = chatId <= -1_000_000_000_000L
