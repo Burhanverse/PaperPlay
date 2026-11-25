@@ -60,6 +60,31 @@ class UsbAudioSinkFaultInjectionTest {
     }
 
     @Test
+    fun `a sample cut by a full ring is finished first so later samples are not shifted`() {
+        // 16-bit source on a 24-bit, 3-byte DAC: the converter runs. The ring takes 7 bytes, then 1, then everything.
+        val ring = java.io.ByteArrayOutputStream()
+        val room = ArrayDeque(listOf(7, 1))
+        val api = object : CoarseUsbSessionApi by FaultingCoarseApi() {
+            override fun writePcm(handle: Long, buffer: ByteBuffer, offset: Int, length: Int): Int {
+                val n = minOf(length, room.removeFirstOrNull() ?: length)
+                for (k in 0 until n) ring.write(buffer.get(offset + k).toInt())
+                return n
+            }
+        }
+        val c = UsbCoarseSinkController(api, { 0L })
+        assertTrue(c.openAndConfigure(1, 0, 1, 1, 1, true, 9, true, 2, 44100, 24, 2, 3, true, false, 0, 0, false))
+        val src = ByteBuffer.allocateDirect(16).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (v in 1..8) src.putShort((v * 256 + v).toShort())
+        src.flip()
+        var calls = 0
+        while (src.hasRemaining() && calls++ < 20) assertTrue(c.writePcm(src, 16, false))
+        val out = ring.toByteArray()
+        assertEquals(24, out.size)
+        // Every sample sits at a multiple of three bytes, its 16 bits on top.
+        for (v in 1..8) assertEquals(listOf(v, v), listOf(out[(v - 1) * 3 + 1].toInt(), out[(v - 1) * 3 + 2].toInt()), "sample $v")
+    }
+
+    @Test
     fun `DoP failure hard stops instead of falling back to normal mixer`() {
         var fallbacks = 0
         var hardStops = 0

@@ -319,10 +319,30 @@ class UsbCoarseSinkController internal constructor(
         return api.getStats(h, outStats) >= 0
     }
 
+    /** The rest of a sample of which only the first bytes fitted into the ring; it goes first, or every later sample is shifted. */
+    private var carry: ByteBuffer? = null
+
+    /** True when nothing of a cut sample is left to write. */
+    private fun flushCarry(h: Long): Int {
+        val c = carry ?: return 0
+        val n = api.writePcm(h, c, c.position(), c.remaining())
+        if (n < 0) return n
+        c.position(c.position() + n)
+        if (!c.hasRemaining()) carry = null
+        return 0
+    }
+
     fun writePcm(buffer: ByteBuffer, sourceBitDepth: Int, isFloat: Boolean): Boolean {
         val h = handle
         if (h == 0L || closing || isFallback || isHardStopped) return false
         return try {
+            val left = flushCarry(h)
+            if (left < 0) {
+                close()
+                failOrHardStop("USB write error (code=$left)")
+                return false
+            }
+            if (carry != null) return true // the ring is still full
             if (muteRampedDown && buffer.hasRemaining()) {
                 api.setMuteRamp(h, false)
                 muteRampedDown = false
@@ -348,7 +368,13 @@ class UsbCoarseSinkController internal constructor(
             } else {
                 // Consume proportional source input bytes when converter buffer accepted partial data
                 val srcStep = if (isFloat || sourceBitDepth == 32) 4 else sourceBitDepth / 8
-                val srcFrames = written / lastSubslotSize
+                // The ring takes bytes, not samples: a sample of which only a part fitted counts as taken, and its rest is kept for the next call.
+                val cut = written % lastSubslotSize
+                if (cut != 0) carry = ByteBuffer.allocateDirect(lastSubslotSize - cut).also { c ->
+                    for (k in 0 until lastSubslotSize - cut) c.put(wireBuf.get(beforePos + written + k))
+                    c.flip()
+                }
+                val srcFrames = written / lastSubslotSize + (if (cut != 0) 1 else 0)
                 val advance = (srcFrames * srcStep).coerceAtMost(buffer.remaining())
                 buffer.position(buffer.position() + advance)
             }
@@ -431,6 +457,7 @@ class UsbCoarseSinkController internal constructor(
         if (h == 0L || closing) return
         lastFlushAtMs = clockMs()
         eosSignaled = false
+        carry = null
         runCatching {
             api.setMuteRamp(h, true)
             muteRampedDown = true
@@ -505,6 +532,7 @@ class UsbCoarseSinkController internal constructor(
     private fun closeUnlocked() {
         closing = true
         eosSignaled = false
+        carry = null
         val h = handle
         handle = 0L
         isStreaming = false
