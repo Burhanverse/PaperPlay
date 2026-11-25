@@ -1756,6 +1756,31 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         scope.launch(Dispatchers.IO) { runCatching { chatIndex.indexChat(chat) }.onFailure { onError(it.message ?: "Indexing failed") } }
     }
 
+    /** Copying songs that are only in the library to Telegram: null when idle. Goes on when the page is left. */
+    class LibraryCopy(val paused: Boolean = false)
+    val libraryCopy = MutableStateFlow<LibraryCopy?>(null)
+    val libraryCopyStatus = MutableStateFlow<String?>(null)
+
+    fun copyLibraryOnly() {
+        if (!libraryCopy.compareAndSet(null, LibraryCopy())) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val rate = (pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)
+                chatIndex.copyLibraryOnly(60_000L / rate, { libraryCopy.value?.paused == true }) { ok, bad, total, why ->
+                    libraryCopyStatus.value = (if (libraryCopy.value?.paused == true) "Paused: " else "") + "$ok of $total copied" + if (bad > 0) ", $bad failed. ${why.orEmpty()}" else ""
+                }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                libraryCopyStatus.value = "Could not copy: ${e.message ?: e::class.simpleName}"
+            } finally {
+                libraryCopy.value = null
+            }
+        }
+    }
+
+    fun pauseLibraryCopy() { libraryCopy.value?.let { libraryCopy.value = LibraryCopy(!it.paused) } }
+
     /** Removes library-only songs whose post was deleted from Telegram (checked with your account); the rest stay. */
     fun clearDeletedLibraryOnly(say: (String) -> Unit) {
         scope.launch(Dispatchers.IO) {

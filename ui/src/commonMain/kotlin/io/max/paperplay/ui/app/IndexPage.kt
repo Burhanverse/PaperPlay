@@ -78,10 +78,9 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
     var search by remember { mutableStateOf("") }
     var removing by remember { mutableStateOf<ChatInfo?>(null) }
     var libOnly by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) { libOnly = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { backend.chatIndex.libraryOnlyCount() } }
-    var libCopying by remember { mutableStateOf(false) }
-    var libPaused by remember { mutableStateOf(false) }
-    var libStatus by remember { mutableStateOf<String?>(null) }
+    val libCopy by backend.libraryCopy.collectAsState()
+    val libStatus by backend.libraryCopyStatus.collectAsState()
+    LaunchedEffect(libCopy == null) { libOnly = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { backend.chatIndex.libraryOnlyCount() } }
     val uri = androidx.compose.ui.platform.LocalUriHandler.current
 
     if (!loggedIn) {
@@ -146,20 +145,10 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
                     IndexProgressText(progressState)
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     // Songs added to the library with no copy in Telegram ("Bot can't reach"): copied into the main chat, then the bot owns them.
-                    if (libOnly > 0 || libCopying) {
+                    if (libOnly > 0 || libCopy != null) {
                         Text("$libOnly songs are only in your library, not in Telegram.", color = muted)
-                        if (!libCopying) OutlinedButton({
-                            libCopying = true; libPaused = false
-                            scope.launch {
-                                val rate = (backend.pref("copy_rate")?.toIntOrNull() ?: 20).coerceIn(5, 120)
-                                backend.chatIndex.copyLibraryOnly(60_000L / rate, { libPaused }) { ok, bad, total, why ->
-                                    libStatus = (if (libPaused) "Paused: " else "") + "$ok of $total copied" + if (bad > 0) ", $bad failed. ${why.orEmpty()}" else ""
-                                }
-                                libOnly = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { backend.chatIndex.libraryOnlyCount() }
-                                libCopying = false; libPaused = false
-                            }
-                        }) { Text("Copy them to Telegram") }
-                        else OutlinedButton({ libPaused = !libPaused }) { Text(if (libPaused) "Resume copy" else "Pause copy") }
+                        if (libCopy == null) OutlinedButton({ backend.copyLibraryOnly() }) { Text("Copy them to Telegram") }
+                        else OutlinedButton({ backend.pauseLibraryCopy() }) { Text(if (libCopy?.paused == true) "Resume copy" else "Pause copy") }
                         libStatus?.let { Text(it, color = muted) }
                     }
                 }
