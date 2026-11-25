@@ -116,8 +116,8 @@ Every push to `main` or `beta` is also built by GitHub Actions; the debug Androi
 The Windows build includes TDLib (the Telegram library) from the DLLs in `desktopApp/third_party/tdlib`; the Linux build
 does not include TDLib yet and cannot reach Telegram.
 
-The workflow is `.github/workflows/build.yml`. The tests are switched off in it because one test in `:core:jvmTest` hangs
-on the runner.
+The workflow is `.github/workflows/build.yml`. The tests run in their own job, which the release does not wait for:
+one test in `:core:jvmTest` once hung on the runner. It ends after 25 minutes, and its log names the test that started last.
 
 ## Build it yourself
 

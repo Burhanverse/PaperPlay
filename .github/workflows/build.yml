@@ -2,7 +2,7 @@ name: Build PaperPlay
 
 # Every push builds the Android debug and release APKs and the Windows and Linux apps. A push to beta also publishes a
 # numbered pre-release, a push to main publishes the stable release; the version and the change log come from the commit
-# subjects (scripts/release/release.py). The tests are switched off because a test in :core:jvmTest hangs on the runner.
+# subjects (scripts/release/release.py). The tests run beside it and stop nothing: a test in :core:jvmTest once hung on the runner.
 on:
   push:
     branches: [ main, beta ]
@@ -280,6 +280,25 @@ jobs:
           name: PaperPlay-Linux
           path: dist/*
           if-no-files-found: error
+
+  # The release does not wait for this job, and it ends after 25 minutes at most.
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Core, UI and player tests
+        run: ./gradlew :core:jvmTest :ui:jvmTest :player:testAndroidHostTest --continue --no-daemon --console=plain
 
   release:
     name: Publish release

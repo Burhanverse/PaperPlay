@@ -15,3 +15,11 @@ val appVersionCode: Int = (findProperty("appVersionCode") as String?)?.toInt()
     ?: runCatching { providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }.standardOutput.asText.get().trim().toInt() }.getOrDefault(1)
 extra["appVersion"] = appVersion
 extra["appVersionCode"] = appVersionCode
+
+// A test that never ends stops its run; on CI the log names it: the last one that started and did not end.
+subprojects {
+    tasks.withType<Test>().configureEach {
+        timeout.set(java.time.Duration.ofMinutes(15))
+        if (System.getenv("CI") != null) testLogging.events("started", "passed", "failed")
+    }
+}
