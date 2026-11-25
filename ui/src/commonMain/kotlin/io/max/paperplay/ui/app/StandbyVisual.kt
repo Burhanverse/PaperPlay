@@ -94,7 +94,7 @@ internal class Smoother {
     // Particles: x and y in 0..1 (y grows downward), speed, life in seconds.
     val px = FloatArray(140); val py = FloatArray(140); val pv = FloatArray(140); val pl = FloatArray(140); val ps = FloatArray(140)
     private var spawn = 0
-    val wavePaths = Array(3) { Path() }
+    val wavePaths = arrayOfNulls<Path>(3)
     val orbOuterColors = ArrayList<Color>(2).apply { add(Color.Transparent); add(Color.Transparent) }
     val orbInnerColors = ArrayList<Color>(2).apply { add(Color.Transparent); add(Color.Transparent) }
     val asciiSb = StringBuilder(64)
@@ -174,7 +174,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWave(sm: Smooth
     val steps = 64
     val ripple = if (idle) 0f else (4f * sm.energy.coerceIn(0f, 1f))
     for (layer in 0 until 3) {
-        val path = sm.wavePaths[layer].apply { rewind() }
+        val path = (sm.wavePaths[layer] ?: Path().also { sm.wavePaths[layer] = it }).apply { rewind() }
         for (s in 0..steps) {
             val u = s.toFloat() / steps
             val env = sin(u * PI.toFloat())

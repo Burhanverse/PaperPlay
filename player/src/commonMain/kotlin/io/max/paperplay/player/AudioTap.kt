@@ -24,7 +24,7 @@ object AudioTap {
 
     /** Injectable monotonic clock in nanoseconds; overridden in unit tests for deterministic timing. */
     @Volatile
-    internal var clockNs: () -> Long = { System.nanoTime() }
+    var clockNs: () -> Long = { System.nanoTime() }
 
     private val window = FloatArray(N) { (0.5 - 0.5 * cos(2 * PI * it / (N - 1))).toFloat() }
     private val re = FloatArray(N)
