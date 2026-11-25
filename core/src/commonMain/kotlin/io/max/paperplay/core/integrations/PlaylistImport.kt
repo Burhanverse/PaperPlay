@@ -141,6 +141,19 @@ fun looseTitleKey(title: String, artist: String): String {
 
 private fun artistsOf(artist: String): List<String> = splitArtists(foldAccents(artist)).map(::comparableText).filter { it.isNotEmpty() }
 
+private val ellipsis = Regex("""(?:\.{3}|…)[\s)\]]*$""")
+
+/** A title that was cut off: it ends in dots, has a bracket that never closes, or is as long as a file name may get. */
+internal fun isCutTitle(title: String): Boolean =
+    title.length >= 60 || ellipsis.containsMatchIn(title) || title.count { it == '(' || it == '[' } > title.count { it == ')' || it == ']' }
+
+/** True when [cut], a title that was cut off, is the start of [title]. Short starts prove nothing. */
+private fun startsCut(cut: String, cutArtist: String, title: String, artist: String): Boolean {
+    if (!isCutTitle(cut)) return false
+    val start = comparableText(foldAccents(cleanTitle(cut, cutArtist)))
+    return start.length >= 20 && comparableText(foldAccents(cleanTitle(title, artist))).startsWith(start)
+}
+
 /** Artists credited on a track: its artist field plus any "feat." names in the title. */
 private fun credited(title: String, artist: String): List<String> =
     artistsOf(artist) + credit.findAll(title).flatMap { artistsOf(it.groupValues[1]) }
@@ -155,14 +168,16 @@ private fun sharesArtist(s: Song, title: String, artist: String): Boolean {
 
 /**
  * Same song if the loose title agrees and an artist is shared. With lengths known and within 8 s
- * that is [MatchKind.Sure]; a different or unknown length is only [MatchKind.Maybe], for the owner to confirm.
+ * (3 s when the song's title was cut off and only its start agrees) that is [MatchKind.Sure]; a different or unknown length is only [MatchKind.Maybe], for the owner to confirm.
  */
 fun matchKind(s: Song, title: String, artist: String, durationSec: Int): MatchKind? {
     val key = looseTitleKey(title, artist)
-    if (key.isEmpty() || looseTitleKey(s.title, s.artist) != key) return null
+    if (key.isEmpty()) return null
+    val same = looseTitleKey(s.title, s.artist) == key
+    if (!same && !startsCut(s.title, s.artist, title, artist)) return null
     if (!sharesArtist(s, title, artist)) return null
     val known = s.duration_sec > 0 && durationSec > 0
-    return if (known && abs(s.duration_sec - durationSec) <= 8) MatchKind.Sure else MatchKind.Maybe
+    return if (known && abs(s.duration_sec - durationSec) <= (if (same) 8 else 3)) MatchKind.Sure else MatchKind.Maybe
 }
 
 fun matchesTrack(s: Song, title: String, artist: String, durationSec: Int): Boolean =
@@ -292,7 +307,9 @@ fun reviewCandidates(store: ImportStore, tracks: Iterable<MissingTrack>): Map<St
         val key = looseTitleKey(t.title, t.artist)
         fun near(k: String) = k == key || minOf(k.length, key.length) >= 4 && (k.startsWith(key) || key.startsWith(k))
         t.track_key to songs.filter { (k, s) -> near(k) && sharesArtist(s, t.title, t.artist) }
-            .sortedWith(compareBy({ it.first != key }, { abs(it.second.duration_sec - t.duration_sec) })).take(3).map { it.second }
+            .sortedWith(compareBy({ abs(it.second.duration_sec - t.duration_sec) > 3 }, { it.first != key }, { abs(it.second.duration_sec - t.duration_sec) }, { !it.second.lossless() }, { -it.second.size }))
+            // Copies of one song are one suggestion: the best of them.
+            .distinctBy { it.first to it.second.duration_sec }.take(3).map { it.second }
     }
 }
 
@@ -410,6 +427,7 @@ fun reconcileImports(store: ImportStore): Boolean {
     if (imported.isEmpty()) return false
     val library = store.songs()
     val byTitle = library.groupBy { looseTitleKey(it.title, it.artist) }
+    val cut = library.filter { isCutTitle(it.title) }
     fun sameTitle(title: String, artist: String) = byTitle[looseTitleKey(title, artist)].orEmpty()
 
     var changed = false
@@ -420,7 +438,7 @@ fun reconcileImports(store: ImportStore): Boolean {
             val keys = entries.map { it.chat_id to it.message_id }.toMutableSet()
 
             for (t in store.missing(p.id)) {
-                val song = bestMatch(sameTitle(t.title, t.artist), t.title, t.artist, t.duration_sec.toInt()) ?: continue
+                val song = bestMatch(sameTitle(t.title, t.artist) + cut, t.title, t.artist, t.duration_sec.toInt()) ?: continue
                 // A song someone removed from this playlist stays removed.
                 if (keys.add(song.chat_id to song.message_id)) {
                     store.addEntry(p.id, song.chat_id, song.message_id, now + t.position, t.source_added_at)

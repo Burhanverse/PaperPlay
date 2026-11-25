@@ -136,8 +136,12 @@ class PlaylistAutoSync(
         var copied = 0
         try {
             for (p in store.livePlaylists().filter { "${it.source_url}".startsWith("https://open.spotify.com") }) {
-                for (t in store.missing(p.id)) {
+                val waiting = store.missing(p.id)
+                val mine = reviewCandidates(store, waiting)
+                for (t in waiting) {
                     if (copied >= MAX_COPIES) return copied
+                    // Most likely here already under another title: the owner decides in the missing list, no second copy.
+                    if (mine[t.track_key].orEmpty().any { kotlin.math.abs(it.duration_sec - t.duration_sec) <= 3 }) continue
                     val best = index.matchesFor(t.title, t.artist, t.duration_sec.toInt()).firstOrNull() ?: continue
                     if (matchKind(best.asSong(), t.title, t.artist, t.duration_sec.toInt()) != MatchKind.Sure) continue
                     if (!IndexPrefs.channelCopyAllowed(library, best.chatId, io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)))) continue

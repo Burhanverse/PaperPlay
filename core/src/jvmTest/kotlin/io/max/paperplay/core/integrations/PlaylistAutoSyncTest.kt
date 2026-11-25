@@ -113,13 +113,31 @@ class PlaylistAutoSyncTest {
         library.repo.db.songsQueries.insertSong(post(1, "One").asSong())
         library.repo.db.songsQueries.insertSong(post(2, "Three").asSong())
         val list = store.livePlaylists().single().id
-        assertEquals(1, sync.fetchFromIndex())
-        assertEquals("Three (Live)", index.copied.single().title)
+        assertEquals(0, sync.fetchFromIndex())
         assertEquals(listOf(1L), store.entries(list).map { it.message_id })
         val waiting = store.missing(list)
         // Only a suggestion: the other title is for the owner to confirm.
         assertEquals(2L, reviewCandidates(store, waiting).getValue(waiting.single().track_key).single().message_id)
         assertEquals(false, sync.matchLibrary())
+    }
+
+    /** Telegram and file names cut long titles; the start, the artist and the length still tell the song, and it is not fetched again. */
+    @Test
+    fun aCutTitleIsMatched() = runBlocking {
+        library.setPref("index_auto_copy", "true")
+        val film = "Annihilate (Spider-Man: Across the Spider-Verse)"
+        val live = "Here Without You - Rarities Edition: Live At Cynthia Woods Mitchell Pavilion"
+        playlistWithMissing("$film (A & Swae Lee)", live, "Some Quite Long Title (Part One)")
+        fun add(id: Long, title: String, dur: Int = 200) = library.repo.db.songsQueries.insertSong(post(id, title, dur).asSong())
+        add(1, "$film (A")
+        add(2, "Here Without You (Rarities Edition: Live At Cynthia Woods Mitchell...")
+        add(3, "Some Quite Long Title (Part", dur = 215)
+        val index = StubIndex { if (it.startsWith("Some")) emptyList() else listOf(post(9, it)) }
+        assertEquals(0, sync(index).fetchFromIndex())
+        val list = store.livePlaylists().single().id
+        assertEquals(setOf(1L, 2L), store.entries(list).map { it.message_id }.toSet())
+        // Another length: only a suggestion.
+        assertEquals("Some Quite Long Title (Part One)", store.missing(list).single().title)
     }
 
     @Test
