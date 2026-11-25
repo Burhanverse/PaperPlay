@@ -161,7 +161,15 @@ class SpotifyAccount(private val secrets: SecretStore, private val http: HttpFet
         return res
     }
 
+    private val tokenLock = kotlinx.coroutines.sync.Mutex()
+
+    // One at a time: a refresh token works once, so two refreshes at the same moment would end the login.
     private suspend fun accessToken(): String? {
+        tokenLock.lock()
+        return try { freshToken() } finally { tokenLock.unlock() }
+    }
+
+    private suspend fun freshToken(): String? {
         val now = Clock.System.now().toEpochMilliseconds()
         accessToken?.let { if (now < expiresAtMs) return it }
         val refresh = secrets.get(SecretKeys.SPOTIFY_REFRESH_TOKEN) ?: return null
@@ -182,7 +190,7 @@ class SpotifyAccount(private val secrets: SecretStore, private val http: HttpFet
         )
         if (res.status != 200) {
             // A refused refresh token means the login is over.
-            if (form["grant_type"] == "refresh_token" && res.status == 400) disconnect()
+            if (form["grant_type"] == "refresh_token" && res.status == 400 && form["refresh_token"] == secrets.get(SecretKeys.SPOTIFY_REFRESH_TOKEN)) disconnect()
             throw SpotifyLoginError("Spotify refused the sign-in (${res.status}). Check your client id.")
         }
         val o = Json.parseToJsonElement(res.text) as? JsonObject ?: throw SpotifyLoginError("Spotify's answer could not be read.")
