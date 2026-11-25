@@ -189,7 +189,7 @@ class MetadataEnricher(
                                 done++
                                 failures = 0
                                 _failure.value = null
-                                if (unsaved.size >= 20 || clock() - lastFlush >= 5_000L) flush()
+                                if (unsaved.size >= 20 || clock() - lastFlush >= 10_000L) flush()
                             }
                             busy = 0
                         } catch (e: CancellationException) {

@@ -59,7 +59,8 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
         bgScope.launch {
             for (u in soft) {
                 invalidate()
-                delay(SOFT_GAP_MS)
+                // A song-info run writes for minutes or hours, and every bump makes each open list read the whole library again.
+                delay(if (enrichRunning.value) BUSY_GAP_MS else SOFT_GAP_MS)
             }
         }
     }
@@ -283,6 +284,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
 data class PlaylistSummary(val id: Long, val uuid: String, val name: String, val count: Int, val covers: List<String>)
 
 private const val SOFT_GAP_MS = 2_000L
+private const val BUSY_GAP_MS = 12_000L
 
 /** 0 when some word of the query matches nothing in the song; otherwise higher is a better match. */
 internal fun Song.searchScore(q: io.max.paperplay.core.metadata.SearchQuery, languages: List<String> = emptyList()): Int =

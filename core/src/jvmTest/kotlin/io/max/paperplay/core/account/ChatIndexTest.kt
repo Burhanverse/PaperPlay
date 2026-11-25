@@ -205,6 +205,18 @@ class ChatIndexTest {
     }
 
     @Test
+    fun whileSongInfoIsLookedUpTheLibrarySignalsRarely() = runBlocking {
+        kotlinx.coroutines.delay(2_500) // whatever was signalled before
+        library.enrichRunning.value = true
+        val before = library.changes.value
+        repeat(10) { library.invalidateSoon(); kotlinx.coroutines.delay(500) }
+        assertEquals(1, library.changes.value - before)
+        // What the owner does still shows at once.
+        library.invalidate()
+        assertEquals(2, library.changes.value - before)
+    }
+
+    @Test
     fun aRepeatOfAFileTheLibraryHasIsNotCountedAsAdded() = runBlocking {
         library.addChat(main, "Main")
         fun at(id: Long, uid: String) = post(id, uid, "S$uid").copy(chatId = main)
