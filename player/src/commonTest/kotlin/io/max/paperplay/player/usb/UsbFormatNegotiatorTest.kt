@@ -79,6 +79,22 @@ class UsbFormatNegotiatorTest {
     }
 
     @Test
+    fun decoderFloatGoesToThe24BitSettingOfADacWithout32Bit() {
+        val alts = UsbDescriptorParser.parse(loadFixture("uac1_descriptor.bin")).altSettings
+        // The DAC stops at 24 bit, so asking for 32 finds nothing and the music went to Android's mixer.
+        assertIs<FormatSelectionResult.Failure>(UsbFormatNegotiator.pickBestFormat(alts, 96000, 32, 2))
+        for (isFloat in listOf(true, false)) {
+            val r = UsbFormatNegotiator.pickForSource(alts, 96000, 32, isFloat, 2)
+            assertIs<FormatSelectionResult.Success>(r)
+            assertEquals(24, r.candidate.bitResolution)
+        }
+        // Integers keep their depth; a 16 bit only DAC takes float.
+        val only16 = alts.filter { it.bitResolution == 16 }
+        assertIs<FormatSelectionResult.Failure>(UsbFormatNegotiator.pickForSource(only16, 44100, 24, false, 2))
+        assertIs<FormatSelectionResult.Success>(UsbFormatNegotiator.pickForSource(only16, 44100, 32, true, 2))
+    }
+
+    @Test
     fun supportsContinuousRateRangesAndPrefersDedicatedDiscreteAlt() {
         val ep = UsbEndpointDescriptor(
             address = 0x01,

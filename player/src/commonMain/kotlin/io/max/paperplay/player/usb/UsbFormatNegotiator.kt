@@ -19,6 +19,21 @@ sealed class FormatSelectionResult {
  */
 object UsbFormatNegotiator {
 
+    /**
+     * The setting for what the decoder hands over. Float says nothing about the depth of the music (Android's decoders give float for 16 and
+     * 24 bit files too), and few DACs take 32 bit: 24 holds all a float has, and 16 all of a 16 bit file. Integers only lose empty bits (32 to 24).
+     */
+    fun pickForSource(candidates: List<UsbAudioAltSetting>, rate: Int, bits: Int, isFloat: Boolean, channels: Int): FormatSelectionResult {
+        val depths = if (isFloat) listOf(32, 24, 16) else if (bits == 32) listOf(32, 24) else listOf(bits)
+        var first: FormatSelectionResult? = null
+        for (d in depths) {
+            val r = pickBestFormat(candidates, rate, d, channels)
+            if (r is FormatSelectionResult.Success) return r
+            if (first == null) first = r
+        }
+        return first!!
+    }
+
     fun pickBestFormat(
         candidates: List<UsbAudioAltSetting>,
         sourceRate: Int,

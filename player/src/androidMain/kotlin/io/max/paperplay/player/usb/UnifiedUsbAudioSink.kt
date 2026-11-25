@@ -525,14 +525,12 @@ class UnifiedUsbAudioSink internal constructor(
         } else {
             desc.playbackAltSettings
         }
-        val selection = UsbFormatNegotiator.pickBestFormat(
-            candidates = altCandidates,
-            sourceRate = f.sampleRate,
-            sourceBitDepth = depth,
-            sourceChannels = f.channelCount,
-        )
+        val selection = UsbFormatNegotiator.pickForSource(altCandidates, f.sampleRate, depth, f.pcmEncoding == C.ENCODING_PCM_FLOAT, f.channelCount)
         val alt = (selection as? FormatSelectionResult.Success)?.candidate
         if (alt == null) {
+            val why = (selection as? FormatSelectionResult.Failure)?.reason
+            PlayLog.log("usb", "UnifiedUsbAudioSink: the DAC has no setting for ${f.sampleRate} Hz $depth bit ${f.channelCount} ch, Android plays it: $why")
+            PlaybackCore.usbStatus = "Not direct: $why"
             isUsbModeActive = false
             PlaybackCore.usbActive = false
             if (isDoP) throw AudioSink.ConfigurationException("DAC does not support DoP format", f)
