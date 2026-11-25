@@ -93,6 +93,10 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
     LaunchedEffect(p.syncOffsetMs) {
         io.max.paperplay.player.AudioTap.calibrationOffsetMs = p.syncOffsetMs.toLong()
     }
+    androidx.compose.runtime.DisposableEffect(p.showDiagnostics) {
+        io.max.paperplay.player.AudioTap.telemetryEnabled = p.showDiagnostics
+        onDispose { io.max.paperplay.player.AudioTap.telemetryEnabled = false }
+    }
     var sheet by remember { mutableStateOf(false) }
     // The first tap only shows the settings button; a second tap within a few seconds leaves standby.
     var armed by remember { mutableStateOf(false) }
