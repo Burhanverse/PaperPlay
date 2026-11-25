@@ -33,7 +33,7 @@ object AudioTap {
     private const val N_LONG = 4096
     private const val N_SHORT = 1024
     private const val HOP = 512
-    private const val HIST_SIZE = 256
+    private const val HIST_SIZE = 1024
     private const val DEFAULT_LATENCY_MS = 80L
     private const val MAX_RATE_BEFORE_DECIM = 56_000
 
@@ -52,6 +52,11 @@ object AudioTap {
         var beatSeq: Int = 0
         var analysisUs: Int = 0
         var effRateHz: Int = 44100
+        var hopSeq: Long = 0L
+        var interpolated: Boolean = false
+        var interpAlpha: Float = 0f
+        var framePlayoutNs: Long = 0L
+        var framePushWallNs: Long = 0L
     }
 
     private val defaultClock: () -> Long = { System.nanoTime() }
@@ -207,6 +212,10 @@ object AudioTap {
     @Volatile private var currentSpeed = 1f
     @Volatile private var reportedLatencyNs = DEFAULT_LATENCY_MS * 1_000_000L
     @Volatile private var nextStreamPlayoutNs = 0L
+    private var pllPlayoutNs = 0L
+
+    /** Platform display presentation latency in ms (owned by StandbyWindowEffect). */
+    @Volatile var displayLatencyMs: Long = 0L
 
     /** User or platform calibration offset in ms (positive shifts visual earlier, negative delays it). */
     @Volatile var calibrationOffsetMs: Long = 0L
@@ -235,6 +244,9 @@ object AudioTap {
     @Volatile var effectiveSampleRateHz: Int = 44100
         private set
 
+    /** Flag-gated diagnostics: when false, zero telemetry work or logging occurs. */
+    @Volatile var telemetryEnabled: Boolean = false
+
     /** True while a visual has asked for the spectrum in the last two seconds. The audio thread skips all tap work otherwise. */
     val wanted: Boolean
         get() = hasRead && (nowClockNs() - readAt < 2_000_000_000L)
@@ -243,11 +255,14 @@ object AudioTap {
     private val histBass = FloatArray(HIST_SIZE)
     private val histOnset = FloatArray(HIST_SIZE)
     private val histBeatSeq = IntArray(HIST_SIZE)
+    private val histHopSeq = LongArray(HIST_SIZE)
+    private val histPushWallNs = LongArray(HIST_SIZE)
     private val histPlayoutNs = LongArray(HIST_SIZE)
     private val histSeq = LongArray(HIST_SIZE)
     @Volatile private var histHead = 0
     @Volatile private var latestBass = 0f
     @Volatile private var latestOnset = 0f
+    private var lastClockLogHop = 0L
 
     /** Nominal center frequency in Hz for band `0..31` (identical across all sample rates). */
     fun bandCenterHz(band: Int): Float = bandCenters[band.coerceIn(0, BANDS - 1)]
@@ -260,9 +275,9 @@ object AudioTap {
         currentSpeed = speed.coerceIn(0.25f, 4f)
     }
 
-    /** Sets the engine-reported output latency in milliseconds (clamped 0..2000 ms). */
+    /** Sets the engine-reported output latency in milliseconds (clamped 0..8000 ms). */
     fun setReportedLatencyMs(latencyMs: Long) {
-        reportedLatencyNs = latencyMs.coerceIn(0L, 2_000L) * 1_000_000L
+        reportedLatencyNs = latencyMs.coerceIn(0L, 8_000L) * 1_000_000L
     }
 
     /** Updates playback speed for hop-to-hop playout scheduling. */
@@ -276,6 +291,7 @@ object AudioTap {
         hasData = false
         latestPlayoutNs = 0L
         nextStreamPlayoutNs = 0L
+        pllPlayoutNs = 0L
         anchorWallNs = 0L
         anchorPosUs = -1L
         latestBands.fill(0f)
@@ -292,6 +308,7 @@ object AudioTap {
         hasData = false
         latestPlayoutNs = 0L
         nextStreamPlayoutNs = 0L
+        pllPlayoutNs = 0L
         latestBands.fill(0f)
         bands.fill(0f)
         latestBass = 0f
@@ -310,9 +327,9 @@ object AudioTap {
         hasRead = true
         if (paused || nonPcmActive || !hasData) return false
         if (nowNs > latestPlayoutNs + 250_000_000L) return false
-        if (nowNs - lastPushWallNs > 1_500_000_000L) return false
+        if (nowNs - lastPushWallNs > 10_000_000_000L) return false
 
-        val targetNs = nowNs + calibrationOffsetMs * 1_000_000L
+        val targetNs = nowNs + (displayLatencyMs + calibrationOffsetMs) * 1_000_000L
         val head = histHead
         var prevIdx = -1
         var prevTs = Long.MIN_VALUE
@@ -324,10 +341,12 @@ object AudioTap {
             val ts = histPlayoutNs[i]
             if (ts <= 0L) continue
             if (ts <= targetNs) {
+                if (ts < targetNs - 2_000_000_000L) break
                 if (ts > prevTs) {
                     prevTs = ts
                     prevIdx = i
                 }
+                if (ts < prevTs - 50_000_000L) break
             } else if (ts < nextTs) {
                 nextTs = ts
                 nextIdx = i
@@ -354,6 +373,11 @@ object AudioTap {
                 out.bass = histBass[prevIdx] * oneMinus + histBass[nextIdx] * alpha
                 out.onset = histOnset[prevIdx] * oneMinus + histOnset[nextIdx] * alpha
                 out.beatSeq = if (alpha >= 0.5f) histBeatSeq[nextIdx] else histBeatSeq[prevIdx]
+                out.hopSeq = if (alpha >= 0.5f) histHopSeq[nextIdx] else histHopSeq[prevIdx]
+                out.interpolated = true
+                out.interpAlpha = alpha
+                out.framePlayoutNs = targetNs
+                out.framePushWallNs = histPushWallNs[prevIdx]
                 val p2 = histSeq[prevIdx]
                 val n2 = histSeq[nextIdx]
                 if (p1 == p2 && n1 == n2) return true
@@ -374,6 +398,11 @@ object AudioTap {
             out.bass = histBass[chosen]
             out.onset = histOnset[chosen]
             out.beatSeq = histBeatSeq[chosen]
+            out.hopSeq = histHopSeq[chosen]
+            out.interpolated = false
+            out.interpAlpha = 0f
+            out.framePlayoutNs = histPlayoutNs[chosen]
+            out.framePushWallNs = histPushWallNs[chosen]
             val s2 = histSeq[chosen]
             if (s1 == s2) return true
         }
@@ -381,6 +410,11 @@ object AudioTap {
         out.bass = latestBass
         out.onset = latestOnset
         out.beatSeq = beatSeqCounter
+        out.hopSeq = fftFrameCount
+        out.interpolated = false
+        out.interpAlpha = 0f
+        out.framePlayoutNs = latestPlayoutNs
+        out.framePushWallNs = lastPushWallNs
         return true
     }
 
@@ -393,9 +427,9 @@ object AudioTap {
         hasRead = true
         if (paused || nonPcmActive || !hasData) return false
         if (nowNs > latestPlayoutNs + 250_000_000L) return false
-        if (nowNs - lastPushWallNs > 1_500_000_000L) return false
+        if (nowNs - lastPushWallNs > 10_000_000_000L) return false
 
-        val targetNs = nowNs + calibrationOffsetMs * 1_000_000L
+        val targetNs = nowNs + (displayLatencyMs + calibrationOffsetMs) * 1_000_000L
         val head = histHead
         var prevIdx = -1
         var prevTs = Long.MIN_VALUE
@@ -407,10 +441,12 @@ object AudioTap {
             val ts = histPlayoutNs[i]
             if (ts <= 0L) continue
             if (ts <= targetNs) {
+                if (ts < targetNs - 2_000_000_000L) break
                 if (ts > prevTs) {
                     prevTs = ts
                     prevIdx = i
                 }
+                if (ts < prevTs - 50_000_000L) break
             } else if (ts < nextTs) {
                 nextTs = ts
                 nextIdx = i
@@ -485,7 +521,7 @@ object AudioTap {
         hasRead = true
         if (paused || nonPcmActive || !hasData) return false
         if (now > latestPlayoutNs + 250_000_000L) return false
-        return now - lastPushWallNs <= 1_500_000_000L
+        return now - lastPushWallNs <= 10_000_000_000L
     }
 
     fun reset() {
@@ -510,12 +546,16 @@ object AudioTap {
         anchorWallNs = 0L
         anchorPosUs = -1L
         nextStreamPlayoutNs = 0L
+        pllPlayoutNs = 0L
         histHead = 0
         histPlayoutNs.fill(0L)
         histSeq.fill(0L)
         histBass.fill(0f)
         histOnset.fill(0f)
         histBeatSeq.fill(0)
+        histHopSeq.fill(0L)
+        histPushWallNs.fill(0L)
+        lastClockLogHop = 0L
         latestBands.fill(0f)
         bands.fill(0f)
         readScratch.fill(0f)
@@ -667,7 +707,7 @@ object AudioTap {
     private fun analyse(ptsUs: Long) {
         val startNs = nowClockNs()
 
-        // 1. Long FFT (4096, Blackman-Harris) for <= 550 Hz resolution (~10.8 Hz/bin).
+        // 1. Long FFT (4096, Hann) for <= 550 Hz resolution (~10.8 Hz/bin).
         var idxL = ringPos
         for (i in 0 until N_LONG) {
             reLong[i] = ring[idxL] * windowLong[i]
@@ -762,15 +802,18 @@ object AudioTap {
         lastPushWallNs = now
         val playoutNs = computePlayoutNs(now, ptsUs)
         latestPlayoutNs = playoutNs
-        measuredLatencyMs = ((playoutNs - now) / 1_000_000L).coerceIn(0L, 2_000L)
+        measuredLatencyMs = ((playoutNs - now) / 1_000_000L).coerceIn(0L, 8_000L)
 
         val slot = (histHead + 1) % HIST_SIZE
         val seq = histSeq[slot]
+        val nextHop = fftFrameCount + 1L
         histSeq[slot] = seq + 1L // odd = writing
         System.arraycopy(tmpBands, 0, histBands[slot], 0, BANDS)
         histBass[slot] = bassNorm
         histOnset[slot] = onsetNorm
         histBeatSeq[slot] = beatSeqCounter
+        histHopSeq[slot] = nextHop
+        histPushWallNs[slot] = now
         histPlayoutNs[slot] = playoutNs
         histSeq[slot] = seq + 2L // even = stable
         histHead = slot
@@ -780,10 +823,21 @@ object AudioTap {
         latestBass = bassNorm
         latestOnset = onsetNorm
         hasData = true
-        fftFrameCount++
+        fftFrameCount = nextHop
 
         val elapsedUs = ((now - startNs) / 1_000L).toInt()
         if (elapsedUs >= 0) analysisMicrosPerHop = elapsedUs
+
+        if (telemetryEnabled && nextHop - lastClockLogHop >= 180L) {
+            lastClockLogHop = nextHop
+            val anchorAgeMs = if (anchorWallNs > 0L) (now - anchorWallNs) / 1_000_000L else -1L
+            val usedPts = ptsUs >= 0L && anchorWallNs > 0L && anchorPosUs >= 0L && (now - anchorWallNs) < 2_000_000_000L
+            val clockMsg = "src=${activeSourceTag.ifBlank { "unknown" }} eff=${effRate}Hz ptsUs=$ptsUs anchorUs=$anchorPosUs " +
+                "anchorAgeMs=$anchorAgeMs usedPts=$usedPts latMs=$measuredLatencyMs repLatMs=${reportedLatencyNs / 1_000_000L} " +
+                "dispLatMs=$displayLatencyMs offMs=$calibrationOffsetMs cpuUs=$analysisMicrosPerHop"
+            PlayLog.log("tap-clock", clockMsg)
+            System.err.println("TapClock: $clockMsg")
+        }
     }
 
     private fun updateAgc(current: Float, peak: Float): Float {
@@ -794,17 +848,25 @@ object AudioTap {
     private fun computePlayoutNs(nowNs: Long, ptsUs: Long): Long {
         val anchorWall = anchorWallNs
         val anchorPos = anchorPosUs
+        val hopNs = (HOP.toLong() * 1_000_000_000.0 / (effRate.toDouble() * currentSpeed)).toLong().coerceAtLeast(1_000_000L)
         if (ptsUs >= 0L && anchorWall > 0L && anchorPos >= 0L && nowNs - anchorWall < 2_000_000_000L) {
-            val centerOffsetUs = ((N_SHORT / 2).toLong() * 1_000_000L) / effRate
+            val centerOffsetUs = ((N_SHORT / 2 + 256).toLong() * 1_000_000L) / effRate
             val hopPtsUs = (ptsUs - centerOffsetUs).coerceAtLeast(0L)
             val deltaNs = ((hopPtsUs - anchorPos) * 1_000.0 / currentSpeed).toLong()
-            val clampedDelta = deltaNs.coerceIn(-500_000_000L, 2_500_000_000L)
-            val scheduled = anchorWall + clampedDelta
-            nextStreamPlayoutNs = scheduled
-            return scheduled
+            val clampedDelta = deltaNs.coerceIn(-500_000_000L, 8_000_000_000L)
+            val rawScheduled = anchorWall + clampedDelta
+            if (pllPlayoutNs == 0L || abs(rawScheduled - (pllPlayoutNs + hopNs)) > 60_000_000L) {
+                pllPlayoutNs = rawScheduled
+            } else {
+                val predicted = pllPlayoutNs + hopNs
+                val err = rawScheduled - predicted
+                val next = predicted + (err * 0.08).toLong()
+                pllPlayoutNs = if (next <= pllPlayoutNs) pllPlayoutNs + 1_000_000L else next
+            }
+            nextStreamPlayoutNs = pllPlayoutNs
+            return pllPlayoutNs
         }
 
-        val hopNs = (HOP.toLong() * 1_000_000_000.0 / (effRate.toDouble() * currentSpeed)).toLong().coerceAtLeast(1_000_000L)
         val lat = reportedLatencyNs
         var next = nextStreamPlayoutNs
         if (next == 0L || next < nowNs - 80_000_000L || next > nowNs + lat + 500_000_000L) {
@@ -813,6 +875,7 @@ object AudioTap {
             next += hopNs
         }
         nextStreamPlayoutNs = next
+        pllPlayoutNs = next
         return next
     }
 
