@@ -882,8 +882,8 @@ elease` must say Java 25 and the setup exe must start.
 
 ## 25 Nov 2026 code audit and crash fixes
 
-87 findings, 75 confirmed, 10 possible, 2 already fixed. Of the 85: 80 fixed, 1 half (USB endings), 4 open (2 of them not proven, the pairing
-code, and the choice between DAC and earbuds, which is built but not confirmed by the owner). `[x]` was tried by the owner on the phone,
+87 findings, 75 confirmed, 10 possible, 2 already fixed. Of the 85: 81 fixed, 1 half (USB endings), 3 open (2 of them not proven, and the pairing
+code). Earbuds over the DAC is what the owner wants (25 Nov); not tried since it was built. `[x]` was tried by the owner on the phone,
 `[~]` has passed tests or builds only.
 
 Left, in this order: 1. the owner opens the phone app (new database mode) and looks for missing songs and freezes; 2. DAC by ear, volume low;
@@ -920,7 +920,7 @@ Left, in this order: 1. the owner opens the phone app (new database mode) and lo
 - [~] USB: music decoded as float uses the DAC's 24 bit setting (`41a2f4f`); before, a 24 bit DAC always got Android's mixer. Not tried yet
 - [~] Index: "Missing, in Spotify lists" needs title, artist and length (`f2af3c8`); songs added wrongly before stay, the owner deletes by hand
 - [~] Spotify review writes off the main thread (`7dd0830`); a scan no longer counts repeats as added (`8e95a39`); song info lookups reload the library less often (`1923e7c`)
-- [~] USB: earbuds connected after the DAC keep the music until they are gone (`3318cf3`). Not tried yet
+- [~] USB: earbuds connected after the DAC keep the music until they are gone (`3318cf3`). The owner decided on 25 Nov to keep it this way. Not tried yet
 - [~] Sync is blocked between different app versions (switch "Block sync when versions differ", "Force sync" per device until the link ends; `329f953`). Tested with two devices in a test, not on the real ones
 - [~] Phone: screens no longer wait up to 10 s for the only database connection (`6725ce2`, `f467064`, WAL). Not tried yet
 - [ ] Saving from the screen can still wait a moment for another writer
