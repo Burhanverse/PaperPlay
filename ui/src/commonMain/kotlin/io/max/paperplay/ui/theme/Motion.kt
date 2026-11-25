@@ -39,6 +39,78 @@ object Motion {
     val Emphasized: Easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 }
 
+/**
+ * Named motion, gesture, staging, and visual-curve tokens for the full-player sheet transition.
+ * Kept in one place so every layer, spring, and threshold shares one source of truth.
+ */
+object PlayerMotionTokens {
+    // Spatial springs: critically damped (dampingRatio = 1f) so the sheet never overshoots.
+    const val SHEET_OPEN_DAMPING = Spring.DampingRatioNoBouncy
+    const val SHEET_OPEN_STIFFNESS = 500f
+    const val SHEET_CLOSE_DAMPING = Spring.DampingRatioNoBouncy
+    const val SHEET_CLOSE_STIFFNESS = 720f
+    const val SHEET_SETTLE_DAMPING = Spring.DampingRatioNoBouncy
+    const val SHEET_SETTLE_STIFFNESS = 620f
+    const val SHEET_VISIBILITY_THRESHOLD = 0.001f
+
+    // Effect and reduced-motion timings (faster than spatial movement).
+    const val EFFECT_FADE_MS = 150
+    const val REDUCED_MOTION_FADE_MS = 120
+
+    // Gesture & rubber-band thresholds.
+    const val DISMISS_DISTANCE_FRACTION = 0.35f
+    const val DISMISS_VELOCITY_PX_PER_SEC = 1_200f
+    const val OPEN_VELOCITY_PX_PER_SEC = -1_200f
+    const val RUBBER_BAND_MAX = 0.055f
+    const val RUBBER_BAND_DAMPING = 0.18f
+    const val BACK_GESTURE_MAX_PULL = 0.30f
+
+    // Derived layer curves & hysteresis.
+    const val BACKDROP_MAX_DIM_ALPHA = 0.38f
+    const val BACKDROP_MIN_SCALE = 0.96f
+    const val MINI_PLAYER_FADE_END = 0.35f
+    const val MINI_PLAYER_MAX_SHIFT_DP = 24f
+    const val NAV_BAR_FADE_END = 0.40f
+    const val NAV_BAR_SLIDE_END = 0.55f
+    const val SHEET_CORNER_RADIUS_DP = 28f
+    const val SHEET_CORNER_CLIP_END = 0.995f
+    const val COVERED_ENTER = 0.999f
+    const val COVERED_EXIT = 0.98f
+    const val SYSTEM_BARS_ENTER = 0.55f
+    const val SYSTEM_BARS_EXIT = 0.45f
+    const val STAGE1_ENTER_PROGRESS = 0.40f
+    const val OVERLAY_UNDER_SCALE = 0.96f
+    const val OVERLAY_UNDER_DIM = 0.25f
+}
+
+internal fun playerOpenSpringSpec(): FiniteAnimationSpec<Float> = spring(
+    dampingRatio = PlayerMotionTokens.SHEET_OPEN_DAMPING,
+    stiffness = PlayerMotionTokens.SHEET_OPEN_STIFFNESS,
+    visibilityThreshold = PlayerMotionTokens.SHEET_VISIBILITY_THRESHOLD,
+)
+
+internal fun playerCloseSpringSpec(): FiniteAnimationSpec<Float> = spring(
+    dampingRatio = PlayerMotionTokens.SHEET_CLOSE_DAMPING,
+    stiffness = PlayerMotionTokens.SHEET_CLOSE_STIFFNESS,
+    visibilityThreshold = PlayerMotionTokens.SHEET_VISIBILITY_THRESHOLD,
+)
+
+internal fun playerSettleSpringSpec(): FiniteAnimationSpec<Float> = spring(
+    dampingRatio = PlayerMotionTokens.SHEET_SETTLE_DAMPING,
+    stiffness = PlayerMotionTokens.SHEET_SETTLE_STIFFNESS,
+    visibilityThreshold = PlayerMotionTokens.SHEET_VISIBILITY_THRESHOLD,
+)
+
+internal fun playerReducedFadeSpec(): FiniteAnimationSpec<Float> = tween(
+    durationMillis = PlayerMotionTokens.REDUCED_MOTION_FADE_MS,
+    easing = Motion.Standard,
+)
+
+internal fun playerEffectFadeSpec(): FiniteAnimationSpec<Float> = tween(
+    durationMillis = PlayerMotionTokens.EFFECT_FADE_MS,
+    easing = Motion.Standard,
+)
+
 /** True when the user turned motion off in Settings: every transition built from these helpers becomes instant. */
 val LocalReduceMotion = staticCompositionLocalOf { false }
 
