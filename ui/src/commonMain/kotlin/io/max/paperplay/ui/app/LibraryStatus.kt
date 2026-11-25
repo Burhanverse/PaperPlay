@@ -8,8 +8,11 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import io.max.paperplay.core.library.EnrichState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * What the library holds and what is still being worked on: total songs, how many have info, no match, covers,
@@ -21,7 +24,8 @@ internal fun LibraryStatusRows(backend: CoreBackend, onOpenMissing: () -> Unit) 
     val taste by backend.taste.collectAsState()
     val enriching by backend.services.enricher.running.collectAsState()
     val coversQueued by backend.services.covers.queued.collectAsState()
-    val moodRunning = backend.services.moodScanner.scanned
+    // Counted beside the screen: the library can be busy for seconds.
+    val moodScanned by produceState<Int?>(null, all) { value = withContext(Dispatchers.Default) { backend.services.moodScanner.scanned } }
     val stats = remember(all, taste.lookups) {
         val songs = all.distinctBy { "${it.title.trim().lowercase()}|${it.artist.trim().lowercase()}" }
         Stats(
@@ -47,7 +51,7 @@ internal fun LibraryStatusRows(backend: CoreBackend, onOpenMissing: () -> Unit) 
     RowDivider()
     SettingsRow(
         "Running now", icon = Icons.Rounded.Sync,
-        subtitle = if (busy.isEmpty()) "Nothing. $moodRunning songs scanned for lyrics and genre" else busy.joinToString(", ").replaceFirstChar { it.uppercase() },
+        subtitle = if (busy.isEmpty()) "Nothing. " + (moodScanned?.let { "$it songs scanned for lyrics and genre" } ?: "") else busy.joinToString(", ").replaceFirstChar { it.uppercase() },
     )
     RowDivider()
     NavRow(

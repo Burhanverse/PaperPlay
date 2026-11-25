@@ -11,6 +11,12 @@ fun libraryDriver(context: Context, name: String = "library.sqlite"): SqlDriver 
     context,
     name,
     callback = object : AndroidSqliteDriver.Callback(LibrarySchema) {
+        /** Without it there is one connection for all, and a screen that reads one setting waits for every long read or write before it. */
+        override fun onConfigure(db: SupportSQLiteDatabase) {
+            super.onConfigure(db)
+            db.enableWriteAheadLogging()
+        }
+
         override fun onOpen(db: SupportSQLiteDatabase) {
             db.setForeignKeyConstraintsEnabled(true)
         }

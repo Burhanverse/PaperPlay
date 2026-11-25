@@ -95,7 +95,7 @@ internal fun DuplicatesPage(backend: CoreBackend, bottomPadding: androidx.compos
     }
     val queue = backend.services.deleteQueue
     val jobs by queue.jobs.collectAsState()
-    val main = backend.mainChatId()
+    val main = remember { backend.mainChatId() }
     val scope = backend.services.scope
     val active = jobs.any { it.status == DeleteStatus.Queued || it.status == DeleteStatus.Deleting }
     // Telegram lets a bot delete only posts younger than 48 hours; older ones go through your own account, so say so before anything is tried.
