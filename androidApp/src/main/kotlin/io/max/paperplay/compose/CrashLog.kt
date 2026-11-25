@@ -113,6 +113,9 @@ internal object CrashLog {
                 val older = File(c.filesDir, "logcat-older.txt")
                 val tsFile = File(c.filesDir, "logcat-ts")
                 var last = tsFile.takeIf { it.exists() }?.readText()?.trim() ?: ""
+                // Only what the last run saved is skipped, up to its first newer line; after that every line counts, several in one
+                // millisecond too. A date a lot earlier than the saved one is a new year, not an old line.
+                var catchingUp = last.isNotEmpty()
                 val proc = ProcessBuilder("logcat", "-v", "threadtime").redirectErrorStream(true).start()
                 val reader = proc.inputStream.bufferedReader()
                 var writer = out.bufferedWriter(Charsets.UTF_8).also { it.close() }
@@ -123,7 +126,10 @@ internal object CrashLog {
                     val line = reader.readLine() ?: break
                     // threadtime lines start "MM-dd HH:mm:ss.SSS"; older ones are already in the file.
                     val ts = if (line.length > 18 && line[2] == '-') line.substring(0, 18) else ""
-                    if (ts.isNotEmpty() && ts <= last) continue
+                    if (catchingUp && ts.isNotEmpty()) {
+                        if (ts <= last && !(last.startsWith("12") && ts.startsWith("01"))) continue
+                        catchingUp = false
+                    }
                     if (ts.isNotEmpty()) last = ts
                     writer.write(line); writer.write("\n")
                     size += line.length + 1

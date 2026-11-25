@@ -77,7 +77,8 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
     var message by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
     var removing by remember { mutableStateOf<ChatInfo?>(null) }
-    var libOnly by remember { mutableStateOf(backend.chatIndex.libraryOnlyCount()) }
+    var libOnly by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { libOnly = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { backend.chatIndex.libraryOnlyCount() } }
     var libCopying by remember { mutableStateOf(false) }
     var libPaused by remember { mutableStateOf(false) }
     var libStatus by remember { mutableStateOf<String?>(null) }
@@ -154,7 +155,7 @@ internal fun IndexPage(backend: CoreBackend, stack: MutableList<String>, bottomP
                                 backend.chatIndex.copyLibraryOnly(60_000L / rate, { libPaused }) { ok, bad, total, why ->
                                     libStatus = (if (libPaused) "Paused: " else "") + "$ok of $total copied" + if (bad > 0) ", $bad failed. ${why.orEmpty()}" else ""
                                 }
-                                libOnly = backend.chatIndex.libraryOnlyCount()
+                                libOnly = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { backend.chatIndex.libraryOnlyCount() }
                                 libCopying = false; libPaused = false
                             }
                         }) { Text("Copy them to Telegram") }
