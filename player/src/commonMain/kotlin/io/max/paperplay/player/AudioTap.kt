@@ -1,48 +1,192 @@
 package io.max.paperplay.player
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.tan
 
 /**
- * Live spectrum of what is being played, for visuals.
+ * Live multi-resolution spectrum, time-domain bass envelope, and onset analyzer for visuals.
  *
- * Audio paths feed PCM via [push], [pushWithPts], or [pushMonoInt16]; readers poll [sample], [fresh], or [read].
- * [BANDS] log-spaced bands, each 0..1. [sample] and [fresh] return false when paused, idle, DoP/DSD, or stale.
- * All audio-thread methods are lock-free and zero-allocation.
+ * Audio paths feed PCM via [push], [pushWithPts], or [pushMonoInt16]; readers poll [sampleFrame],
+ * [sample], [fresh], or [read].
+ *
+ * Design:
+ * - Circular sample buffer with fixed [HOP] = 512 samples at the decimated rate (<= 56 kHz).
+ * - Dual-resolution FFT: 4096-point Blackman-Harris for bands <= 550 Hz (~10.8 Hz bin spacing)
+ *   and 1024-point Hann for bands > 550 Hz (~43.1 Hz bin spacing, crisp transient response).
+ * - Exact-Hz 32-band triangular filterbank (42 Hz..14.5 kHz) with RMS power aggregation and
+ *   perceptual high-frequency tilt, invariant across 44.1..384 kHz sample rates.
+ * - Separate 140 Hz 2nd-order Butterworth time-domain bass envelope for beat/kick punch.
+ * - Per-region running AGC (25 ms attack, 1.6 s release) + 48 dB log compression + -67 dBFS gate.
+ * - Fixed-hop [SpectralOnsetDetector] + seqlock playout ring with linear display-rate interpolation.
+ *
+ * All audio-thread methods are lock-free, panic-free, and strictly zero-allocation.
  */
 object AudioTap {
     const val BANDS = 32
-    private const val N = 1024
-    private const val HOP = N / 2
-    private const val HIST_SIZE = 192
+    private const val N_LONG = 4096
+    private const val N_SHORT = 1024
+    private const val HOP = 512
+    private const val HIST_SIZE = 256
     private const val DEFAULT_LATENCY_MS = 80L
     private const val MAX_RATE_BEFORE_DECIM = 56_000
+
+    private const val MIN_HZ = 42.0
+    private const val MAX_HZ = 14_500.0
+    private const val LOW_SPLIT_HZ = 550.0f
+    private const val BASS_LPF_HZ = 140.0
+    private const val SILENCE_FLOOR = 0.00045f
+    private const val REF_MIN = 0.0018f
+    private const val DB_WINDOW = 48f
+
+    /** Display-side snapshot populated by [sampleFrame] without allocations. */
+    class TapFrame(val bands: FloatArray = FloatArray(BANDS)) {
+        var bass: Float = 0f
+        var onset: Float = 0f
+        var beatSeq: Int = 0
+        var analysisUs: Int = 0
+        var effRateHz: Int = 44100
+    }
 
     /** Injectable monotonic clock in nanoseconds; overridden in unit tests for deterministic timing. */
     @Volatile
     var clockNs: () -> Long = { System.nanoTime() }
 
-    private val window = FloatArray(N) { (0.5 - 0.5 * cos(2 * PI * it / (N - 1))).toFloat() }
-    private val re = FloatArray(N)
-    private val im = FloatArray(N)
-    private val acc = FloatArray(N)
+    private val windowLong = FloatArray(N_LONG)
+    private val windowShort = FloatArray(N_SHORT)
+    private val winLongNorm: Float
+    private val winShortNorm: Float
+
+    private val bitRevLong = buildBitRev(N_LONG)
+    private val bitRevShort = buildBitRev(N_SHORT)
+    private val twCosLong = FloatArray(N_LONG / 2)
+    private val twSinLong = FloatArray(N_LONG / 2)
+    private val twCosShort = FloatArray(N_SHORT / 2)
+    private val twSinShort = FloatArray(N_SHORT / 2)
+
+    init {
+        var sumL = 0.0
+        for (i in 0 until N_LONG) {
+            val a = 2.0 * PI * i / (N_LONG - 1)
+            val w = 0.35875 - 0.48829 * cos(a) + 0.14128 * cos(2.0 * a) - 0.01168 * cos(3.0 * a)
+            windowLong[i] = w.toFloat()
+            sumL += w
+        }
+        winLongNorm = (4.0 / (sumL * sumL)).toFloat()
+
+        var sumS = 0.0
+        for (i in 0 until N_SHORT) {
+            val w = 0.5 - 0.5 * cos(2.0 * PI * i / (N_SHORT - 1))
+            windowShort[i] = w.toFloat()
+            sumS += w
+        }
+        winShortNorm = (4.0 / (sumS * sumS)).toFloat()
+
+        fillTwiddles(N_LONG, twCosLong, twSinLong)
+        fillTwiddles(N_SHORT, twCosShort, twSinShort)
+    }
+
+    private fun buildBitRev(n: Int): IntArray {
+        val out = IntArray(n)
+        var j = 0
+        for (i in 1 until n) {
+            var bit = n shr 1
+            while (j and bit != 0) {
+                j = j xor bit
+                bit = bit shr 1
+            }
+            j = j xor bit
+            out[i] = j
+        }
+        return out
+    }
+
+    private fun fillTwiddles(n: Int, cosOut: FloatArray, sinOut: FloatArray) {
+        val half = n / 2
+        for (k in 0 until half) {
+            val ang = -2.0 * PI * k / n
+            cosOut[k] = cos(ang).toFloat()
+            sinOut[k] = sin(ang).toFloat()
+        }
+    }
+
+    private val bandCenters = FloatArray(BANDS) { b ->
+        (MIN_HZ * (MAX_HZ / MIN_HZ).pow(b.toDouble() / (BANDS - 1))).toFloat()
+    }
+    private val bandTilt = FloatArray(BANDS) { b ->
+        val f = bandCenters[b]
+        when {
+            f < 80f -> 0.85f + 0.15f * ((f - 42f) / 38f).coerceIn(0f, 1f)
+            f <= 1000f -> 1.0f
+            else -> {
+                val u = (log10(f / 1000f) / log10(14.5f)).coerceIn(0f, 1f)
+                1.0f + 0.65f * u
+            }
+        }
+    }
+
+    private val ring = FloatArray(N_LONG)
+    private var ringPos = 0
+    private var samplesSinceHop = 0
+    private var totalEffSamples = 0
+
+    private val reLong = FloatArray(N_LONG)
+    private val imLong = FloatArray(N_LONG)
+    private val powLong = FloatArray(N_LONG / 2 + 1)
+    private val reShort = FloatArray(N_SHORT)
+    private val imShort = FloatArray(N_SHORT)
+    private val powShort = FloatArray(N_SHORT / 2 + 1)
+
+    private val bandUseLong = BooleanArray(BANDS)
+    private val bandBinStart = IntArray(BANDS)
+    private val bandBinEnd = IntArray(BANDS)
+    private val bandWeightOffset = IntArray(BANDS)
+    private val filterWeights = FloatArray(2048)
+
+    private val rawBands = FloatArray(BANDS)
     private val tmpBands = FloatArray(BANDS)
     private val latestBands = FloatArray(BANDS)
     private val readScratch = FloatArray(BANDS)
-    private var fill = 0
+
+    // 2nd-order Butterworth 140 Hz LPF + asymmetric time-domain bass envelope.
+    private var lpB0 = 0f
+    private var lpB1 = 0f
+    private var lpB2 = 0f
+    private var lpA1 = 0f
+    private var lpA2 = 0f
+    private var lpX1 = 0f
+    private var lpX2 = 0f
+    private var lpY1 = 0f
+    private var lpY2 = 0f
+    private var bassAttackAlpha = 0.01f
+    private var bassReleaseAlpha = 0.001f
+    private var bassEnvRaw = 0f
+    private var bassRef = REF_MIN
+
+    // Per-region running AGC (Low 0..7, Mid 8..19, High 20..31).
+    private val regionRef = FloatArray(3) { REF_MIN }
+    private var globalRef = REF_MIN
+    private var agcAtkAlpha = 0.35f
+    private var agcRelAlpha = 0.008f
+    private var hopDtSec = HOP / 44100f
+
+    private val hopOnset = SpectralOnsetDetector(BANDS)
+    private var beatSeqCounter = 0
+
     private var rate = 44100
     private var effRate = 44100
     private var decim = 1
     private var decimSum = 0f
     private var decimCount = 0
-    private val edges = IntArray(BANDS + 1)
-    private var ceiling = 0.25f
+    private var configured = false
 
-    /** Latest computed spectrum (0..1 per band). Prefer [sample] for time-aligned draw-phase reads. */
+    /** Latest computed spectrum (0..1 per band). Prefer [sampleFrame] for interpolated draw-phase reads. */
     @Volatile
     var bands = FloatArray(BANDS)
         private set
@@ -80,14 +224,30 @@ object AudioTap {
     @Volatile var fftFrameCount: Long = 0L
         private set
 
+    /** Last measured CPU time per analysis hop in microseconds. */
+    @Volatile var analysisMicrosPerHop: Int = 0
+        private set
+
+    /** Effective (possibly decimated) sample rate used by the FFT and LPF. */
+    @Volatile var effectiveSampleRateHz: Int = 44100
+        private set
+
     /** True while a visual has asked for the spectrum in the last two seconds. The audio thread skips all tap work otherwise. */
     val wanted: Boolean
         get() = hasRead && (clockNs() - readAt < 2_000_000_000L)
 
     private val histBands = Array(HIST_SIZE) { FloatArray(BANDS) }
+    private val histBass = FloatArray(HIST_SIZE)
+    private val histOnset = FloatArray(HIST_SIZE)
+    private val histBeatSeq = IntArray(HIST_SIZE)
     private val histPlayoutNs = LongArray(HIST_SIZE)
     private val histSeq = LongArray(HIST_SIZE)
     @Volatile private var histHead = 0
+    @Volatile private var latestBass = 0f
+    @Volatile private var latestOnset = 0f
+
+    /** Nominal center frequency in Hz for band `0..31` (identical across all sample rates). */
+    fun bandCenterHz(band: Int): Float = bandCenters[band.coerceIn(0, BANDS - 1)]
 
     /** Updates the audible playback clock anchor from the active engine/sink. Lock-free. */
     fun updatePlaybackClock(audiblePosUs: Long, speed: Float = currentSpeed, nowNs: Long = clockNs()) {
@@ -117,7 +277,10 @@ object AudioTap {
         anchorPosUs = -1L
         latestBands.fill(0f)
         bands.fill(0f)
+        latestBass = 0f
+        latestOnset = 0f
         histPlayoutNs.fill(0L)
+        hopOnset.reset()
     }
 
     /** Marks a non-PCM stream (such as DoP/DSD) active so visuals stay in a clean idle state. */
@@ -128,7 +291,94 @@ object AudioTap {
         nextStreamPlayoutNs = 0L
         latestBands.fill(0f)
         bands.fill(0f)
+        latestBass = 0f
+        latestOnset = 0f
         histPlayoutNs.fill(0L)
+        hopOnset.reset()
+    }
+
+    /**
+     * Populates [out] with playout-time-aligned, linearly interpolated spectrum, bass envelope,
+     * and fixed-hop onset state. Zero-allocation and lock-free.
+     * Returns true if live, non-stale, non-paused PCM spectrum data is available.
+     */
+    fun sampleFrame(out: TapFrame, nowNs: Long = clockNs()): Boolean {
+        readAt = nowNs
+        hasRead = true
+        if (paused || nonPcmActive || !hasData) return false
+        if (nowNs > latestPlayoutNs + 250_000_000L) return false
+        if (nowNs - lastPushWallNs > 1_500_000_000L) return false
+
+        val targetNs = nowNs + calibrationOffsetMs * 1_000_000L
+        val head = histHead
+        var prevIdx = -1
+        var prevTs = Long.MIN_VALUE
+        var nextIdx = -1
+        var nextTs = Long.MAX_VALUE
+
+        for (k in 0 until HIST_SIZE) {
+            val i = (head - k + HIST_SIZE) % HIST_SIZE
+            val ts = histPlayoutNs[i]
+            if (ts <= 0L) continue
+            if (ts <= targetNs) {
+                if (ts > prevTs) {
+                    prevTs = ts
+                    prevIdx = i
+                }
+            } else if (ts < nextTs) {
+                nextTs = ts
+                nextIdx = i
+            }
+        }
+
+        val copyLen = minOf(out.bands.size, BANDS)
+        out.analysisUs = analysisMicrosPerHop
+        out.effRateHz = effRate
+
+        // Interpolate smoothly between bracketing hops when both are available within 250 ms.
+        if (prevIdx >= 0 && nextIdx >= 0 && nextTs > prevTs && (nextTs - prevTs) <= 250_000_000L) {
+            val alpha = ((targetNs - prevTs).toFloat() / (nextTs - prevTs).toFloat()).coerceIn(0f, 1f)
+            val oneMinus = 1f - alpha
+            for (attempt in 0 until 3) {
+                val p1 = histSeq[prevIdx]
+                val n1 = histSeq[nextIdx]
+                if ((p1 and 1L) != 0L || (n1 and 1L) != 0L) continue
+                val bPrev = histBands[prevIdx]
+                val bNext = histBands[nextIdx]
+                for (b in 0 until copyLen) {
+                    out.bands[b] = bPrev[b] * oneMinus + bNext[b] * alpha
+                }
+                out.bass = histBass[prevIdx] * oneMinus + histBass[nextIdx] * alpha
+                out.onset = histOnset[prevIdx] * oneMinus + histOnset[nextIdx] * alpha
+                out.beatSeq = if (alpha >= 0.5f) histBeatSeq[nextIdx] else histBeatSeq[prevIdx]
+                val p2 = histSeq[prevIdx]
+                val n2 = histSeq[nextIdx]
+                if (p1 == p2 && n1 == n2) return true
+            }
+        }
+
+        val chosen = when {
+            prevIdx >= 0 -> prevIdx
+            nextIdx >= 0 && nextTs - targetNs <= 500_000_000L -> nextIdx
+            else -> -1
+        }
+        if (chosen < 0) return false
+
+        for (attempt in 0 until 3) {
+            val s1 = histSeq[chosen]
+            if ((s1 and 1L) != 0L) continue
+            System.arraycopy(histBands[chosen], 0, out.bands, 0, copyLen)
+            out.bass = histBass[chosen]
+            out.onset = histOnset[chosen]
+            out.beatSeq = histBeatSeq[chosen]
+            val s2 = histSeq[chosen]
+            if (s1 == s2) return true
+        }
+        System.arraycopy(latestBands, 0, out.bands, 0, copyLen)
+        out.bass = latestBass
+        out.onset = latestOnset
+        out.beatSeq = beatSeqCounter
+        return true
     }
 
     /**
@@ -144,34 +394,52 @@ object AudioTap {
 
         val targetNs = nowNs + calibrationOffsetMs * 1_000_000L
         val head = histHead
-        var bestIdx = -1
-        var bestPlayout = Long.MIN_VALUE
-        var earliestFutureIdx = -1
-        var earliestFuturePlayout = Long.MAX_VALUE
+        var prevIdx = -1
+        var prevTs = Long.MIN_VALUE
+        var nextIdx = -1
+        var nextTs = Long.MAX_VALUE
 
         for (k in 0 until HIST_SIZE) {
             val i = (head - k + HIST_SIZE) % HIST_SIZE
             val ts = histPlayoutNs[i]
             if (ts <= 0L) continue
             if (ts <= targetNs) {
-                if (ts > bestPlayout) {
-                    bestPlayout = ts
-                    bestIdx = i
+                if (ts > prevTs) {
+                    prevTs = ts
+                    prevIdx = i
                 }
-            } else if (ts < earliestFuturePlayout) {
-                earliestFuturePlayout = ts
-                earliestFutureIdx = i
+            } else if (ts < nextTs) {
+                nextTs = ts
+                nextIdx = i
+            }
+        }
+
+        val copyLen = minOf(out.size, BANDS)
+        if (prevIdx >= 0 && nextIdx >= 0 && nextTs > prevTs && (nextTs - prevTs) <= 250_000_000L) {
+            val alpha = ((targetNs - prevTs).toFloat() / (nextTs - prevTs).toFloat()).coerceIn(0f, 1f)
+            val oneMinus = 1f - alpha
+            for (attempt in 0 until 3) {
+                val p1 = histSeq[prevIdx]
+                val n1 = histSeq[nextIdx]
+                if ((p1 and 1L) != 0L || (n1 and 1L) != 0L) continue
+                val bPrev = histBands[prevIdx]
+                val bNext = histBands[nextIdx]
+                for (b in 0 until copyLen) {
+                    out[b] = bPrev[b] * oneMinus + bNext[b] * alpha
+                }
+                val p2 = histSeq[prevIdx]
+                val n2 = histSeq[nextIdx]
+                if (p1 == p2 && n1 == n2) return true
             }
         }
 
         val chosen = when {
-            bestIdx >= 0 -> bestIdx
-            earliestFutureIdx >= 0 && earliestFuturePlayout - targetNs <= 500_000_000L -> earliestFutureIdx
+            prevIdx >= 0 -> prevIdx
+            nextIdx >= 0 && nextTs - targetNs <= 500_000_000L -> nextIdx
             else -> -1
         }
         if (chosen < 0) return false
 
-        val copyLen = minOf(out.size, BANDS)
         for (attempt in 0 until 3) {
             val s1 = histSeq[chosen]
             if ((s1 and 1L) != 0L) continue
@@ -218,10 +486,19 @@ object AudioTap {
     }
 
     fun reset() {
-        fill = 0
+        ring.fill(0f)
+        ringPos = 0
+        samplesSinceHop = 0
+        totalEffSamples = 0
         decimSum = 0f
         decimCount = 0
-        ceiling = 0.25f
+        lpX1 = 0f; lpX2 = 0f; lpY1 = 0f; lpY2 = 0f
+        bassEnvRaw = 0f
+        bassRef = REF_MIN
+        regionRef.fill(REF_MIN)
+        globalRef = REF_MIN
+        hopOnset.reset()
+        beatSeqCounter = 0
         hasData = false
         paused = false
         nonPcmActive = false
@@ -233,12 +510,18 @@ object AudioTap {
         histHead = 0
         histPlayoutNs.fill(0L)
         histSeq.fill(0L)
+        histBass.fill(0f)
+        histOnset.fill(0f)
+        histBeatSeq.fill(0)
         latestBands.fill(0f)
         bands.fill(0f)
         readScratch.fill(0f)
+        latestBass = 0f
+        latestOnset = 0f
         pushSampleCount = 0L
         fftFrameCount = 0L
         measuredLatencyMs = 0L
+        analysisMicrosPerHop = 0
     }
 
     /** One mono sample in -1..1. Called on the audio thread. */
@@ -249,27 +532,40 @@ object AudioTap {
     /** One mono sample in -1..1 with an optional stream PTS in microseconds. Lock-free, zero-allocation. */
     fun pushWithPts(sampleRateHz: Int, s: Float, ptsUs: Long, sourceTag: String = "") {
         if (sampleRateHz <= 0) return
-        if (sampleRateHz != rate || edges[1] == 0) configure(sampleRateHz)
+        if (!configured || sampleRateHz != rate) configure(sampleRateHz)
         if (sourceTag.isNotEmpty() && activeSourceTag != sourceTag) activeSourceTag = sourceTag
         paused = false
         nonPcmActive = false
         pushSampleCount++
 
-        if (decim == 1) {
-            acc[fill++] = s
+        val sample = if (decim == 1) {
+            s
         } else {
             decimSum += s
             decimCount++
             if (decimCount < decim) return
-            acc[fill++] = decimSum / decimCount
+            val avg = decimSum / decimCount
             decimSum = 0f
             decimCount = 0
+            avg
         }
 
-        if (fill < N) return
+        // Write to circular buffer and update 140 Hz time-domain bass envelope.
+        ring[ringPos] = sample
+        ringPos = (ringPos + 1) and (N_LONG - 1)
+        totalEffSamples++
+        samplesSinceHop++
+
+        val lp = lpB0 * sample + lpB1 * lpX1 + lpB2 * lpX2 - lpA1 * lpY1 - lpA2 * lpY2
+        lpX2 = lpX1; lpX1 = sample
+        lpY2 = lpY1; lpY1 = lp
+        val absLp = abs(lp)
+        val bAlpha = if (absLp > bassEnvRaw) bassAttackAlpha else bassReleaseAlpha
+        bassEnvRaw += (absLp - bassEnvRaw) * bAlpha
+
+        if (totalEffSamples < N_SHORT || samplesSinceHop < HOP) return
+        samplesSinceHop = 0
         analyse(ptsUs)
-        System.arraycopy(acc, HOP, acc, 0, HOP)
-        fill = HOP
     }
 
     /** Feeds a batch of 16-bit signed mono samples with an optional starting stream PTS in microseconds. */
@@ -289,62 +585,175 @@ object AudioTap {
         while (hz / d > MAX_RATE_BEFORE_DECIM) d *= 2
         decim = d
         effRate = (hz / d).coerceAtLeast(1)
+        effectiveSampleRateHz = effRate
         decimSum = 0f
         decimCount = 0
-        fill = 0
+        ring.fill(0f)
+        ringPos = 0
+        samplesSinceHop = 0
+        totalEffSamples = 0
 
-        val bin = effRate.toFloat() / N
-        val lo = 40f
-        val hi = minOf(14000f, effRate / 2f - 1f).coerceAtLeast(lo + 100f)
-        var prev = 1
-        for (i in 0..BANDS) {
-            val f = lo * ((hi / lo).toDouble().pow(i.toDouble() / BANDS)).toFloat()
-            val edge = (f / bin).toInt().coerceAtLeast(prev)
-            edges[i] = edge
-            prev = edge
+        // 2nd-order Butterworth LPF at 140 Hz.
+        val k = tan(PI * BASS_LPF_HZ / effRate.toDouble())
+        val norm = 1.0 / (1.0 + sqrt(2.0) * k + k * k)
+        lpB0 = (k * k * norm).toFloat()
+        lpB1 = 2f * lpB0
+        lpB2 = lpB0
+        lpA1 = (2.0 * (k * k - 1.0) * norm).toFloat()
+        lpA2 = ((1.0 - sqrt(2.0) * k + k * k) * norm).toFloat()
+        lpX1 = 0f; lpX2 = 0f; lpY1 = 0f; lpY2 = 0f
+        bassAttackAlpha = (1.0 - exp(-1.0 / (0.008 * effRate))).toFloat()
+        bassReleaseAlpha = (1.0 - exp(-1.0 / (0.075 * effRate))).toFloat()
+        bassEnvRaw = 0f
+
+        hopDtSec = HOP.toFloat() / effRate.toFloat()
+        agcAtkAlpha = (1.0 - exp(-hopDtSec / 0.025)).toFloat()
+        agcRelAlpha = (1.0 - exp(-hopDtSec / 1.6)).toFloat()
+
+        // Build exact-Hz triangular filterbank across dual-resolution FFTs.
+        val ratio = (MAX_HZ / MIN_HZ).pow(1.0 / (BANDS - 1))
+        val nyquistLimit = effRate * 0.495
+        var wCursor = 0
+        for (b in 0 until BANDS) {
+            val fC = bandCenters[b].toDouble()
+            val fL = if (b == 0) MIN_HZ / ratio else bandCenters[b - 1].toDouble()
+            val fR = minOf(if (b == BANDS - 1) MAX_HZ * ratio else bandCenters[b + 1].toDouble(), nyquistLimit)
+            val useLong = fC <= LOW_SPLIT_HZ
+            bandUseLong[b] = useLong
+            val fftN = if (useLong) N_LONG else N_SHORT
+            val maxBin = fftN / 2
+            val df = effRate.toDouble() / fftN
+
+            var binStart = (fL / df).toInt().coerceIn(1, maxBin - 1)
+            var binEnd = ((fR / df).toInt() + 1).coerceIn(binStart + 1, maxBin + 1)
+            val centerBin = (fC / df).toInt().coerceIn(1, maxBin)
+            if (binStart > centerBin) binStart = centerBin
+            if (binEnd <= centerBin) binEnd = (centerBin + 1).coerceAtMost(maxBin + 1)
+
+            bandBinStart[b] = binStart
+            bandBinEnd[b] = binEnd
+            bandWeightOffset[b] = wCursor
+
+            var wSum = 0f
+            val leftSpan = (fC - fL).coerceAtLeast(df * 0.5)
+            val rightSpan = (fR - fC).coerceAtLeast(df * 0.5)
+            val startOff = wCursor
+            for (bin in binStart until binEnd) {
+                val freq = bin * df
+                val w = when {
+                    freq < fL || freq > fR -> 0f
+                    freq <= fC -> ((freq - fL) / leftSpan).toFloat()
+                    else -> ((fR - freq) / rightSpan).toFloat()
+                }.coerceIn(0f, 1f)
+                if (wCursor < filterWeights.size) {
+                    filterWeights[wCursor++] = w
+                    wSum += w
+                }
+            }
+            // Guarantee at least one active bin if narrow band falls between discrete bins.
+            if (wSum <= 1e-4f && startOff < filterWeights.size) {
+                val localIdx = (centerBin - binStart).coerceIn(0, (binEnd - binStart - 1).coerceAtLeast(0))
+                if (startOff + localIdx < filterWeights.size) {
+                    filterWeights[startOff + localIdx] = 1f
+                }
+            }
         }
-        for (i in 1..BANDS) {
-            if (edges[i] <= edges[i - 1]) edges[i] = edges[i - 1] + 1
-        }
+        configured = true
     }
 
     private fun analyse(ptsUs: Long) {
-        for (i in 0 until N) {
-            re[i] = acc[i] * window[i]
-            im[i] = 0f
-        }
-        fft()
+        val startNs = clockNs()
 
-        var peak = 0f
-        var maxRaw = 0f
+        // 1. Long FFT (4096, Blackman-Harris) for <= 550 Hz resolution (~10.8 Hz/bin).
+        var idxL = ringPos
+        for (i in 0 until N_LONG) {
+            reLong[i] = ring[idxL] * windowLong[i]
+            imLong[i] = 0f
+            idxL = (idxL + 1) and (N_LONG - 1)
+        }
+        fft(N_LONG, reLong, imLong, bitRevLong, twCosLong, twSinLong)
+        val longBins = N_LONG / 2
+        for (k in 0..longBins) {
+            powLong[k] = (reLong[k] * reLong[k] + imLong[k] * imLong[k]) * winLongNorm
+        }
+
+        // 2. Short FFT (1024, Hann) over the most recent 1024 samples for crisp mid/high transients.
+        var idxS = (ringPos - N_SHORT + N_LONG) and (N_LONG - 1)
+        for (i in 0 until N_SHORT) {
+            reShort[i] = ring[idxS] * windowShort[i]
+            imShort[i] = 0f
+            idxS = (idxS + 1) and (N_LONG - 1)
+        }
+        fft(N_SHORT, reShort, imShort, bitRevShort, twCosShort, twSinShort)
+        val shortBins = N_SHORT / 2
+        for (k in 0..shortBins) {
+            powShort[k] = (reShort[k] * reShort[k] + imShort[k] * imShort[k]) * winShortNorm
+        }
+
+        // 3. Aggregate RMS power per triangular filterband + perceptual tilt.
+        var lowPeak = 0f
+        var midPeak = 0f
+        var highPeak = 0f
+        var globalPeak = 0f
         for (b in 0 until BANDS) {
-            var e = 0f
-            val a = edges[b]
-            val z = minOf(edges[b + 1], N / 2)
-            for (k in a until z) {
-                val mag = sqrt(re[k] * re[k] + im[k] * im[k])
-                if (mag > e) e = mag
+            val powArr = if (bandUseLong[b]) powLong else powShort
+            val start = bandBinStart[b]
+            val end = bandBinEnd[b]
+            var wOff = bandWeightOffset[b]
+            var energySum = 0f
+            for (k in start until end) {
+                val w = if (wOff < filterWeights.size) filterWeights[wOff++] else 0f
+                energySum += w * powArr[k]
             }
-            // Tilt: higher bands carry less energy in music, lift them so the right side moves too.
-            val m = e / (N / 4f) * (1f + 0.8f * b / BANDS)
-            tmpBands[b] = m
-            if (m > peak) peak = m
-            if (e / (N / 4f) > maxRaw) maxRaw = e / (N / 4f)
+            val valBand = sqrt(energySum.coerceAtLeast(0f)) * bandTilt[b]
+            rawBands[b] = valBand
+            if (valBand > globalPeak) globalPeak = valBand
+            when {
+                b < 8 -> if (valBand > lowPeak) lowPeak = valBand
+                b < 20 -> if (valBand > midPeak) midPeak = valBand
+                else -> if (valBand > highPeak) highPeak = valBand
+            }
         }
 
-        // Slow auto gain so quiet and loud masters both fill the range, with a -80 dBFS silence floor.
-        ceiling = if (peak > ceiling) peak else ceiling * 0.9995f + peak * 0.0005f
-        val c = maxOf(ceiling, 0.04f)
+        // 4. Per-region running AGC (fast attack 25 ms, medium release 1.6 s) + 48 dB log curve.
+        globalRef = updateAgc(globalRef, globalPeak)
+        regionRef[0] = updateAgc(regionRef[0], lowPeak)
+        regionRef[1] = updateAgc(regionRef[1], midPeak)
+        regionRef[2] = updateAgc(regionRef[2], highPeak)
+
         for (b in 0 until BANDS) {
-            if (tmpBands[b] < 1e-4f) {
+            val raw = rawBands[b]
+            if (raw < SILENCE_FLOOR) {
                 tmpBands[b] = 0f
             } else {
-                val db = 20f * log10(maxOf(tmpBands[b], 1e-5f) / c)
-                // A curve so only real peaks reach the top and the quiet bands stay low.
-                val x = ((db + 36f) / 36f).coerceIn(0f, 1f)
-                tmpBands[b] = x * x
+                val reg = when {
+                    b < 8 -> regionRef[0]
+                    b < 20 -> regionRef[1]
+                    else -> regionRef[2]
+                }
+                val c = maxOf(0.65f * globalRef + 0.35f * reg, REF_MIN)
+                val db = 20f * log10(raw / c)
+                val x = ((db + DB_WINDOW) / DB_WINDOW).coerceIn(0f, 1f)
+                tmpBands[b] = x.pow(1.25f)
             }
         }
+
+        // 5. Normalize time-domain 140 Hz bass envelope with its own AGC.
+        bassRef = updateAgc(bassRef, bassEnvRaw)
+        val bassNorm = if (bassEnvRaw < 0.0004f) {
+            0f
+        } else {
+            val c = maxOf(bassRef, 0.002f)
+            val db = 20f * log10(bassEnvRaw / c)
+            val x = ((db + DB_WINDOW) / DB_WINDOW).coerceIn(0f, 1f)
+            x.pow(1.15f)
+        }
+
+        // 6. Fixed-hop spectral flux + bass derivative onset detection.
+        if (hopOnset.updateHop(tmpBands, bassNorm, hopDtSec)) {
+            beatSeqCounter++
+        }
+        val onsetNorm = hopOnset.onset
 
         val now = clockNs()
         lastPushWallNs = now
@@ -356,21 +765,34 @@ object AudioTap {
         val seq = histSeq[slot]
         histSeq[slot] = seq + 1L // odd = writing
         System.arraycopy(tmpBands, 0, histBands[slot], 0, BANDS)
+        histBass[slot] = bassNorm
+        histOnset[slot] = onsetNorm
+        histBeatSeq[slot] = beatSeqCounter
         histPlayoutNs[slot] = playoutNs
         histSeq[slot] = seq + 2L // even = stable
         histHead = slot
 
         System.arraycopy(tmpBands, 0, latestBands, 0, BANDS)
         System.arraycopy(tmpBands, 0, bands, 0, BANDS)
+        latestBass = bassNorm
+        latestOnset = onsetNorm
         hasData = true
         fftFrameCount++
+
+        val elapsedUs = ((now - startNs) / 1_000L).toInt()
+        if (elapsedUs >= 0) analysisMicrosPerHop = elapsedUs
+    }
+
+    private fun updateAgc(current: Float, peak: Float): Float {
+        val alpha = if (peak > current) agcAtkAlpha else agcRelAlpha
+        return maxOf(current + (peak - current) * alpha, REF_MIN)
     }
 
     private fun computePlayoutNs(nowNs: Long, ptsUs: Long): Long {
         val anchorWall = anchorWallNs
         val anchorPos = anchorPosUs
         if (ptsUs >= 0L && anchorWall > 0L && anchorPos >= 0L && nowNs - anchorWall < 2_000_000_000L) {
-            val centerOffsetUs = (HOP.toLong() * 1_000_000L) / effRate
+            val centerOffsetUs = ((N_SHORT / 2).toLong() * 1_000_000L) / effRate
             val hopPtsUs = (ptsUs - centerOffsetUs).coerceAtLeast(0L)
             val deltaNs = ((hopPtsUs - anchorPos) * 1_000.0 / currentSpeed).toLong()
             val clampedDelta = deltaNs.coerceIn(-500_000_000L, 2_500_000_000L)
@@ -391,28 +813,38 @@ object AudioTap {
         return next
     }
 
-    private fun fft() {
-        var j = 0
-        for (i in 1 until N) {
-            var bit = N shr 1
-            while (j and bit != 0) { j = j xor bit; bit = bit shr 1 }
-            j = j xor bit
-            if (i < j) { val t = re[i]; re[i] = re[j]; re[j] = t }
+    private fun fft(
+        n: Int,
+        re: FloatArray,
+        im: FloatArray,
+        bitRev: IntArray,
+        twCos: FloatArray,
+        twSin: FloatArray,
+    ) {
+        for (i in 1 until n) {
+            val j = bitRev[i]
+            if (i < j) {
+                val tr = re[i]; re[i] = re[j]; re[j] = tr
+            }
         }
         var len = 2
-        while (len <= N) {
-            val ang = -2.0 * PI / len
-            val wr = cos(ang).toFloat(); val wi = sin(ang).toFloat()
+        while (len <= n) {
+            val half = len shr 1
+            val step = n / len
             var i = 0
-            while (i < N) {
-                var cr = 1f; var ci = 0f
-                for (k in 0 until len / 2) {
-                    val ur = re[i + k]; val ui = im[i + k]
-                    val vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci
-                    val vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr
-                    re[i + k] = ur + vr; im[i + k] = ui + vi
-                    re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi
-                    val nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr
+            while (i < n) {
+                var twIdx = 0
+                for (k in 0 until half) {
+                    val cr = twCos[twIdx]
+                    val ci = twSin[twIdx]
+                    val idx1 = i + k
+                    val idx2 = idx1 + half
+                    val ur = re[idx1]; val ui = im[idx1]
+                    val vr = re[idx2] * cr - im[idx2] * ci
+                    val vi = re[idx2] * ci + im[idx2] * cr
+                    re[idx1] = ur + vr; im[idx1] = ui + vi
+                    re[idx2] = ur - vr; im[idx2] = ui - vi
+                    twIdx += step
                 }
                 i += len
             }
