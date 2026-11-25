@@ -11,7 +11,7 @@ class UpstreamOffChainIdentityTest {
 
     @Test
     fun `unified OFF path builds bare EngineAudioSink over DefaultAudioSink with float enabled and zero USB wrappers`() {
-        val tapSrc = findRepoFile("player/src/androidMain/kotlin/io/max/paperplay/player/TapProcessor.kt").readText()
+        val tapSrc = findRepoFile("player/src/androidMain/kotlin/io/max/paperplay/player/TapProcessor.kt").readText().replace("\r\n", "\n") // a Windows checkout has other line ends
         val helperBlock = tapSrc.substringAfter("internal fun buildUpstreamNormalAudioSink(").substringBefore("@OptIn(UnstableApi::class)\ninternal class TapRenderersFactory")
         assertTrue(helperBlock.contains(".setEnableFloatOutput(true)"), "Upstream normal chain must enable float output")
         assertTrue(helperBlock.contains(".setAudioProcessors(arrayOf(TapProcessor()))"), "Upstream normal chain must attach TapProcessor")
