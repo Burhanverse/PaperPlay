@@ -133,7 +133,9 @@ fun FullPlayer(
     var devicesOpen by remember { mutableStateOf(false) }
     val fullscreen by WindowFullscreen.on.collectAsState()
     val canFullscreen by WindowFullscreen.supported.collectAsState()
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { WindowFullscreen.on.value = false } }
+    val coverBounds = LocalCoverBounds.current
+    androidx.compose.runtime.SideEffect { coverBounds?.queueOpen = showQueue }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { WindowFullscreen.on.value = false; coverBounds?.clearFull() } }
     PlatformBackHandler(showQueue) { showQueue = false }
 
     val standbyPrefs = if (io.max.paperplay.ui.isPhone) LocalUiPrefs.current?.standby else null
@@ -484,10 +486,18 @@ private fun PlayerBody(
 /** The cover: full size while playing and slightly smaller when paused, in a slot that never moves. */
 @Composable
 private fun Artwork(song: SongUi, playing: Boolean, size: androidx.compose.ui.unit.Dp) {
+    val controller = LocalPlayerTransition.current
+    val coverBounds = LocalCoverBounds.current
     val scale by animateFloatAsState(if (playing) 1f else 0.92f, tween(500))
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         // One shadow around the cover; the covers of two songs fade into each other inside it.
-        Box(Modifier.scale(scale).shadow(24.dp, RoundedCornerShape(28.dp), ambientColor = Color.Black, spotColor = Color.Black)) {
+        Box(
+            Modifier
+                .scale(scale)
+                .registerFullCoverBounds(coverBounds)
+                .graphicsLayer { alpha = if (controller.isCoverFlightActive(coverBounds)) 0f else 1f }
+                .shadow(24.dp, RoundedCornerShape(28.dp), ambientColor = Color.Black, spotColor = Color.Black),
+        ) {
             androidx.compose.animation.Crossfade(
                 song.coverUri to song.id, animationSpec = io.max.paperplay.ui.theme.motionTween(io.max.paperplay.ui.theme.Motion.EMPHASIZED), label = "cover",
             ) { (uri, id) -> CoverImage(uri, id, size = size, radius = 28.dp) }

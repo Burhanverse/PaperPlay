@@ -8,6 +8,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,18 +34,23 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.PreviewFrame
+import io.max.paperplay.ui.components.CoverImage
+import io.max.paperplay.ui.state.SongUi
 import io.max.paperplay.ui.theme.PlayerMotionTokens
 import io.max.paperplay.ui.theme.playerCloseSpringSpec
 import io.max.paperplay.ui.theme.playerOpenSpringSpec
@@ -768,6 +774,90 @@ fun Modifier.playerSheetDrag(
             }
         },
     )
+}
+
+/**
+ * Records the mini player's cover bounds in root coordinates for [SharedCoverLayer].
+ */
+fun Modifier.registerMiniCoverBounds(bounds: CoverBoundsRegistry?): Modifier {
+    if (bounds == null) return this
+    return this.then(
+        Modifier.onGloballyPositioned { coords ->
+            if (coords.isAttached) bounds.miniRect = coords.boundsInRoot()
+        },
+    )
+}
+
+/**
+ * Records the full player's resting cover bounds relative to [CoverBoundsRegistry.playerRootCoords],
+ * making the target rect invariant to the sheet's `graphicsLayer { translationY }`.
+ */
+fun Modifier.registerFullCoverBounds(bounds: CoverBoundsRegistry?): Modifier {
+    if (bounds == null) return this
+    return this.then(
+        Modifier.onGloballyPositioned { coords ->
+            val root = bounds.playerRootCoords
+            if (coords.isAttached && root != null && root.isAttached) {
+                bounds.fullRect = root.localBoundingBoxOf(coords, clipBounds = false)
+                if (bounds.fullSizeState != coords.size) {
+                    bounds.fullSizeState = coords.size
+                }
+            }
+        },
+    )
+}
+
+/**
+ * Layer-based shared-element cover flight between [MiniPlayer] and [FullPlayer], driven
+ * synchronously by [PlayerTransitionController.progress] inside `graphicsLayer` with zero
+ * LookaheadScope double-measure overhead. Falls back automatically when bounds are unavailable,
+ * when the queue is open, or when Reduce Motion is enabled.
+ */
+@Composable
+fun SharedCoverLayer(
+    controller: PlayerTransitionController,
+    coverBounds: CoverBoundsRegistry?,
+    song: SongUi?,
+    targetCornerRadiusDp: Dp,
+    modifier: Modifier = Modifier,
+) {
+    if (song == null || coverBounds == null || !controller.isCoverFlightActive(coverBounds)) return
+    val fullSizePx = coverBounds.fullSizeState
+    if (fullSizePx.width <= 0 || fullSizePx.height <= 0) return
+
+    val density = LocalDensity.current
+    val targetWidthDp = with(density) { fullSizePx.width.toDp() }
+    val targetHeightDp = with(density) { fullSizePx.height.toDp() }
+
+    Box(modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .size(targetWidthDp, targetHeightDp)
+                .graphicsLayer {
+                    val mini = coverBounds.miniRect ?: return@graphicsLayer
+                    val full = coverBounds.fullRect ?: return@graphicsLayer
+                    if (mini.isEmpty || full.isEmpty || full.width <= 0f || full.height <= 0f) return@graphicsLayer
+                    val t = controller.progress
+                    val curLeft = lerpFloat(mini.left, full.left, t)
+                    val curTop = lerpFloat(mini.top, full.top, t)
+                    val curW = lerpFloat(mini.width, full.width, t)
+                    val curH = lerpFloat(mini.height, full.height, t)
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    translationX = curLeft
+                    translationY = curTop
+                    scaleX = (curW / full.width).coerceAtLeast(0.01f)
+                    scaleY = (curH / full.height).coerceAtLeast(0.01f)
+                    compositingStrategy = CompositingStrategy.Offscreen
+                },
+        ) {
+            CoverImage(
+                uri = song.coverUri,
+                key = song.id,
+                size = maxOf(targetWidthDp, targetHeightDp),
+                radius = targetCornerRadiusDp,
+            )
+        }
+    }
 }
 
 @Preview(name = "PlayerSheetHost Open", widthDp = 390, heightDp = 844)

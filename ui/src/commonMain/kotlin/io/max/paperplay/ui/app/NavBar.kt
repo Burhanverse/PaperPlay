@@ -56,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import org.jetbrains.compose.ui.tooling.preview.Preview
@@ -158,6 +159,8 @@ fun MiniPlayer(
     modifier: Modifier = Modifier,
     /** Opens the app's devices (this phone, Network play, Connect devices); null hides the button. Gets the settings page to open. */
     onDevices: ((String) -> Unit)? = null,
+    coverBounds: CoverBoundsRegistry? = null,
+    coverHidden: () -> Boolean = { false },
 ) {
     val song = state.current ?: return
     val cover = coverScheme(song.coverUri)
@@ -167,11 +170,18 @@ fun MiniPlayer(
     )
     val ink = cover?.onSurface ?: MaterialTheme.colorScheme.onSecondaryContainer
     val press = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    androidx.compose.runtime.DisposableEffect(coverBounds) {
+        onDispose { coverBounds?.clearMini() }
+    }
     Box(modifier.fillMaxWidth().bouncy(press, 0.98f).clip(RoundedCornerShape(12.dp)).background(bg)
-        .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, onClick = onOpen)) {
+        .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, onClickLabel = "Open player", onClick = onOpen)) {
         Column {
             Row(Modifier.padding(start = 8.dp, top = 8.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                CoverImage(song.coverUri, song.id, size = 44.dp, radius = 8.dp)
+                CoverImage(
+                    song.coverUri, song.id,
+                    modifier = Modifier.registerMiniCoverBounds(coverBounds).graphicsLayer { alpha = if (coverHidden()) 0f else 1f },
+                    size = 44.dp, radius = 8.dp,
+                )
                 // The title and artist fade into the next song's instead of jumping.
                 androidx.compose.animation.Crossfade(
                     Pair(song.title, song.artist), Modifier.weight(1f).padding(horizontal = 12.dp),

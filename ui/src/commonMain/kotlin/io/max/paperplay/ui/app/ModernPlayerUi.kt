@@ -711,6 +711,7 @@ private fun ModernArtwork(
     modifier: Modifier = Modifier,
 ) {
     val controller = LocalPlayerTransition.current
+    val coverBounds = LocalCoverBounds.current
     val coverShape = appShape(24.dp, CornerArea.Covers)
 
     Column(
@@ -742,6 +743,8 @@ private fun ModernArtwork(
         Box(
             Modifier
                 .size(size)
+                .registerFullCoverBounds(coverBounds)
+                .graphicsLayer { alpha = if (controller.isCoverFlightActive(coverBounds)) 0f else 1f }
                 .shadow(24.dp, coverShape, ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(coverShape),
         ) {
