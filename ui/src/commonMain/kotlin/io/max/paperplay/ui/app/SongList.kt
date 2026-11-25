@@ -259,12 +259,13 @@ fun SongList(
         val base = MaterialTheme.colorScheme.background
         // On desktop the list sits on a card, not the page gradient, so the pinned bar takes the card colour.
         val cardFill = MaterialTheme.colorScheme.surfaceContainerLow
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f),
-            // Horizontal insets live on the items, so the pinned bar can span the full width and hide rows fully.
-            contentPadding = PaddingValues(bottom = bottomPadding + 16.dp),
-        ) {
+        DesktopScrollHost(listState, Modifier.weight(1f)) { scrollMod ->
+            LazyColumn(
+                state = listState,
+                modifier = scrollMod,
+                // Horizontal insets live on the items, so the pinned bar can span the full width and hide rows fully.
+                contentPadding = PaddingValues(bottom = bottomPadding + 16.dp),
+            ) {
             // A Column, not a Box: the header can hold several parts (cover, then the missing-songs row) that stack down.
             if (header != null) item { Column(Modifier.padding(horizontal = 16.dp)) { header() } }
             if (shown.isNotEmpty()) stickyHeader(key = "song-list-bar") {
@@ -358,6 +359,7 @@ fun SongList(
                     )
                 }
                 items(tail, key = { "ghost:${it.key}" }) { g -> GhostRow(g, Modifier.padding(horizontal = 16.dp, vertical = 3.dp)) }
+            }
             }
         }
         if (confirmBulkDelete) androidx.compose.material3.AlertDialog(

@@ -373,11 +373,12 @@ private fun SyncedLyricsList(
     }
 
     Box(modifier) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().lyricsEdgeFade(),
-            state = list,
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 72.dp, bottom = 180.dp),
-        ) {
+        DesktopScrollHost(list, Modifier.fillMaxSize()) { scrollMod ->
+            LazyColumn(
+                modifier = scrollMod.lyricsEdgeFade(),
+                state = list,
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 72.dp, bottom = 180.dp),
+            ) {
             itemsIndexed(lines, key = { i, l -> "${l.timeMs}#$i" }) { i, line ->
                 val targetAlpha = lyricsLineAlpha(i, current, dark)
                 val alpha by animateFloatAsState(targetAlpha, motionTween(Motion.STANDARD), label = "lyricAlpha")
@@ -408,6 +409,7 @@ private fun SyncedLyricsList(
                     }
                 }
             }
+        }
         }
 
         if (lines.isNotEmpty() && !following) {

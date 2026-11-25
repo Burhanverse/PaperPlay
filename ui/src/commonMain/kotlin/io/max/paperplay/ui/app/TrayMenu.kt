@@ -69,9 +69,13 @@ fun TrayMenuContent(
                 val shape = androidx.compose.ui.graphics.RectangleShape // the window itself is rounded by Windows
                 // The menu fades in and rises a few pixels when it opens.
                 val appear = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
-                val appearSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs)
+                val appearSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Desktop.PageEnterMs)
+                val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
                 androidx.compose.runtime.LaunchedEffect(Unit) { appear.animateTo(1f, appearSpec) }
-                Box(Modifier.fillMaxSize().graphicsLayer { alpha = appear.value; translationY = (1f - appear.value) * 12.dp.toPx() }) {
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    alpha = appear.value
+                    if (!reduce) translationY = (1f - appear.value) * 8.dp.toPx()
+                }) {
                     Column(Modifier.fillMaxSize().background(card).padding(vertical = 8.dp)) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (song != null) CoverImage(song.coverUri, song.id, size = 44.dp, radius = 10.dp)
@@ -98,12 +102,11 @@ fun TrayMenuContent(
 
 @Composable
 private fun TrayItem(icon: ImageVector, label: String, ink: Color, enabled: Boolean = true, onClick: () -> Unit) {
-    val hover = remember { MutableInteractionSource() }
-    val hovered by hover.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(10.dp)
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 6.dp).clip(RoundedCornerShape(10.dp))
-            .background(if (hovered && enabled) ink.copy(alpha = 0.14f) else Color.Transparent)
-            .hoverable(hover).clickable(enabled = enabled, onClick = onClick)
+        Modifier.fillMaxWidth().padding(horizontal = 6.dp).clip(shape)
+            .desktopInteractive(shape, enabled = enabled)
+            .clickable(enabled = enabled, onClick = onClick)
             .height(38.dp).padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

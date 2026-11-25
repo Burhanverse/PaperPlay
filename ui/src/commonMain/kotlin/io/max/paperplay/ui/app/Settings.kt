@@ -521,11 +521,14 @@ internal fun SettingsPage(
             var restore by remember { mutableStateOf(backend.sessionRestore) }
             SwitchRow("Restore last session", restore, { restore = it; backend.setSessionRestore(it) }, Icons.Rounded.Sync,
                 "Opens with the last queue and position, paused")
+            if (devUnlocked) {
+                SectionLabel("Developer")
+                NavRow("Motion Lab", "Live-tune motion tokens and inspect frame timings", Icons.Rounded.Animation) { stack.add("motion_lab") }
+            }
             if (isPhone && devUnlocked) {
                 val chain by backend.sinkChain.collectAsState()
                 val devApi34 by backend.devApi34Mixer.collectAsState()
                 val devUnified by backend.devUseUnifiedBitPerfect.collectAsState()
-                SectionLabel("Developer")
                 SwitchRow(
                     "Unified Bit-perfect engine",
                     devUnified,
@@ -541,7 +544,6 @@ internal fun SettingsPage(
                     )
                 }
                 NavRow("USB probe", "Hardware descriptor probe and bit-perfect mixer spike", Icons.Rounded.BugReport) { stack.add("usb_probe") }
-                NavRow("Motion Lab", "Live-tune motion tokens and inspect frame timings", Icons.Rounded.Animation) { stack.add("motion_lab") }
                 SwitchRow(
                     "API 34+ bit-perfect mixer",
                     devApi34,

@@ -38,7 +38,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -88,6 +90,7 @@ fun SongRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
+                .then(if (!io.max.paperplay.ui.isPhone) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
                 .hoverable(hover)
                 // A right click (mouse) opens the same menu as the three dots.
                 .pointerInput(actions != null && !io.max.paperplay.ui.isPhone) {

@@ -126,7 +126,9 @@ fun HomeScreen(
     BoxWithConstraints(modifier) {
     // A wide window (desktop) gets a denser top: tiles at a fixed width beside a compact recently played row.
     val wide = maxWidth >= 900.dp
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding)) {
+    val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    DesktopScrollHost(homeListState, Modifier.fillMaxSize()) { scrollMod ->
+    LazyColumn(scrollMod, state = homeListState, contentPadding = PaddingValues(bottom = bottomPadding)) {
         item { HomeHeader(name, message) }
         if (ready && wide && (recentPlayed != null || tileRows.isNotEmpty())) item(key = "hero") {
             Row(Modifier.fillMaxWidth().padding(top = 0.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -205,6 +207,7 @@ fun HomeScreen(
                 }
             }
         }
+    }
     }
     }
 }

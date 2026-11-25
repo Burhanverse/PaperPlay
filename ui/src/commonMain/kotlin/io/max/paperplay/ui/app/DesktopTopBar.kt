@@ -47,14 +47,30 @@ internal fun DesktopTopBar(
     val private by backend.privateSession.collectAsState()
     var menu by remember { mutableStateOf(false) }
     Row(modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        IconButton(onBack, enabled = canBack, modifier = Modifier.size(40.dp)) { AppIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-        IconButton({ onGo("home") }, Modifier.size(40.dp)) { AppIcon(Icons.Rounded.Home, "Home", tint = scheme.onBackground) }
+        DesktopTooltip("Back (Alt+Left)", enabled = canBack) {
+            IconButton(
+                onBack,
+                enabled = canBack,
+                modifier = Modifier.size(40.dp).desktopInteractive(CircleShape, enabled = canBack),
+            ) { AppIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+        }
+        DesktopTooltip("Home") {
+            IconButton(
+                { onGo("home") },
+                Modifier.size(40.dp).desktopInteractive(CircleShape),
+            ) { AppIcon(Icons.Rounded.Home, "Home", tint = scheme.onBackground) }
+        }
         Box(Modifier.weight(1f))
         Box {
-            Box(Modifier.size(40.dp).clip(CircleShape).clickable { menu = true }, contentAlignment = Alignment.Center) {
-                Avatar(prefs.profilePhoto, prefs.profileName, 34.dp)
-                // A small dot says the session is private.
-                if (private) Box(Modifier.align(Alignment.BottomEnd).size(10.dp).clip(CircleShape).background(scheme.primary))
+            DesktopTooltip("Account and settings") {
+                Box(
+                    Modifier.size(40.dp).clip(CircleShape).desktopInteractive(CircleShape).clickable { menu = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Avatar(prefs.profilePhoto, prefs.profileName, 34.dp)
+                    // A small dot says the session is private.
+                    if (private) Box(Modifier.align(Alignment.BottomEnd).size(10.dp).clip(CircleShape).background(scheme.primary))
+                }
             }
             DropdownMenu(menu, { menu = false }) {
                 DropdownMenuItem({ Text("Profile") }, { menu = false; onGo("profile") })

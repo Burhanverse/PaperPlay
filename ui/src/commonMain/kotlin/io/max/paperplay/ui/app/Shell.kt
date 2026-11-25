@@ -5,6 +5,7 @@ import androidx.compose.foundation.focusable
 import io.max.paperplay.ui.theme.schemeFromSeed
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.layout.Row
@@ -110,9 +111,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     var page by remember { mutableStateOf("home") }
     var detail by remember { mutableStateOf<Detail?>(null) }
     var settings by remember { mutableStateOf(false) }
+    var showNow by remember { mutableStateOf(false) }
     val settingsStack = remember { mutableStateListOf<String>() }
     // True when a page was opened straight from Profile or a library link: Back then returns there, not to the Settings list.
     var settingsDeep by remember { mutableStateOf(false) }
+    var desktopNavMove by remember { mutableStateOf(NavMove.Switch) }
     val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
     var savedPlayerOpen by rememberSaveable { mutableStateOf(false) }
     val playerController = rememberPlayerTransitionController(
@@ -129,7 +132,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     // Left for a while (phone in the background): free the decoded covers and compact the heap. Opening the app decodes what is on screen again.
     val inForeground = io.max.paperplay.ui.rememberAppForeground()
     androidx.compose.runtime.LaunchedEffect(inForeground) {
-        if (!inForeground) { kotlinx.coroutines.delay(10_000); SharedCovers.loader.clear(); System.gc() }
+        if (!inForeground && (isPhone || !io.max.paperplay.ui.AppForegroundState.isVisible)) {
+            kotlinx.coroutines.delay(10_000)
+            SharedCovers.loader.clear()
+            System.gc()
+        }
     }
     // Where the phone came from, so Back returns there instead of jumping to Home or Settings.
     val history = remember { mutableStateListOf<NavSnapshot>() }
@@ -139,8 +146,12 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     LaunchedEffect(where) { io.max.paperplay.player.PlayLog.log("nav", where) }
     fun navigate(change: () -> Unit) {
         val before = snapshot()
+        val beforeLevel = DeskKey(showNow, before.settings, before.detail, before.page).level
         change()
-        if (snapshot() != before) {
+        val after = snapshot()
+        if (after != before) {
+            val afterLevel = DeskKey(showNow, after.settings, after.detail, after.page).level
+            desktopNavMove = navMove(beforeLevel, afterLevel)
             history.add(before)
             if (history.size > 40) history.removeAt(0)
         }
@@ -151,6 +162,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
 
     fun goBack() {
+        desktopNavMove = NavMove.Back
         val to = history.removeLastOrNull()
         if (to != null) {
             tab = to.tab; libraryTab = to.libraryTab; profilePage = to.profilePage; detail = to.detail
@@ -170,14 +182,17 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         if (pb.current == null) {
             showLyricsFullScreen = false
             showEqFullScreen = false
+            showNow = false
             playerController.snapClosed()
         }
     }
     fun handleBack() {
+        desktopNavMove = NavMove.Back
         when {
             showEqFullScreen -> showEqFullScreen = false
             showLyricsFullScreen -> showLyricsFullScreen = false
             playerController.isComposed -> playerController.commitBack()
+            !isPhone && showNow -> showNow = false
             settings && settingsStack.size > (if (settingsDeep || !isPhone) 1 else 0) -> settingsStack.removeAt(settingsStack.lastIndex)
             else -> goBack()
         }
@@ -588,8 +603,15 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 val volume by backend.volume.collectAsState()
                 LaunchedEffect(settings) { if (settings && settingsStack.isEmpty()) settingsStack.add("style") }
                 val playlistId = (detail as? Detail.Playlist)?.id
-                var showNow by remember { mutableStateOf(false) }
                 LaunchedEffect(page, detail, settings) { showNow = false }
+                val droppedFiles by IncomingDrops.files.collectAsState()
+                val dropDragging by IncomingDrops.dragging.collectAsState()
+                val dropCount by IncomingDrops.dragCount.collectAsState()
+                LaunchedEffect(droppedFiles) {
+                    if (droppedFiles.isNotEmpty() && page != "upload") {
+                        navigate { page = "upload"; detail = null; settings = false; showNow = false }
+                    }
+                }
                 val keys = rememberPlayerKeys(backend, volume)
                 // Alt + Left arrow goes back, like the mouse's back button.
                 val backKey = Modifier.onPreviewKeyEvent { e ->
@@ -599,7 +621,6 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 // The saved song comes back a few seconds after the window shows; the panel's room is kept from the first frame so the page does not re-lay out.
                 var waitingForSong by remember { mutableStateOf(prefs.songExpected) }
                 LaunchedEffect(Unit) { kotlinx.coroutines.delay(25_000); waitingForSong = false }
-                val panel = prefs.nowPlayingPanel && (pb.current != null || waitingForSong) && !showNow
                 var sidebarExpanded by remember { mutableStateOf(true) }
                 WindowTintFromState(g0)
                 // The mouse back button goes back like the phone gesture.
@@ -610,38 +631,44 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 val shell: @Composable () -> Unit = {
                 val goPage: (String) -> Unit = { target ->
                     navigate {
-                        detail = null; settingsStack.clear()
+                        detail = null; settingsStack.clear(); showNow = false
                         if (target == "settings") { settings = true; settingsDeep = false } else if (target in toolPages.map { t -> t.id }) { settings = true; settingsStack.add(target) } else { page = target; settings = false }
                     }
                 }
                 Column(Modifier.fillMaxSize().mouseBackButton(::handleBack).playerKeys(keys).then(backKey)) {
-                    DesktopTopBar(prefs, backend, canBack = history.isNotEmpty() || settings || detail != null, onBack = ::handleBack, onGo = goPage, Modifier.padding(start = 12.dp, top = 8.dp, end = 12.dp))
-                    Row(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, top = 8.dp, end = 12.dp)) {
+                    DesktopTopBar(prefs, backend, canBack = showNow || history.isNotEmpty() || settings || detail != null, onBack = ::handleBack, onGo = goPage, Modifier.padding(start = 12.dp, top = 8.dp, end = 12.dp))
+                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, top = 8.dp, end = 12.dp)) {
+                        val panel = prefs.nowPlayingPanel && (pb.current != null || waitingForSong) && !showNow && maxWidth >= 960.dp
+                        val sidebarTarget = (if (sidebarExpanded) prefs.sidebarWidth.dp else 72.dp).coerceAtMost(maxWidth * 0.35f)
+                        Row(Modifier.fillMaxSize()) {
                         Sidebar(
                             page, playlistId, lib.playlists,
                             expanded = sidebarExpanded,
                             onToggle = { sidebarExpanded = !sidebarExpanded },
                             onPage = goPage,
-                            onPlaylist = { g -> navigate { detail = Detail.Playlist(g.id, g.name); settings = false } },
+                            onPlaylist = { g -> navigate { detail = Detail.Playlist(g.id, g.name); settings = false; showNow = false } },
                             onNewPlaylist = { newPlaylist = true },
-                            onTelegram = { t -> navigate { detail = Detail.Songs(t.name, t.songs); settings = false } },
-                            modifier = Modifier.animatedWidth(if (sidebarExpanded) prefs.sidebarWidth.dp else 72.dp).fillMaxHeight(),
+                            onTelegram = { t -> navigate { detail = Detail.Songs(t.name, t.songs); settings = false; showNow = false } },
+                            modifier = Modifier.animatedWidth(sidebarTarget).fillMaxHeight(),
                         )
                         Spacer(Modifier.width(12.dp))
                         Box(Modifier.weight(1f).fillMaxHeight().deskCard()) {
                             val pad = 16.dp
                             val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
+                            val density = androidx.compose.ui.platform.LocalDensity.current
+                            val shiftPx = with(density) { io.max.paperplay.ui.theme.Motion.Desktop.PageShiftDp.dp.roundToPx() }
+                            val sideShiftPx = with(density) { io.max.paperplay.ui.theme.Motion.Desktop.PageSideShiftDp.dp.roundToPx() }
                             val pageStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                             AnimatedContent(
                                 targetState = DeskKey(showNow && pb.current != null, settings, detail, page),
                                 modifier = Modifier.fillMaxSize(),
-                                transitionSpec = { pageTransition(navMove(initialState.level, targetState.level), reduceMotion) },
+                                transitionSpec = { desktopPageTransition(desktopNavMove, reduceMotion, shiftPx, sideShiftPx) },
                                 label = "page",
                             ) { k ->
                             val deskPage: @Composable () -> Unit = {
                             val d = k.detail
                             when {
-                                k.now -> DesktopNowPlayingView(pb, backend, actions, { showNow = false }, Modifier.fillMaxSize())
+                                k.now -> DesktopNowPlayingView(pb, backend, actions, { desktopNavMove = NavMove.Back; showNow = false }, Modifier.fillMaxSize())
                                 k.settings -> CompositionLocalProvider(LocalSettingsInfo provides true) { DesktopSettings(settingsStack, prefs, conn, songs.size, backend, onRestore, ::goBack, Modifier.fillMaxSize()) }
                                 d != null -> DetailScreen(d, backend, currentId, actions, ::goBack, pad)
                                 k.page == "home" -> HomeScreen(lib, home, favorites, currentId, conn, scan, actions, { d2 -> navigate { detail = d2 } }, pad, name = prefs.profileName, warm = homeWarm)
@@ -697,10 +724,16 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                 else Box(Modifier.width(320.dp).fillMaxHeight().deskCard())
                             }
                         }
+                        }
                     }
                     RemoteNowStrip(backend)
                     PlayerBar(pb, volume, backend, actions, { playerController.open() },
-                        onNowPlaying = { showNow = !showNow }, transportInPage = showNow && pb.current != null, extras = { DevicePickerButton(onOpen = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } }); MiniPlayerToggle() })
+                        onNowPlaying = {
+                            desktopNavMove = if (showNow) NavMove.Back else NavMove.Forward
+                            showNow = !showNow
+                        },
+                        transportInPage = showNow && pb.current != null,
+                        extras = { DevicePickerButton(onOpen = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } }); MiniPlayerToggle() })
                 }
                 }
                 if (nowSong != null) CoverTinted(nowSong.coverUri) {
@@ -718,6 +751,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 PlayerSheetHost(playerController) { FullPlayer(pb, pbError, backend, actions, { playerController.close() }) }
                 AppSnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp), tint)
                 ShortcutsOverlay(keys, Modifier.fillMaxSize())
+                DesktopFileDropOverlay(visible = dropDragging, fileCount = dropCount)
             }
             Row(
                 Modifier.align(Alignment.TopEnd).padding(top = if (isPhone) WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp else 16.dp, end = 12.dp),
@@ -732,17 +766,21 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     val on = MaterialTheme.colorScheme.primary
                     val off = MaterialTheme.colorScheme.onSurfaceVariant
                     Spacer(Modifier.width(8.dp))
-                    androidx.compose.material3.Surface(
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        color = androidx.compose.ui.graphics.Color.Transparent,
-                        modifier = Modifier.clickable { prefs.putNowPlayingPanel(!prefs.nowPlayingPanel) }
-                    ) {
-                        io.max.paperplay.ui.components.AppIcon(
-                            Icons.AutoMirrored.Rounded.ViewSidebar,
-                            if (panelOn) "Hide the now playing panel" else "Show the now playing panel",
-                            Modifier.padding(10.dp).size(20.dp),
-                            tint = if (panelOn) on else off
-                        )
+                    DesktopTooltip("Show now playing panel") {
+                        androidx.compose.material3.Surface(
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            color = androidx.compose.ui.graphics.Color.Transparent,
+                            modifier = Modifier
+                                .desktopInteractive(androidx.compose.foundation.shape.CircleShape)
+                                .clickable { prefs.putNowPlayingPanel(!prefs.nowPlayingPanel) },
+                        ) {
+                            io.max.paperplay.ui.components.AppIcon(
+                                Icons.AutoMirrored.Rounded.ViewSidebar,
+                                if (panelOn) "Hide the now playing panel" else "Show the now playing panel",
+                                Modifier.padding(10.dp).size(20.dp),
+                                tint = if (panelOn) on else off
+                            )
+                        }
                     }
                 }
             }
