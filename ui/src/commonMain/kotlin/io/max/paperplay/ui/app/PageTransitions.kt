@@ -25,10 +25,9 @@ internal fun navMove(fromLevel: Int, toLevel: Int) = when {
     else -> NavMove.Switch
 }
 
-// @MotionRawAllowed: EnterTransition/ExitTransition builders are non-@Composable and read Motion.* tokens directly.
 private fun reducedCrossfade(): ContentTransform =
-    fadeIn(tween(Motion.Effects.ReducedFadeMs, easing = Motion.Standard)) togetherWith
-        fadeOut(tween(Motion.Effects.ReducedFadeMs, easing = Motion.Standard))
+    fadeIn(tween(Motion.Effects.ReducedFadeMs, easing = Motion.Standard)) togetherWith // @MotionRawAllowed
+        fadeOut(tween(Motion.Effects.ReducedFadeMs, easing = Motion.Standard)) // @MotionRawAllowed
 
 /**
  * The transition between two pages. Going deeper slides the new page in from the right over the old one, which drifts
