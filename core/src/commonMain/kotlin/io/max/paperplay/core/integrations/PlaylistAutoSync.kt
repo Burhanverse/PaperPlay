@@ -71,7 +71,26 @@ class PlaylistAutoSync(
                     pause(THREE_HOURS)
                 }
             },
+            // A song that arrived is matched soon, without waiting for Spotify to answer.
+            scope.launch {
+                library.changes.collect {
+                    pause(MATCH_GAP)
+                    runCatching { matchLibrary() }.onFailure { if (it is CancellationException) throw it; log("Match: ${it.message}") }
+                }
+            },
         )
+    }
+
+    private var matched: List<Long>? = null
+
+    /** Matches waiting tracks with the library if it changed since the last time. */
+    @Synchronized
+    fun matchLibrary(): Boolean {
+        if (store.libraryMark() == matched) return false
+        val changed = reconcileImports(store)
+        matched = store.libraryMark()
+        if (changed) library.invalidateSoon()
+        return changed
     }
 
     @Volatile private var stopGen = 0
@@ -109,6 +128,8 @@ class PlaylistAutoSync(
      */
     suspend fun fetchFromIndex(): Int {
         if (!IndexPrefs.autoCopy(library) || !account.loggedIn.value) return 0
+        // Never fetch what has arrived meanwhile.
+        runCatching { matchLibrary() }.onFailure { log("Match: ${it.message}") }
         val perMinute = (library.pref("rate_accountCopy")?.toIntOrNull() ?: 20).coerceIn(1, 120)
         val gap = 60_000L / perMinute
         val taken = mutableSetOf<Pair<Long, Long>>()
@@ -138,6 +159,7 @@ class PlaylistAutoSync(
     }
 
     private companion object {
+        const val MATCH_GAP = 10_000L
         const val RETRY = 15L * 60 * 1000
         const val SIX_HOURS = 6L * 60 * 60 * 1000
         const val THREE_HOURS = 3L * 60 * 60 * 1000

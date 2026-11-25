@@ -57,6 +57,7 @@ import io.max.paperplay.core.integrations.acceptMatch
 import io.max.paperplay.core.integrations.exportCsv
 import io.max.paperplay.core.integrations.importPlaylist
 import io.max.paperplay.core.integrations.reconcileImports
+import io.max.paperplay.core.integrations.reviewCandidates
 import io.max.paperplay.core.integrations.spotifyLinkOf
 import io.max.paperplay.core.library.MissingTrack
 import io.max.paperplay.ui.components.AppIcon
@@ -117,6 +118,10 @@ internal fun MissingRow(count: Int, onClick: () -> Unit) {
 @Composable
 internal fun MissingSheet(backend: CoreBackend, store: ImportStore, missing: List<MissingTrack>, listName: String, onDismiss: () -> Unit, onChanged: () -> Unit) {
     var exportText by remember { mutableStateOf<String?>(null) }
+    // Reads and compares the whole library, so not while drawing.
+    val mine by androidx.compose.runtime.produceState(emptyMap<String, List<io.max.paperplay.core.library.Song>>(), missing) {
+        value = withContext(Dispatchers.Default) { runCatching { reviewCandidates(store, missing) }.getOrDefault(emptyMap()) }
+    }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("${missing.size} not in your library", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
@@ -126,7 +131,7 @@ internal fun MissingSheet(backend: CoreBackend, store: ImportStore, missing: Lis
             }) { AppIcon(Icons.Rounded.IosShare, "Export the missing list") }
         }
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-            items(missing, key = { it.track_key }) { t -> MissingTrackRow(backend, store, t, onChanged) }
+            items(missing, key = { it.track_key }) { t -> MissingTrackRow(backend, store, t, mine[t.track_key].orEmpty(), onChanged) }
         }
     }
     exportText?.let { text ->
@@ -145,7 +150,7 @@ internal fun MissingSheet(backend: CoreBackend, store: ImportStore, missing: Lis
 }
 
 @Composable
-private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: MissingTrack, onChanged: () -> Unit) {
+private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: MissingTrack, mine: List<io.max.paperplay.core.library.Song>, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     var post by remember(t.track_key) { mutableStateOf<ChatPost?>(null) }
     var state by remember(t.track_key) { mutableStateOf<String?>(null) }
@@ -156,6 +161,7 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
     }
     val p = post
     val wanted = t.duration_sec.toInt()
+    var accepting by remember(t.track_key) { mutableStateOf(false) }
     val sure = p != null && p.durationSec > 0 && wanted > 0 && abs(p.durationSec - wanted) <= 8
     Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         AppIcon(if (p == null) Icons.Rounded.MusicOff else Icons.AutoMirrored.Rounded.HelpOutline, null, Modifier.padding(end = 16.dp).size(24.dp))
@@ -168,6 +174,25 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
                     state ?: if (sure) "In your chats: $what" else "Maybe: $what (${p.durationSec}s, wanted ${wanted}s)",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
                 )
+            }
+            for (s in mine) Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "In your library: ${s.title} · ${s.artist} (${s.duration_sec}s, wanted ${wanted}s)", Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                )
+                TextButton({
+                    accepting = true
+                    scope.launch {
+                        try {
+                            // A write waits while a scan holds the library, so not where the screen is drawn.
+                            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Default) { acceptMatch(store, t, s) }
+                            backend.services.library.invalidate()
+                            onChanged()
+                        } finally {
+                            accepting = false
+                        }
+                    }
+                }, enabled = !accepting) { Text("This one") }
             }
         }
         CopyLinksButton(backend, t)

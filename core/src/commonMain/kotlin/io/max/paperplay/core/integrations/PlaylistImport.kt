@@ -148,6 +148,11 @@ private fun credited(title: String, artist: String): List<String> =
 /** How sure a library song is the same recording as a wanted track. */
 enum class MatchKind { Sure, Maybe }
 
+private fun sharesArtist(s: Song, title: String, artist: String): Boolean {
+    val mine = credited(s.title, s.artist)
+    return credited(title, artist).any { a -> mine.any { b -> a in b || b in a } }
+}
+
 /**
  * Same song if the loose title agrees and an artist is shared. With lengths known and within 8 s
  * that is [MatchKind.Sure]; a different or unknown length is only [MatchKind.Maybe], for the owner to confirm.
@@ -155,20 +160,13 @@ enum class MatchKind { Sure, Maybe }
 fun matchKind(s: Song, title: String, artist: String, durationSec: Int): MatchKind? {
     val key = looseTitleKey(title, artist)
     if (key.isEmpty() || looseTitleKey(s.title, s.artist) != key) return null
-    val mine = credited(s.title, s.artist)
-    val theirs = credited(title, artist)
-    if (theirs.none { a -> mine.any { b -> a in b || b in a } }) return null
+    if (!sharesArtist(s, title, artist)) return null
     val known = s.duration_sec > 0 && durationSec > 0
     return if (known && abs(s.duration_sec - durationSec) <= 8) MatchKind.Sure else MatchKind.Maybe
 }
 
 fun matchesTrack(s: Song, title: String, artist: String, durationSec: Int): Boolean =
     matchKind(s, title, artist, durationSec) == MatchKind.Sure
-
-/** Songs that might be [title] but can't be told for sure, closest length first. */
-fun maybeMatches(songs: Iterable<Song>, title: String, artist: String, durationSec: Int): List<Song> =
-    songs.filter { matchKind(it, title, artist, durationSec) == MatchKind.Maybe }
-        .sortedBy { abs(it.duration_sec - durationSec) }
 
 private fun Song.lossless() = isLossless(mime, file_name)
 
@@ -211,6 +209,14 @@ class ImportStore(val repo: LibraryRepo, private val driver: SqlDriver, val cloc
 
     fun livePlaylists(): List<Playlist> = lists.livePlaylists().executeAsList()
     fun songs(): List<Song> = repo.db.allSongsNow()
+
+    /** Changes when songs or waiting tracks came, went or got another title, artist or length. */
+    fun libraryMark(): List<Long> = driver.executeQuery(
+        null,
+        "SELECT COUNT(*), COALESCE(SUM(duration_sec), 0), COALESCE(SUM(length(title) + length(artist)), 0), COALESCE(SUM(message_id), 0), (SELECT COUNT(*) FROM missing_tracks) FROM songs",
+        { c -> c.next(); QueryResult.Value(List(5) { c.getLong(it)!! }) }, 0,
+    ).value
+
     fun missing(playlistId: Long): List<MissingTrack> = lists.missingTracks(playlistId).executeAsList()
     fun createPlaylist(name: String, sourceUrl: String): Long = repo.createPlaylist(name, sourceUrl)
 
@@ -279,11 +285,14 @@ class ImportStore(val repo: LibraryRepo, private val driver: SqlDriver, val cloc
     private fun countParams(sql: String) = sql.count { it == '?' }
 }
 
-/** Review list: waiting tracks of [tracks] with the songs that might be them. */
+/** Review list: waiting tracks of [tracks] with the songs that might be them: same artist and the same title, or one title begins with the other. */
 fun reviewCandidates(store: ImportStore, tracks: Iterable<MissingTrack>): Map<String, List<Song>> {
-    val byTitle = store.songs().groupBy { looseTitleKey(it.title, it.artist) }
+    val songs = store.songs().map { looseTitleKey(it.title, it.artist) to it }.filter { it.first.isNotEmpty() }
     return tracks.associate { t ->
-        t.track_key to maybeMatches(byTitle[looseTitleKey(t.title, t.artist)].orEmpty(), t.title, t.artist, t.duration_sec.toInt())
+        val key = looseTitleKey(t.title, t.artist)
+        fun near(k: String) = k == key || minOf(k.length, key.length) >= 4 && (k.startsWith(key) || key.startsWith(k))
+        t.track_key to songs.filter { (k, s) -> near(k) && sharesArtist(s, t.title, t.artist) }
+            .sortedWith(compareBy({ it.first != key }, { abs(it.second.duration_sec - t.duration_sec) })).take(3).map { it.second }
     }
 }
 
@@ -394,11 +403,11 @@ fun stampSourceDates(store: ImportStore, playlistId: Long, tracks: List<Imported
  * when one has appeared. Run when songs are added or synced.
  *
  * Only the playlist entry moves. The old file stays in Telegram: deleting it automatically
- * could lose the wrong song on a bad match.
+ * could lose the wrong song on a bad match. True when a playlist changed.
  */
-fun reconcileImports(store: ImportStore) {
+fun reconcileImports(store: ImportStore): Boolean {
     val imported = store.livePlaylists().filter { it.source_url != null }
-    if (imported.isEmpty()) return
+    if (imported.isEmpty()) return false
     val library = store.songs()
     val byTitle = library.groupBy { looseTitleKey(it.title, it.artist) }
     fun sameTitle(title: String, artist: String) = byTitle[looseTitleKey(title, artist)].orEmpty()
@@ -432,4 +441,5 @@ fun reconcileImports(store: ImportStore) {
         }
     }
     if (changed) store.announceChange()
+    return changed
 }

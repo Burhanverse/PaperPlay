@@ -7,6 +7,7 @@ import io.max.paperplay.core.account.ChatPost
 import io.max.paperplay.core.account.IndexProgress
 import io.max.paperplay.core.account.IndexedSong
 import io.max.paperplay.core.account.LoginStep
+import io.max.paperplay.core.account.asSong
 import io.max.paperplay.core.app.LibraryRepository
 import io.max.paperplay.core.db.LibraryDatabase
 import io.max.paperplay.core.db.libraryDriver
@@ -99,6 +100,26 @@ class PlaylistAutoSyncTest {
         playlistWithMissing(*Array(70) { "S$it" })
         val index = StubIndex { t -> listOf(post(t.drop(1).toLong() + 1, t)) }
         assertEquals(50, sync(index).fetchFromIndex())
+    }
+
+    /** A song that arrives joins its playlist without Spotify being read again, and is not fetched a second time. */
+    @Test
+    fun aNewSongIsMatchedWithoutSpotify() = runBlocking {
+        library.setPref("index_auto_copy", "true")
+        playlistWithMissing("One", "Three (Live)")
+        val index = StubIndex { listOf(post(9, it)) }
+        val sync = sync(index)
+        assertEquals(false, sync.matchLibrary())
+        library.repo.db.songsQueries.insertSong(post(1, "One").asSong())
+        library.repo.db.songsQueries.insertSong(post(2, "Three").asSong())
+        val list = store.livePlaylists().single().id
+        assertEquals(1, sync.fetchFromIndex())
+        assertEquals("Three (Live)", index.copied.single().title)
+        assertEquals(listOf(1L), store.entries(list).map { it.message_id })
+        val waiting = store.missing(list)
+        // Only a suggestion: the other title is for the owner to confirm.
+        assertEquals(2L, reviewCandidates(store, waiting).getValue(waiting.single().track_key).single().message_id)
+        assertEquals(false, sync.matchLibrary())
     }
 
     @Test
