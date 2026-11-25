@@ -145,6 +145,7 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [~] No account login, no account work: reading a chat, indexing by hand and copying to the main chat stop at once; a read that loses the login is left unfinished instead of marked complete
 - [~] Lyrics controls (source chip, translation toggle, Aa) sit together on the left, 40 dp tall (`LyricsView.kt`); not seen on screen
 - [x] Playlist match: a tag after a dash ("Song (feat. X) - Radio Edit") now matches the bracket forms; `LooseTitleKeyTest`
+- [~] Playlist match: artist lists, film credits, version words and accents no longer hide a song; new songs are matched 10 s after they arrive; the missing list offers library songs ("This one"). Tests pass, not tried on a device
 - [x] LAN address book no longer rewrites the `lan_addresses` pref when nothing changed (was every 15 s)
 - [x] `:core:jvmTest` green (236): four stale tests brought in line (copy keeps `remove_caption`, empty pages are sent, word-based search, best of three for the 20 ms FTS budget)
 - [x] `ReleaseNotesTest` rewritten against `ChangelogParser.parseReleaseBody`; `:ui:jvmTest` green
@@ -222,7 +223,7 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [ ] Neighbours view in Discover (core `recs/Suggestions.kt` exists; no UI found)
 - [~] Recover songs the bot cannot read (Settings > Library > Recover songs): account copy, or account download and main bot upload, then delete the old post. UI wired (`RecoverPage.kt`, Settings row). Not built or tried. Describing the account as optional in onboarding still to do
 - [x] Channels and chats on one page, per channel Copy to main chat switch (default off; `ChannelsPage.kt` exists). Not built or tried
-- [~] Music folders with optional sending to Telegram (desktop picker, Android typed path only, no watcher). Not built or tried
+- [~] Music folders with optional sending to Telegram (system folder picker on Android and desktop, no watcher). Picker built, not tried on a device
 - [ ] Backup to a Telegram topic: song database, covers and lyrics only (no tokens or session), selectable
       period in Settings (daily, 3 times a week, weekly, manual), restore through the owner's account
 
@@ -434,7 +435,7 @@ code" means the code exists, not that it works.
 - [ ] Embedded lyrics tag; pick the lyrics source order; per-song "wrong lyrics" button
 - [ ] Lyrics and metadata run progress on the Home scan chip (progress shows in Tasks)
 - [ ] In-app update from GitHub Releases; the app downloading TDLib
-- [ ] Android folder picker for music folders (no `OpenDocumentTree`) and any folder watcher
+- [~] Android folder picker for music folders (`OpenDocumentTree`, not tried on a device); no folder watcher
 - [ ] Camera QR scan for Network play (the page says so) and the `paperplay://netplay` manifest intent filter (the manifest only has `paperplay://spotify`)
 - [ ] macOS packaging (`VlcLoader.kt` knows macOS library paths; there is no macOS target)
 - [ ] Activity log kept across restarts and a warning level
