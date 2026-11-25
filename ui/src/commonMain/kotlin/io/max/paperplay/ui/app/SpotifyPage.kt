@@ -137,6 +137,22 @@ private fun ReviewList(backend: CoreBackend, store: ImportStore, waiting: List<M
     val found by androidx.compose.runtime.produceState<Map<String, List<io.max.paperplay.core.library.Song>>?>(null, waiting) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { reviewCandidates(store, waiting) }
     }
+    // A write waits while an index or scan holds the library, so not where the screen is drawn. One tap per track.
+    val scope = rememberCoroutineScope()
+    var accepting by remember { mutableStateOf(setOf<String>()) }
+    val accept = { t: MissingTrack, s: Song ->
+        if (t.track_key !in accepting) {
+            accepting = accepting + t.track_key
+            scope.launch {
+                try {
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { acceptMatch(store, t, s) }
+                    onChange()
+                } finally {
+                    accepting = accepting - t.track_key
+                }
+            }
+        }
+    }
     val candidates = found ?: return
     val withMatches = waiting.filter { candidates[it.track_key].orEmpty().isNotEmpty() }
     if (withMatches.isEmpty()) {
@@ -149,7 +165,7 @@ private fun ReviewList(backend: CoreBackend, store: ImportStore, waiting: List<M
             for (s in candidates[t.track_key].orEmpty()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("${s.title} - ${s.artist}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton({ acceptMatch(store, t, s); onChange() }) { Text("This one") }
+                    OutlinedButton({ accept(t, s) }, enabled = t.track_key !in accepting) { Text("This one") }
                 }
             }
         }
