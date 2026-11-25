@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
 import io.max.paperplay.ui.components.uniqueKeys
@@ -228,10 +228,14 @@ private fun Modifier.staggerIn(order: Int): Modifier {
     val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current || LocalUiPrefs.current?.homeAnimation == false
     var shown by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(reduce) }
     val p = remember { androidx.compose.animation.core.Animatable(if (shown) 1f else 0f) }
+    val spec = io.max.paperplay.ui.theme.motionEffectTween<Float>(
+        durationMs = io.max.paperplay.ui.theme.Motion.Spatial.StaggerEnterMs,
+        easing = io.max.paperplay.ui.theme.Motion.Emphasized,
+    )
     androidx.compose.runtime.LaunchedEffect(Unit) {
         if (shown) return@LaunchedEffect
-        kotlinx.coroutines.delay(order * 70L)
-        p.animateTo(1f, androidx.compose.animation.core.tween(450, easing = io.max.paperplay.ui.theme.Motion.Emphasized))
+        kotlinx.coroutines.delay(order * io.max.paperplay.ui.theme.Motion.Spatial.StaggerStepMs)
+        p.animateTo(1f, spec)
         shown = true
     }
     return graphicsLayer { alpha = p.value; translationY = (1f - p.value) * 24.dp.toPx() }
@@ -242,7 +246,7 @@ private var introDone = false
 
 /**
  * The start-up animation: a tile or card flies in from the left, the right or the bottom (by its [index]) and snaps into
- * place with a small bounce, one after another from [startMs]. It plays only for what is drawn while the page first appears.
+ * place cleanly (critically damped, zero overshoot), one after another from [startMs]. Plays only during the initial appear.
  */
 @Composable
 private fun Modifier.snapIn(index: Int, startMs: Int): Modifier {
@@ -250,12 +254,13 @@ private fun Modifier.snapIn(index: Int, startMs: Int): Modifier {
     val play = remember { !introDone && !reduce }
     if (!play) return this
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
+    val spec = io.max.paperplay.ui.theme.motionSpatialSpring<Float>(io.max.paperplay.ui.theme.Motion.Spatial.EnterStiffness)
     androidx.compose.runtime.LaunchedEffect(Unit) {
         // The first frames that draw this content are the slow ones (covers go to the graphics memory); the items wait, unseen, until
         // those have passed, so the movement does not start on a long frame and jump.
         repeat(3) { androidx.compose.runtime.withFrameNanos { } }
-        kotlinx.coroutines.delay(startMs + index * 55L)
-        p.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow))
+        kotlinx.coroutines.delay(startMs + index * io.max.paperplay.ui.theme.Motion.Spatial.StaggerStepMs)
+        p.animateTo(1f, spec)
     }
     val from = index % 3
     return graphicsLayer {

@@ -65,7 +65,7 @@ fun SongRow(
     val menuOpen = remember { mutableStateOf(false) }
     // The row's colour eases between states, and a mouse pointer over it lightens it a little (a touch screen never hovers).
     val hover = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    val hovered by hover.collectIsHoveredAsState()
+    val hovered = if (io.max.paperplay.ui.isPhone) false else hover.collectIsHoveredAsState().value
     val rowColor = when {
         selected -> scheme.primaryContainer
         current -> scheme.secondaryContainer.copy(alpha = 0.7f)
@@ -73,7 +73,7 @@ fun SongRow(
     }
     val containerColor by androidx.compose.animation.animateColorAsState(
         if (hovered) androidx.compose.ui.graphics.lerp(rowColor, scheme.onSurface, 0.06f) else rowColor,
-        io.max.paperplay.ui.theme.motionTween(io.max.paperplay.ui.theme.Motion.FAST), label = "row",
+        io.max.paperplay.ui.theme.motionColorSpec(), label = "row",
     )
     val effectiveCoverUri = coverUriOverride ?: song.coverUri
     val coverKey = song.album.ifBlank { song.title.ifBlank { song.id } }

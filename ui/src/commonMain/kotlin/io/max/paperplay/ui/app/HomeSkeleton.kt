@@ -1,10 +1,5 @@
 package io.max.paperplay.ui.app
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,27 +13,26 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.max.paperplay.ui.theme.LocalAmbientClock
 import io.max.paperplay.ui.theme.LocalReduceMotion
+import io.max.paperplay.ui.theme.Motion
+import io.max.paperplay.ui.theme.rememberAmbientClock
 
-/** A grey placeholder shape with a soft light sweeping across it (still when the system asks for reduced motion). */
+/** A grey placeholder shape with a soft light sweeping across it using the shared [AmbientClock] (still under reduced motion). */
 @Composable
 fun Modifier.skeleton(shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(10.dp)): Modifier {
     val reduce = LocalReduceMotion.current
     val base = MaterialTheme.colorScheme.surfaceContainerHigh
     if (reduce) return this.clip(shape).background(base)
+    val clock = LocalAmbientClock.current ?: rememberAmbientClock(active = true)
+    clock.subscribe(active = true)
     val light = androidx.compose.ui.graphics.lerp(base, MaterialTheme.colorScheme.onSurface, 0.10f)
-    val sweep = rememberInfiniteTransition(label = "skeleton").animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1300, easing = androidx.compose.animation.core.LinearEasing), RepeatMode.Restart), label = "skeleton sweep",
-    )
     return this.clip(shape).background(base).drawWithCache {
         val w = size.width.coerceAtLeast(1f)
         val brush = androidx.compose.ui.graphics.Brush.linearGradient(
@@ -48,7 +42,7 @@ fun Modifier.skeleton(shape: androidx.compose.ui.graphics.Shape = RoundedCornerS
         )
         onDrawWithContent {
             drawContent()
-            val tx = -w + sweep.value * 2f * w
+            val tx = -w + clock.phase(Motion.Ambient.ShimmerPeriodMs) * 2f * w
             withTransform({ translate(left = tx) }) {
                 drawRect(brush, topLeft = androidx.compose.ui.geometry.Offset(-tx, 0f), size = size)
             }

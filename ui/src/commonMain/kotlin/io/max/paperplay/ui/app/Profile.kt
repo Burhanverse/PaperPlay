@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
 
@@ -210,7 +210,7 @@ internal fun ProfileSection(
     Column(
         Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()
             .partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(28.dp))
-            .animateContentSize(),
+            .animateContentSize(io.max.paperplay.ui.theme.motionSpatialSpring()),
     ) {
         val state = if (open) "Expanded" else "Collapsed"
         Row(

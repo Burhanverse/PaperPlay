@@ -61,7 +61,7 @@ fun CoverImage(
     val shape = if (radius * 2 >= size) androidx.compose.foundation.shape.CircleShape else io.max.paperplay.ui.app.appShape(radius, io.max.paperplay.ui.app.CornerArea.Covers)
     // A cover that arrives after the row is shown fades in over the mosaic; one already loaded appears at once.
     val fade = androidx.compose.runtime.remember(coverId) { androidx.compose.animation.core.Animatable(if (painter != null) 1f else 0f) }
-    val fadeSpec = io.max.paperplay.ui.theme.motionTween<Float>(io.max.paperplay.ui.theme.Motion.STANDARD)
+    val fadeSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeStandardMs)
     LaunchedEffect(painter != null) { if (painter != null) fade.animateTo(1f, fadeSpec) }
     val fading = androidx.compose.runtime.remember(coverId) { androidx.compose.runtime.derivedStateOf { fade.value < 1f } }
     Box(modifier.size(size).clip(shape)) {
