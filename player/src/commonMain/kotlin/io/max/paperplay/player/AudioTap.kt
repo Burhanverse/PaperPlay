@@ -54,9 +54,13 @@ object AudioTap {
         var effRateHz: Int = 44100
     }
 
+    private val defaultClock: () -> Long = { System.nanoTime() }
+
     /** Injectable monotonic clock in nanoseconds; overridden in unit tests for deterministic timing. */
     @Volatile
-    var clockNs: () -> Long = { System.nanoTime() }
+    var clockNs: () -> Long = defaultClock
+
+    private inline fun nowClockNs(): Long = if (clockNs === defaultClock) System.nanoTime() else clockNs()
 
     private val windowLong = FloatArray(N_LONG)
     private val windowShort = FloatArray(N_SHORT)
@@ -73,8 +77,7 @@ object AudioTap {
     init {
         var sumL = 0.0
         for (i in 0 until N_LONG) {
-            val a = 2.0 * PI * i / (N_LONG - 1)
-            val w = 0.35875 - 0.48829 * cos(a) + 0.14128 * cos(2.0 * a) - 0.01168 * cos(3.0 * a)
+            val w = 0.5 - 0.5 * cos(2.0 * PI * i / (N_LONG - 1))
             windowLong[i] = w.toFloat()
             sumL += w
         }
@@ -234,7 +237,7 @@ object AudioTap {
 
     /** True while a visual has asked for the spectrum in the last two seconds. The audio thread skips all tap work otherwise. */
     val wanted: Boolean
-        get() = hasRead && (clockNs() - readAt < 2_000_000_000L)
+        get() = hasRead && (nowClockNs() - readAt < 2_000_000_000L)
 
     private val histBands = Array(HIST_SIZE) { FloatArray(BANDS) }
     private val histBass = FloatArray(HIST_SIZE)
@@ -250,7 +253,7 @@ object AudioTap {
     fun bandCenterHz(band: Int): Float = bandCenters[band.coerceIn(0, BANDS - 1)]
 
     /** Updates the audible playback clock anchor from the active engine/sink. Lock-free. */
-    fun updatePlaybackClock(audiblePosUs: Long, speed: Float = currentSpeed, nowNs: Long = clockNs()) {
+    fun updatePlaybackClock(audiblePosUs: Long, speed: Float = currentSpeed, nowNs: Long = nowClockNs()) {
         if (audiblePosUs < 0L) return
         anchorPosUs = audiblePosUs
         anchorWallNs = nowNs
@@ -302,7 +305,7 @@ object AudioTap {
      * and fixed-hop onset state. Zero-allocation and lock-free.
      * Returns true if live, non-stale, non-paused PCM spectrum data is available.
      */
-    fun sampleFrame(out: TapFrame, nowNs: Long = clockNs()): Boolean {
+    fun sampleFrame(out: TapFrame, nowNs: Long = nowClockNs()): Boolean {
         readAt = nowNs
         hasRead = true
         if (paused || nonPcmActive || !hasData) return false
@@ -385,7 +388,7 @@ object AudioTap {
      * Copies the time-aligned spectrum into [out] (length >= [BANDS]).
      * Returns true if live, non-stale, non-paused PCM spectrum data is available.
      */
-    fun sample(out: FloatArray, nowNs: Long = clockNs()): Boolean {
+    fun sample(out: FloatArray, nowNs: Long = nowClockNs()): Boolean {
         readAt = nowNs
         hasRead = true
         if (paused || nonPcmActive || !hasData) return false
@@ -453,7 +456,7 @@ object AudioTap {
 
     /** The spectrum as it was [delayMs] ago, since the sound leaves the speaker a little after it is analysed. */
     fun read(delayMs: Long): FloatArray {
-        val now = clockNs()
+        val now = nowClockNs()
         readAt = now
         hasRead = true
         val want = now - delayMs * 1_000_000L
@@ -477,7 +480,7 @@ object AudioTap {
     }
 
     fun fresh(): Boolean {
-        val now = clockNs()
+        val now = nowClockNs()
         readAt = now
         hasRead = true
         if (paused || nonPcmActive || !hasData) return false
@@ -662,7 +665,7 @@ object AudioTap {
     }
 
     private fun analyse(ptsUs: Long) {
-        val startNs = clockNs()
+        val startNs = nowClockNs()
 
         // 1. Long FFT (4096, Blackman-Harris) for <= 550 Hz resolution (~10.8 Hz/bin).
         var idxL = ringPos
@@ -755,7 +758,7 @@ object AudioTap {
         }
         val onsetNorm = hopOnset.onset
 
-        val now = clockNs()
+        val now = nowClockNs()
         lastPushWallNs = now
         val playoutNs = computePlayoutNs(now, ptsUs)
         latestPlayoutNs = playoutNs

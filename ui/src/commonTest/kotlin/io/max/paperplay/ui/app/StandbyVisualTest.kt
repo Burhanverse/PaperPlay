@@ -98,4 +98,31 @@ class StandbyVisualTest {
         val text = file.readText()
         assertFalse(text.contains("class Rhythm"), "dead Rhythm fallback must remain deleted")
     }
+
+    @Test
+    fun styleProfilesDifferentiateCrispVsFluidAndSyncOffsetClamps() {
+        val bars = Smoother()
+        val orb = Smoother()
+        bars.update(0.016f, nowNs, StandbyStyle.Bars)
+        orb.update(0.016f, nowNs, StandbyStyle.Orb)
+
+        AudioTap.updatePlaybackClock(0L, 1f, nowNs)
+        val rate = 44100
+        for (i in 0 until 4096) {
+            val ptsUs = (i * 1_000_000L) / rate
+            AudioTap.pushWithPts(rate, 0.7f * sin(2 * PI * 100.0 * i / rate).toFloat(), ptsUs, "style-test")
+        }
+        nowNs += 16_000_000L
+        bars.update(0.016f, nowNs, StandbyStyle.Bars)
+        orb.update(0.016f, nowNs, StandbyStyle.Orb)
+        assertTrue(bars.energy > orb.energy, "Bars should react faster than Orb: bars=${bars.energy}, orb=${orb.energy}")
+
+        val prefs = StandbyPrefs({ null }, { _, _ -> })
+        prefs.putSyncOffsetMs(350)
+        assertEquals(200, prefs.syncOffsetMs)
+        assertEquals(200L, AudioTap.calibrationOffsetMs)
+        prefs.putSyncOffsetMs(-300)
+        assertEquals(-200, prefs.syncOffsetMs)
+        assertEquals(-200L, AudioTap.calibrationOffsetMs)
+    }
 }
