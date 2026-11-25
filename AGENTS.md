@@ -48,6 +48,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Third-party code only under MIT, Apache-2.0 or BSD. No GPL; LGPL only dynamically linked and only after asking.
 - The Rust DSP core lives in `engine/` (tracked). `native/` is gitignored (TDLib), so do not put it there. Built `.so` files are not committed.
 - Build with `cargo ndk -t arm64-v8a`, before Gradle and never at the same time as it.
+- After `engine/` changed (also by a merge) rebuild `engine`, `usb_audio` and libusb before any phone build; the build stops when a library is older than its source, and only warns when one is missing.
 - No allocation, locks or panics in the audio path; no panic across the FFI line. If the library fails to load, fall back to the Media3 pipeline and log it.
 - Sound changes are judged by ear on the phone, level matched, against the previous build; mark `[~]` in `CHECKLIST.md` until heard working.
 - Layout: `engine/src/eq.rs` (curve fit, Bass, earphone correction, 180 Hz split, level trims, limiters, A/B), `engine/src/extras.rs` (dynamic bass, de-esser, crossfeed, switched by option bits), `engine/src/lib.rs` (JNI only).
