@@ -69,6 +69,7 @@ suspend fun AppServices.createBackup(
             }
         }
         var summary: BackupSummary? = null
+        library.repo.flushPrefs()
         writeZip(outPath) { sink ->
             summary = BackupWriter.write(driver, sink, Clock.System.now().toString(), sealed, session, onProgress, indexTempPath = "$outPath.index.json")
         }

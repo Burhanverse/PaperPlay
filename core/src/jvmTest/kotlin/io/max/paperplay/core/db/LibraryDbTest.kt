@@ -106,6 +106,37 @@ class LibraryDbTest {
         assertEquals("29", library.pref("mine"))
     }
 
+    /** The screen saves a setting while another writer holds the file: it goes on at once, reads its own value, and the value arrives. */
+    @Test
+    fun aSettingIsSavedWithoutWaitingForAnotherWriter() {
+        val f = java.nio.file.Files.createTempDirectory("hold").toFile().let { java.io.File(it, "l.sqlite").path.replace('\\', '/') }
+        val library = io.max.paperplay.core.app.LibraryRepository(LibraryRepo(LibraryDatabase(libraryDriver(f))) { 1L }) { 1L }
+        val other = LibraryRepo(LibraryDatabase(libraryDriver(f))) { 1L }
+        library.setPref("a", "old")
+        val locked = java.util.concurrent.CountDownLatch(1)
+        val free = java.util.concurrent.CountDownLatch(1)
+        val writer = Thread { other.db.transaction { other.db.miscQueries.setPref("x", "1"); locked.countDown(); free.await(20, java.util.concurrent.TimeUnit.SECONDS) } }.apply { start() }
+        locked.await(20, java.util.concurrent.TimeUnit.SECONDS)
+        val screen = java.util.concurrent.CompletableFuture.runAsync {
+            library.savePref("a", "1")
+            library.savePref("b", "2")
+            library.savePref("a", "3")
+            assertEquals("3", library.pref("a"))
+        }
+        screen.get(5, java.util.concurrent.TimeUnit.SECONDS)
+        assertEquals("old", other.pref("a"))
+        free.countDown(); writer.join()
+        val until = System.nanoTime() + 20_000_000_000
+        while ((other.pref("a") != "3" || other.pref("b") != "2") && System.nanoTime() < until) Thread.sleep(20)
+        assertEquals("3" to "2", other.pref("a") to other.pref("b"))
+        // A direct write after a held one wins, and closing writes what is left.
+        library.repo.holdPref("c", "1")
+        library.setPref("c", "2")
+        library.repo.holdPref("d", "4")
+        library.close()
+        assertEquals("2" to "4", other.pref("c") to other.pref("d"))
+    }
+
     @Test
     fun listenStatsAddAndMerge() {
         val repo = open()

@@ -47,6 +47,7 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
     private val soft = Channel<Unit>(Channel.CONFLATED)
 
     fun close() {
+        runCatching { repo.flushPrefs() }
         bgScope.cancel()
         soft.close()
     }
@@ -274,6 +275,18 @@ class LibraryRepository(val repo: LibraryRepo, private val clock: () -> Long) {
 
     fun pref(key: String): String? = repo.pref(key)
     fun setPref(key: String, value: String) = repo.setPref(key, value)
+
+    /** Like [setPref] for the screen: the value counts at once and is written beside it, so a tap never waits for a scan or a sync that is writing. */
+    fun savePref(key: String, value: String) {
+        repo.holdPref(key, value)
+        bgScope.launch(Dispatchers.IO) {
+            repeat(5) {
+                // Another writer held the file too long; what is held is still read, and tried again.
+                if (runCatching { repo.flushPrefs() }.isSuccess) return@launch
+                delay(1_000)
+            }
+        }
+    }
 
     init {
         if (repo.pref("device_id") == null) repo.setPref("device_id", newUuid())

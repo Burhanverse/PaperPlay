@@ -275,7 +275,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun updateTaste(change: (TasteSettings) -> TasteSettings) {
         val next = change(taste.value).copy(at = nowMoment().epochMs)
         taste.value = next
-        repo.setPref(TasteSettings.PREF_KEY, next.encode())
+        repo.savePref(TasteSettings.PREF_KEY, next.encode())
     }
 
     /** Forgets plays, skips and "doesn't fit" votes, and ignores older counts synced from elsewhere. */
@@ -313,7 +313,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun setKeepPlaying(on: Boolean) {
         keepPlaying.value = on
-        repo.setPref("keep_playing", "$on")
+        repo.savePref("keep_playing", "$on")
     }
 
     private suspend fun suggestAfter(queue: List<Song>): Song? {
@@ -349,9 +349,9 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun setPlace(p: WeatherPlace?) {
         weatherPlace.value = p
         weather.value = null
-        repo.setPref("weather_city", p?.name.orEmpty())
-        repo.setPref("weather_lat", p?.latitude?.toString().orEmpty())
-        repo.setPref("weather_lon", p?.longitude?.toString().orEmpty())
+        repo.savePref("weather_city", p?.name.orEmpty())
+        repo.savePref("weather_lat", p?.latitude?.toString().orEmpty())
+        repo.savePref("weather_lon", p?.longitude?.toString().orEmpty())
         refreshWeather()
     }
 
@@ -520,7 +520,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                     }
                 }
             }
-            fun saveMisses() = repo.setPref("lyrics_miss", misses.entries.joinToString("\n") { "${it.key}\t${it.value}" })
+            fun saveMisses() = repo.savePref("lyrics_miss", misses.entries.joinToString("\n") { "${it.key}\t${it.value}" })
             try {
                 kotlinx.coroutines.coroutineScope {
                     repeat(2) {
@@ -610,7 +610,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val fresh = account.groupsAndChannels()
         if (fresh.isEmpty()) return
         myChats.value = fresh
-        repo.setPref("my_chats", fresh.joinToString("\n") { "${it.id}\t${if (it.isChannel) 1 else 0}\t${it.title.replace('\t', ' ').replace('\n', ' ')}" })
+        repo.savePref("my_chats", fresh.joinToString("\n") { "${it.id}\t${if (it.isChannel) 1 else 0}\t${it.title.replace('\t', ' ').replace('\n', ' ')}" })
     }
 
     /** Sleep timer: pauses at [sleepAt] (epoch ms). Null when none is set. */
@@ -758,8 +758,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     override fun setParametricProfile(profile: io.max.paperplay.player.ParametricEqProfile, enabled: Boolean) {
         peqProfile.value = profile
         eqOn.value = enabled
-        repo.setPref("eq_on", "$enabled")
-        repo.setPref("peq_active_json", io.max.paperplay.player.ParametricEqCodec.exportPowerampJson(profile, includePaperPlayMeta = true))
+        repo.savePref("eq_on", "$enabled")
+        repo.savePref("peq_active_json", io.max.paperplay.player.ParametricEqCodec.exportPowerampJson(profile, includePaperPlayMeta = true))
         val key = eqDeviceKey.value
         if (key != null && eqDeviceAssigned.value) {
             val label = eqOutput.value ?: key
@@ -865,7 +865,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             if (res.notModified) {
                 "AutoEQ catalog is already up to date."
             } else {
-                res.etag?.let { repo.setPref("autoeq_index_etag", it) }
+                res.etag?.let { repo.savePref("autoeq_index_etag", it) }
                 onlineAutoEqItems.value = res.items
                 "Refreshed online AutoEQ index (${res.items.size} entries)."
             }
@@ -909,7 +909,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         )
         if (io.max.paperplay.ui.isPhone) {
             usbExclusiveMode.value = on
-            repo.setPref("usb_exclusive_mode", "$on")
+            repo.savePref("usb_exclusive_mode", "$on")
             if (playerStarted.value) player.dacController?.setUsbExclusive(on)
             else services.playback.dacController?.setUsbExclusive(on)
         }
@@ -932,7 +932,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun setExclusiveOutput(on: Boolean) {
         exclusiveOutput.value = on
-        repo.setPref("pc_exclusive", "$on")
+        repo.savePref("pc_exclusive", "$on")
         if (playerStarted.value) player.setExclusiveOutput(on || bitPerfect.value)
     }
 
@@ -958,7 +958,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     val devOptionsUnlocked = MutableStateFlow(repo.pref("dev_options") == "true")
     fun unlockDevOptions() {
         devOptionsUnlocked.value = true
-        repo.setPref("dev_options", "true")
+        repo.savePref("dev_options", "true")
     }
 
     /** Developer option: switch between unified Bit-perfect path and legacy USB sink without rebuilding. */
@@ -968,7 +968,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     )
     fun setDevUseUnifiedBitPerfect(on: Boolean) {
         devUseUnifiedBitPerfect.value = on
-        repo.setPref("dev_use_unified_bit_perfect", "$on")
+        repo.savePref("dev_use_unified_bit_perfect", "$on")
         if (playerStarted.value) player.dacController?.setUseUnifiedBitPerfect(on)
         else services.playback.dacController?.setUseUnifiedBitPerfect(on)
     }
@@ -977,7 +977,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     val devApi34Mixer = MutableStateFlow(repo.pref("dev_api34_bitperfect_mixer") == "true")
     fun setDevApi34Mixer(on: Boolean) {
         devApi34Mixer.value = on
-        repo.setPref("dev_api34_bitperfect_mixer", "$on")
+        repo.savePref("dev_api34_bitperfect_mixer", "$on")
         if (playerStarted.value) player.dacController?.setDevApi34Mixer(on)
         else services.playback.dacController?.setDevApi34Mixer(on)
     }
@@ -987,7 +987,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     fun setSinkChain(mode: String) {
         val valid = io.max.paperplay.player.SinkChainMode.fromId(mode).id
         sinkChain.value = valid
-        repo.setPref("sink_chain", valid)
+        repo.savePref("sink_chain", valid)
         if (playerStarted.value) player.dacController?.setSinkChain(valid)
         else services.playback.dacController?.setSinkChain(valid)
     }
@@ -1006,7 +1006,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun setCorrectionProfile(text: String) {
         correctionProfile.value = text
-        repo.setPref("pc_profile", text)
+        repo.savePref("pc_profile", text)
         if (playerStarted.value) player.setCorrectionProfile(text.takeIf { it.isNotBlank() && !bitPerfect.value })
     }
 
@@ -1015,7 +1015,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     override fun setEqExact(on: Boolean) {
         eqExact.value = on
-        repo.setPref("eq_exact", "$on")
+        repo.savePref("eq_exact", "$on")
         saveForOutput()
         if (playerStarted.value) player.setExactLevel(on)
     }
@@ -1024,7 +1024,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     override fun setEqOption(bit: Int, on: Boolean) {
         eqOptions.value = if (on) eqOptions.value or bit else eqOptions.value and bit.inv()
-        repo.setPref("eq_options", "${eqOptions.value}")
+        repo.savePref("eq_options", "${eqOptions.value}")
         pushBass()
     }
 
@@ -1036,7 +1036,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         "earphone=${eqEarphone.value}", "exact=${eqExact.value}", "options=${eqOptions.value}",
     ).joinToString(";")
 
-    private fun saveForOutput() { eqOutput.value?.let { repo.setPref("eq_out:$it", eqSnapshot()) } }
+    private fun saveForOutput() { eqOutput.value?.let { repo.savePref("eq_out:$it", eqSnapshot()) } }
 
     /** Output device changed (earbuds, BT, USB DAC, wired, speaker, or desktop output). Applies any saved per-device mapping. */
     private fun onOutput(info: io.max.paperplay.player.OutputInfo) {
@@ -1053,8 +1053,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         if (mapped != null) {
             peqProfile.value = mapped.profile
             eqOn.value = mapped.enabled
-            repo.setPref("eq_on", "${mapped.enabled}")
-            repo.setPref("peq_active_json", io.max.paperplay.player.ParametricEqCodec.exportPowerampJson(mapped.profile, includePaperPlayMeta = true))
+            repo.savePref("eq_on", "${mapped.enabled}")
+            repo.savePref("peq_active_json", io.max.paperplay.player.ParametricEqCodec.exportPowerampJson(mapped.profile, includePaperPlayMeta = true))
             pushParametricToPlayer()
             pushBass()
             return
@@ -1064,16 +1064,16 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val saved = repo.pref("eq_out:$name")
         if (saved == null) { saveForOutput(); return }
         val m = saved.split(';').mapNotNull { kv -> kv.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
-        m["on"]?.let { eqOn.value = it == "true"; repo.setPref("eq_on", it) }
+        m["on"]?.let { eqOn.value = it == "true"; repo.savePref("eq_on", it) }
         m["gains"]?.split(',')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == eqGains.value.size }?.let {
             eqGains.value = it
-            repo.setPref("eq_gains", it.joinToString(",", "[", "]"))
+            repo.savePref("eq_gains", it.joinToString(",", "[", "]"))
         }
-        m["bass"]?.toFloatOrNull()?.let { eqBass.value = it; repo.setPref("eq_bass", "$it") }
-        m["width"]?.toFloatOrNull()?.let { eqWidth.value = it; repo.setPref("eq_width", "$it") }
-        m["earphone"]?.let { eqEarphone.value = it; repo.setPref("eq_earphone", it) }
-        m["exact"]?.let { eqExact.value = it == "true"; repo.setPref("eq_exact", it) }
-        m["options"]?.toIntOrNull()?.let { eqOptions.value = it; repo.setPref("eq_options", "$it") }
+        m["bass"]?.toFloatOrNull()?.let { eqBass.value = it; repo.savePref("eq_bass", "$it") }
+        m["width"]?.toFloatOrNull()?.let { eqWidth.value = it; repo.savePref("eq_width", "$it") }
+        m["earphone"]?.let { eqEarphone.value = it; repo.savePref("eq_earphone", it) }
+        m["exact"]?.let { eqExact.value = it == "true"; repo.savePref("eq_exact", it) }
+        m["options"]?.toIntOrNull()?.let { eqOptions.value = it; repo.savePref("eq_options", "$it") }
         if (playerStarted.value) {
             pushParametricToPlayer()
             player.setExactLevel(eqExact.value)
@@ -1086,7 +1086,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     override fun setEqWidth(width: Float) {
         eqWidth.value = width
-        repo.setPref("eq_width", "$width")
+        repo.savePref("eq_width", "$width")
         pushBass()
     }
 
@@ -1094,7 +1094,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     override fun setEqEarphone(name: String) {
         eqEarphone.value = name
-        repo.setPref("eq_earphone", name)
+        repo.savePref("eq_earphone", name)
         pushBass()
     }
 
@@ -1110,7 +1110,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     override fun setEqBass(db: Float) {
         eqBass.value = db
-        repo.setPref("eq_bass", "$db")
+        repo.savePref("eq_bass", "$db")
         pushBass()
     }
 
@@ -1127,8 +1127,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     override fun setEqualizer(on: Boolean, gains: List<Float>) {
         eqOn.value = on
         eqGains.value = gains
-        repo.setPref("eq_on", "$on")
-        repo.setPref("eq_gains", gains.joinToString(",", "[", "]"))
+        repo.savePref("eq_on", "$on")
+        repo.savePref("eq_gains", gains.joinToString(",", "[", "]"))
         if (playerStarted.value) player.setEqualizer(if (on && !bitPerfect.value) gains else null)
         pushBass()
     }
@@ -1148,16 +1148,16 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val user = try { listenBrainz.validate(t) } catch (e: Exception) { return "ListenBrainz could not be reached." }
             ?: return "ListenBrainz does not accept that token."
         services.platform.secrets.put(io.max.paperplay.core.backup.SecretKeys.LISTENBRAINZ_TOKEN, t)
-        repo.setPref("listenbrainz_user", user)
-        repo.setPref("listenbrainz_on", "true")
+        repo.savePref("listenbrainz_user", user)
+        repo.savePref("listenbrainz_on", "true")
         lbUser.value = user
         return null
     }
 
     fun disconnectListenBrainz() {
         services.platform.secrets.remove(io.max.paperplay.core.backup.SecretKeys.LISTENBRAINZ_TOKEN)
-        repo.setPref("listenbrainz_user", "")
-        repo.setPref("listenbrainz_on", "false")
+        repo.savePref("listenbrainz_user", "")
+        repo.savePref("listenbrainz_on", "false")
         lbUser.value = null
     }
 
@@ -1167,7 +1167,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     private var lastScanLog = 0L
 
     /** Running background jobs and their history; features call tasks.start/update/finish. */
-    val tasks = io.max.paperplay.core.app.TaskQueue(scope, load = { repo.pref("task_history") }, save = { repo.setPref("task_history", it) }).also { q -> scope.launch(Dispatchers.Default) { q.watchServices(services) } }
+    val tasks = io.max.paperplay.core.app.TaskQueue(scope, load = { repo.pref("task_history") }, save = { repo.savePref("task_history", it) }).also { q -> scope.launch(Dispatchers.Default) { q.watchServices(services) } }
 
     /** Every playback event and every activity line, on disk and kept across restarts, so a whole listening session can be shared. */
     val playLog = io.max.paperplay.core.app.PlayLogFile(services.platform.dataDir, scope) { at ->
@@ -1180,7 +1180,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     init {
         io.max.paperplay.core.app.MemoryProbe.start(scope) { "Jobs: ${tasks.running.value.size}" }
         // Clean up legacy volume limit and calibration preferences
-        repo.setPref("usb_max_vol_limit_db", "")
+        repo.savePref("usb_max_vol_limit_db", "")
     }
 
     fun addLog(source: String, message: String, error: Boolean = false) {
@@ -1225,7 +1225,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     @Volatile private var lastMixes: List<DailyMix> = emptyList()
     private fun sizeBucket(n: Int) = if (n < 200) n else 200 + n / 100
     private fun saveHome(plan: io.max.paperplay.core.recs.HomeMix, mixes: List<DailyMix>) {
-        runCatching { repo.setPref(HomeSnapshot.PREF, HomeSnapshot.encode(plan, mixes)) }
+        runCatching { repo.savePref(HomeSnapshot.PREF, HomeSnapshot.encode(plan, mixes)) }
     }
 
     private val homePlan: Flow<HomePlanState> = combine(
@@ -1284,7 +1284,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
             }.getOrDefault(emptyList())
             val mixLead = daily.flatMap { it.songs.take(4) }.distinctBy { it.unique_id }
             if (mixLead.isNotEmpty()) services.covers.prioritize(mixLead)
-            if (daily.isNotEmpty()) runCatching { repo.setPref(DailyMixCache.PREF, DailyMixCache.encode(mixKey, daily)) }
+            if (daily.isNotEmpty()) runCatching { repo.savePref(DailyMixCache.PREF, DailyMixCache.encode(mixKey, daily)) }
             // An empty build keeps what is on screen instead of making the mixes disappear.
             val mixes = daily.ifEmpty { shown }
             if (mixes.isNotEmpty()) lastMixes = mixes
@@ -1364,7 +1364,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     override fun setSpeed(speed: Float) {
         val v = speed.coerceIn(0.5f, 2f)
         this.speed.value = v
-        repo.setPref("player_speed", v.toString())
+        repo.savePref("player_speed", v.toString())
         if (playerStarted.value) player.setSpeed(v)
     }
 
@@ -1373,7 +1373,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun setNormalize(on: Boolean) {
         normalizeOn.value = on
-        repo.setPref("normalize", "$on")
+        repo.savePref("normalize", "$on")
         if (playerStarted.value) player.setNormalize(on && !bitPerfect.value)
     }
 
@@ -1458,7 +1458,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** Puts the last queue back, paused, once the connection is up (or after 20 seconds) and nothing has been played. */
     val sessionRestore: Boolean get() = repo.pref("restore_session") != "false"
 
-    fun setSessionRestore(on: Boolean) = repo.setPref("restore_session", "$on")
+    fun setSessionRestore(on: Boolean) = repo.savePref("restore_session", "$on")
 
     init {
         scope.launch(Dispatchers.Default) {
@@ -1471,7 +1471,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** Lyrics are fetched for every song in the background so opening one shows them at once. On unless turned off. */
     val lyricsAuto: Boolean get() = repo.pref("lyrics_auto") != "false"
 
-    fun setLyricsAuto(on: Boolean) = repo.setPref("lyrics_auto", "$on")
+    fun setLyricsAuto(on: Boolean) = repo.savePref("lyrics_auto", "$on")
 
     init {
         scope.launch(Dispatchers.Default) {
@@ -1702,11 +1702,11 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         }
         if (systemVolume && isUsb) {
             scope.launch(Dispatchers.Default) { io.max.paperplay.player.SystemVolume.set(volume.value) }
-            repo.setPref("player_volume", volume.value.toString())
+            repo.savePref("player_volume", volume.value.toString())
             return
         }
         if (playerStarted.value) player.setVolume(volume.value)
-        repo.setPref("player_volume", volume.value.toString())
+        repo.savePref("player_volume", volume.value.toString())
     }
 
     override fun toggleShuffle() { player.setShuffle(!playbackMeta.value.shuffle) }
@@ -1936,7 +1936,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     }
 
     fun pref(key: String): String? = repo.pref(key)
-    fun setPref(key: String, value: String) = repo.setPref(key, value)
+    fun setPref(key: String, value: String) = repo.savePref(key, value)
 
     fun mainChatId(): Long? = parseMainChat(repo.pref(MAIN_CHAT_KEY))
 
@@ -1966,7 +1966,7 @@ class CoreBackend(val services: AppServices) : PlayerControls {
 
     fun isChannelStarred(chatId: Long) = repo.pref("channel_star:$chatId") == "true"
 
-    fun setChannelStarred(chatId: Long, on: Boolean) = repo.setPref("channel_star:$chatId", "$on")
+    fun setChannelStarred(chatId: Long, on: Boolean) = repo.savePref("channel_star:$chatId", "$on")
 
     /**
      * Lists to show beside the playlists: the main chat's topics, only when Telegram gave it any (a chat without topics

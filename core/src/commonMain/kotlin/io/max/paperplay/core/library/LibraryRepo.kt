@@ -53,13 +53,37 @@ class LibraryRepo(val db: LibraryDatabase, private val clock: () -> Long) {
 
     fun removeFromPlaylist(id: Long, s: Song) = lists.removeEntry(clock(), id, s.chat_id, s.message_id)
 
+    /** Settings that [holdPref] took and [flushPrefs] has not written yet. */
+    private val heldPrefs = LinkedHashMap<String, String>()
+    private val flushLock = Any()
+
+    /** Takes a setting without touching the database: [pref] gives it back at once, [flushPrefs] writes it. For callers that must not wait for another writer. */
+    fun holdPref(key: String, value: String) {
+        synchronized(heldPrefs) { heldPrefs[key] = value }
+        logPref(key, value)
+    }
+
+    fun flushPrefs() = synchronized(flushLock) {
+        while (true) {
+            val (k, v) = synchronized(heldPrefs) { heldPrefs.entries.firstOrNull()?.let { it.key to it.value } } ?: break
+            misc.setPref(k, v)
+            // Changed meanwhile: it stays and is written again. Removed only after the write, so a reader always finds it in one of the two.
+            synchronized(heldPrefs) { if (heldPrefs[k] == v) heldPrefs.remove(k) }
+        }
+    }
+
     fun setPref(key: String, value: String) {
+        synchronized(heldPrefs) { if (key in heldPrefs) heldPrefs[key] = value }
         misc.setPref(key, value)
+        logPref(key, value)
+    }
+
+    private fun logPref(key: String, value: String) {
         // Every setting change is an event; secrets are never written and long values are cut.
         val secret = listOf("token", "secret", "password", "hash", "key", "auth").any { key.contains(it, ignoreCase = true) }
         io.max.paperplay.player.PlayLog.log("pref", "$key = " + if (secret) "<hidden>" else value.replace('\n', ' ').take(80) + if (value.length > 80) "... (${value.length} chars)" else "")
     }
-    fun pref(key: String): String? = misc.pref(key).executeAsOneOrNull()
+    fun pref(key: String): String? = synchronized(heldPrefs) { heldPrefs[key] } ?: misc.pref(key).executeAsOneOrNull()
 
     fun cacheLimit(): Long = pref("cache_limit")?.toLongOrNull() ?: DEFAULT_CACHE_LIMIT
 
