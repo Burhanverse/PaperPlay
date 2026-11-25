@@ -908,7 +908,9 @@ elease` must say Java 25 and the setup exe must start.
 - [~] USB: a cut sample no longer shifts the next ones (test), sound after a fault, permission asked once, play after switching at the end (not tried on a DAC)
 - [~] USB: song endings are kept when the next song has the same format (the DAC just goes on); not tried on a DAC
 - [ ] USB: endings are still cut when the next song has another rate or depth
-- [ ] USB: Bluetooth connecting during bit-perfect releases the DAC and takes it back at once (the owner has to say who wins)
+- [~] USB: music decoded as float uses the DAC's 24 bit setting (`41a2f4f`); before, a 24 bit DAC always got Android's mixer. Not tried yet
+- [~] USB: earbuds connected after the DAC keep the music until they are gone (`3318cf3`). Not tried yet
+- [ ] Phone: the screen stands still up to 10 s when it waits for the only database connection (duplicates page, Library settings)
 - [ ] USB (not proven): a slow reopen, swallowed AudioTrack errors
 - [ ] Pairing code can be guessed offline by a device the owner dials on purpose (needs a new protocol)
 - [~] Basic groups, the recommender after an ended queue, cover and photo pickers, copying library-only songs after leaving the page
