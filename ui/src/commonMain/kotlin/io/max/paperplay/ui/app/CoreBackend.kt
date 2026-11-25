@@ -196,6 +196,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
     /** False once the services it belongs to were shut down. */
     val alive: Boolean get() = backendJob.isActive
 
+    private val listenQueueLock = kotlinx.coroutines.sync.Mutex()
+
     @Volatile private var byId: Map<String, Song> = emptyMap()
     @Volatile private var byGroupKey: Map<String, Song> = emptyMap()
     /** Bumped each time [byId] has been rebuilt, so the playing song and queue are mapped from the new rows, not the old ones. */
@@ -1426,7 +1428,26 @@ class CoreBackend(val services: AppServices) : PlayerControls {
                 val counts = if (full > 0) ms >= minOf(full / 2, 240_000L) else ms >= 30_000L
                 if (token != null && repo.pref("listenbrainz_on") == "true" && counts) scope.launch {
                     val ok = runCatching { listenBrainz.submit(token, song, (nowMoment().epochMs - ms) / 1000) }.getOrDefault(false)
-                    if (!ok) addLog("ListenBrainz", "Could not send \"${song.title}\".", error = true)
+                    // Kept for later (no network, a busy service): when, and which song; sent again after the next one that goes through.
+                    listenQueueLock.lock()
+                    try {
+                        val queue = repo.pref("listenbrainz_queue").orEmpty().lines().filter { it.contains('\t') }
+                        if (!ok) {
+                            addLog("ListenBrainz", "Could not send \"${song.title}\" now; it is sent later.", error = true)
+                            repo.setPref("listenbrainz_queue", (queue + "${(nowMoment().epochMs - ms) / 1000}\t${song.unique_id}").takeLast(500).joinToString("\n"))
+                        } else if (queue.isNotEmpty()) {
+                            val left = queue.toMutableList()
+                            for (line in queue.take(50)) {
+                                val s = repo.songByUniqueId(line.substringAfter('\t'))
+                                if (s != null && !runCatching { listenBrainz.submit(token, s, line.substringBefore('\t').toLong()) }.getOrDefault(false)) break
+                                left.remove(line)
+                                kotlinx.coroutines.delay(500)
+                            }
+                            repo.setPref("listenbrainz_queue", left.joinToString("\n"))
+                        }
+                    } finally {
+                        listenQueueLock.unlock()
+                    }
                 }
             }
         }

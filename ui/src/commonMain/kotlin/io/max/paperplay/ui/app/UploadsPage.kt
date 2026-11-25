@@ -1,5 +1,6 @@
 package io.max.paperplay.ui.app
 
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -99,10 +100,13 @@ internal fun UploadsPage(backend: CoreBackend) {
     // Gets real files for songs found in a folder (Android copies them) and queues them; says so when some could not be copied.
     fun copyAndQueue(scan: FolderScan, songs: List<FolderSong>) {
         message = "Copying ${songs.size} song${if (songs.size == 1) "" else "s"} for upload..."
-        scan.resolve(songs) { paths, temp ->
-            queue(paths, temp)
-            val missed = songs.size - paths.size
-            if (missed > 0) message = "${message.orEmpty()} Could not copy $missed: the phone is low on free space or the file cannot be read."
+        // Gigabytes can be copied here, so not where the screen is drawn.
+        backend.services.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            scan.resolve(songs) { paths, temp ->
+                queue(paths, temp)
+                val missed = songs.size - paths.size
+                if (missed > 0) message = "${message.orEmpty()} Could not copy $missed: the phone is low on free space or the file cannot be read."
+            }
         }
     }
 

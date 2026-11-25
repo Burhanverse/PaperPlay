@@ -62,9 +62,8 @@ suspend fun AppServices.createBackup(
         val user = account as? UserSession
         if (password != null && user != null && user.loggedIn.value) {
             onProgress("Saving your account session", 0.01)
-            user.closeForBackup()
             val key = platform.secrets.get(SecretKeys.USER_SESSION_KEY)
-            if (key != null && zipFolder("${platform.dataDir}/user_td", "__key", key.encodeToByteArray(), sessionZip, MAX_SESSION_BYTES)) {
+            if (key != null && user.whileClosed { zipFolder("${platform.dataDir}/user_td", "__key", key.encodeToByteArray(), sessionZip, MAX_SESSION_BYTES) }) {
                 sealFile(sessionZip, password, sessionEnc)
                 session = sessionEnc
             }

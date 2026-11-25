@@ -149,13 +149,15 @@ class UserSession(
     }
 
     /** Stops the client so its files are whole for a backup; it starts again when next needed. Stays logged in. */
-    suspend fun closeForBackup() {
-        val c = lock.withLock {
-            watcher?.cancel()
-            watcher = null
-            client.also { client = null }
-        }
+    suspend fun closeForBackup() = whileClosed { }
+
+    /** Runs [block] while the client is stopped; anything that needs the account waits, so the files do not change under a backup. */
+    suspend fun <T> whileClosed(block: suspend () -> T): T = lock.withLock {
+        watcher?.cancel()
+        watcher = null
+        val c = client.also { client = null }
         runCatching { c?.shutdown() }
+        block()
     }
 
     /** The running client, starting it (and following its login state) when there is none. */
