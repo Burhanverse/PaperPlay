@@ -2,6 +2,23 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.21.5] - 2026-11-25
+
+### Other changes
+- Online build names the tests that failed ([`df01374`](https://github.com/maxcodl/PaperPlay/commit/df01374f7ea2213b42ca2c94e9d1c45d3a2dc417))
+- USB ring buffer: never reports more bytes than it holds while it is cleared ([`b8f6dee`](https://github.com/maxcodl/PaperPlay/commit/b8f6deeb53a5983c6a4b8b5518ca024a85fa4fa8))
+- Missing list: one line and one button per song, possible matches first ([`81f55a7`](https://github.com/maxcodl/PaperPlay/commit/81f55a7fe2f178fae86a4321dc69870f401ea8e4))
+- Spotify matching: a title that was cut off matches by its start, artist and length; no second copy is fetched of a song that is here ([`c15b8e0`](https://github.com/maxcodl/PaperPlay/commit/c15b8e0bd04c351d38b3f2d3706fa37addc0aacb))
+- Music folders: folder picker on the phone, the path box is second choice, whole drives work ([`acf362e`](https://github.com/maxcodl/PaperPlay/commit/acf362eade2eae1cc4c9a8f91f95c3b64379da7a))
+- PC folder window opens in front, and cancelling it opens no second one ([`6f0effb`](https://github.com/maxcodl/PaperPlay/commit/6f0effb73d268c88f85b47c880ed540b1f8e64ba))
+- New songs join their Spotify playlists at once; the missing list offers songs of the library ([`989108a`](https://github.com/maxcodl/PaperPlay/commit/989108a91519ec0030d4e2ceef0af4f1cbbb890c))
+- Spotify matching: artist lists, film credits, version words and accents in a title no longer hide a song ([`18f4093`](https://github.com/maxcodl/PaperPlay/commit/18f409378a7a5ef9be43ffddd7b1b7dd69b22e24))
+
+### Maintenance
+- Spotify matching and folder picker ([`7cd46ca`](https://github.com/maxcodl/PaperPlay/commit/7cd46ca2ca3e64e86749055728fce1def558b0e2))
+
+**Full changes:** [v1.21.4...v1.21.5](https://github.com/maxcodl/PaperPlay/compare/v1.21.4...v1.21.5)
+
 ## [1.21.4] - 2026-11-25
 
 ### Other changes
