@@ -124,6 +124,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
     val coverBounds = remember { CoverBoundsRegistry() }
     val miniFocusRequester = remember { FocusRequester() }
+    val pageBackProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+    val pageBackCancelSpec = io.max.paperplay.ui.theme.motionSpatialSpring<Float>(io.max.paperplay.ui.theme.Motion.Spatial.SettleStiffness)
     // Left for a while (phone in the background): free the decoded covers and compact the heap. Opening the app decodes what is on screen again.
     val inForeground = io.max.paperplay.ui.rememberAppForeground()
     androidx.compose.runtime.LaunchedEffect(inForeground) {
@@ -305,16 +307,26 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     PlatformBackHandler(
         enabled = showEqFullScreen || showLyricsFullScreen || playerController.isComposed || settings || detail != null || profilePage != null || tab != 0 || history.isNotEmpty(),
         onProgress = { p ->
-            if (playerController.isComposed && !showEqFullScreen && !showLyricsFullScreen) {
-                playerController.backProgress(p)
+            when {
+                playerController.isComposed && !showEqFullScreen && !showLyricsFullScreen ->
+                    playerController.backProgress(p)
+                !playerController.isComposed && !showEqFullScreen && !showLyricsFullScreen ->
+                    scope.launch { pageBackProgress.snapTo(p.coerceIn(0f, 1f)) }
             }
         },
         onCancel = {
             if (playerController.phase == PlayerSheetPhase.BackGesture) {
                 playerController.cancelBack()
+            } else if (pageBackProgress.value > 0f) {
+                scope.launch { pageBackProgress.animateTo(0f, pageBackCancelSpec) }
             }
         },
-        onBack = ::handleBack,
+        onBack = {
+            if (pageBackProgress.value > 0f) {
+                scope.launch { pageBackProgress.snapTo(0f) }
+            }
+            handleBack()
+        },
     )
 
     val songs = (lib.songs as? Load.Ready)?.value.orEmpty()
@@ -413,7 +425,16 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     val tabStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                     AnimatedContent(
                         targetState = PageKey(settings, detail, tab, tab == 3 && profilePage == "tasks"),
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().graphicsLayer {
+                            val bp = pageBackProgress.value
+                            if (bp > 0f) {
+                                val tf = pageBackTransform(bp, size.width, reduceMotion)
+                                translationX = tf.translationX
+                                scaleX = tf.scale
+                                scaleY = tf.scale
+                                alpha = tf.alpha
+                            }
+                        },
                         transitionSpec = { pageTransition(navMove(initialState.level, targetState.level), reduceMotion) },
                         label = "page",
                     ) { k ->

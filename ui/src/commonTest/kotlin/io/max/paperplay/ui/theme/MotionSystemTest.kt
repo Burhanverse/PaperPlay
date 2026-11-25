@@ -65,4 +65,17 @@ class MotionSystemTest {
         assertEquals(75, extreme.scaledMs(300))
         assertEquals(200f, extreme.scaledStiffness(500f), 1e-3f)
     }
+
+    @Test
+    fun pageBackTransformRespectsReduceMotionAndBounds() {
+        val normal = io.max.paperplay.ui.app.pageBackTransform(0.5f, 1000f, reduceMotion = false)
+        assertTrue(normal.translationX > 0f)
+        assertTrue(normal.scale in 0.9f..1f)
+        assertTrue(normal.alpha in 0.7f..1f)
+
+        val reduced = io.max.paperplay.ui.app.pageBackTransform(0.5f, 1000f, reduceMotion = true)
+        assertEquals(0f, reduced.translationX)
+        assertEquals(1f, reduced.scale)
+        assertTrue(reduced.alpha < 1f)
+    }
 }

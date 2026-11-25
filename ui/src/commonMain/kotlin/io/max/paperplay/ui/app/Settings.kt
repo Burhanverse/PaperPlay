@@ -697,7 +697,12 @@ private fun SettingsGroup(title: String, subtitle: String, icon: androidx.compos
     SettingsRow(title, icon = icon, subtitle = subtitle, onClick = { open = !open }) {
         AppIcon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (open) "Close" else "Open")
     }
-    androidx.compose.animation.AnimatedVisibility(open) { Column { content() } }
+    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    androidx.compose.animation.AnimatedVisibility(
+        visible = open,
+        enter = expandSectionEnter(reduce),
+        exit = expandSectionExit(reduce),
+    ) { Column { content() } }
 }
 
 @Composable
