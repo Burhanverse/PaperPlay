@@ -47,6 +47,8 @@ object IncomingShares {
 /** Files dropped on the desktop window. The uploads page queues them (as originals, never deleted) and clears this. */
 object IncomingDrops {
     val files = MutableStateFlow<List<String>>(emptyList())
+    val dragging = MutableStateFlow(false)
+    val dragCount = MutableStateFlow(0)
 }
 
 /** A song found in a folder. [id] is a file path (desktop) or a document URI (Android); [name] is its path inside the folder. */
