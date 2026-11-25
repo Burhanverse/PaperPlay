@@ -168,7 +168,7 @@ private fun shutdownServices() {
 
 fun main(args: Array<String>) {
     if (System.getProperty("paperplay.motion.bench") == "true" || "--motion-bench" in args) {
-        DesktopMotionBench.run()
+        DesktopMotionBench.run(args)
         return
     }
     // GitHub's asset host rotates addresses and one of them can be unreachable here; Java uses the first and caches it, so a retry hit the same dead one.

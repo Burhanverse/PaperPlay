@@ -29,8 +29,9 @@ import java.lang.management.ManagementFactory
 internal object DesktopMotionBench {
     private data class FlowResult(val name: String, val stats: DesktopFrameStats)
 
-    fun run() {
-        val idleSeconds = System.getProperty("paperplay.motion.bench.idleSec")?.toIntOrNull()?.coerceIn(1, 120) ?: 5
+    fun run(args: Array<String> = emptyArray()) {
+        val argIdle = args.firstOrNull { it.startsWith("--idle-sec=") }?.substringAfter("=")?.toIntOrNull()
+        val idleSeconds = (argIdle ?: System.getProperty("paperplay.motion.bench.idleSec")?.toIntOrNull())?.coerceIn(1, 120) ?: 5
         val songs = createDesktopBenchSongs(500)
 
         application {
