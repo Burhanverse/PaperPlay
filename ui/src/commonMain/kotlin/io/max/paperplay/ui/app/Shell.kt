@@ -294,6 +294,10 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             "upload" -> { page = "upload"; detail = null; settings = false; playerController.close() }
             "tasks" -> { navigate { tab = 3; profilePage = "tasks"; detail = null; settings = false }; page = "tasks"; playerController.close() }
             "motion_test" -> if (backend.devOptionsUnlocked.value && pb.current != null) runMotionHarness = true
+            "motion_lab" -> if (backend.devOptionsUnlocked.value) {
+                playerController.close()
+                navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("motion_lab") }
+            }
         }
         if (openRequest != null) open?.value = null
     }
@@ -348,7 +352,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
         backend.services.covers.queued.collect { q -> if (q > 0) saw = true else if (saw) coversStarting = false }
     }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(10_000); coversStarting = false }
-    CompositionLocalProvider(LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalAlbums provides backend.albums, LocalArtists provides backend.artists, LocalTelegramLists provides remember(telegramState) { { telegramState.value } }, LocalIndexedChats provides remember(backend) {
+    val ambientClock = io.max.paperplay.ui.theme.rememberAmbientClock(active = !playerController.isCovered)
+    CompositionLocalProvider(io.max.paperplay.ui.theme.LocalAmbientClock provides ambientClock, LocalLanSync provides lanSync, io.max.paperplay.ui.components.LocalCoversPending provides coversStarting, LocalCoverLoader provides loader, LocalOnMissingCover provides backend::ensureCover, LocalListActions provides actions, LocalAlbums provides backend.albums, LocalArtists provides backend.artists, LocalTelegramLists provides remember(telegramState) { { telegramState.value } }, LocalIndexedChats provides remember(backend) {
         fun openChat(id: Long, title: String, query: String) {
             indexPageTitles["index:$id"] = title
             indexPageQuery["index:$id"] = query

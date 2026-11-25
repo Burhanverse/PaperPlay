@@ -24,6 +24,9 @@ actual fun PlatformBackHandler(
 actual fun SystemBarAppearanceEffect(darkIcons: Boolean) = Unit
 
 @Composable
+actual fun rememberSystemReduceMotion(): Boolean = false
+
+@Composable
 actual fun rememberAppForeground(): Boolean {
     val foreground by AppForegroundState.isForegroundFlow.collectAsState()
     return foreground

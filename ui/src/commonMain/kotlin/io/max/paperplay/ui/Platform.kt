@@ -19,6 +19,10 @@ expect fun PlatformBackHandler(
 @Composable
 expect fun SystemBarAppearanceEffect(darkIcons: Boolean)
 
+/** True when the OS requests reduced motion (e.g., Android `ANIMATOR_DURATION_SCALE == 0`). */
+@Composable
+expect fun rememberSystemReduceMotion(): Boolean
+
 /** False while the app is in the background, so animations that run every frame can stop. Always true on desktop. */
 @Composable
 expect fun rememberAppForeground(): Boolean

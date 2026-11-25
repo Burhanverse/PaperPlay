@@ -4,13 +4,16 @@ import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import io.max.paperplay.ui.theme.Motion
 
 /** How the page changes: one level deeper, one level back, or a sideways switch such as another tab. */
@@ -66,7 +69,28 @@ internal fun overlayPageEnter(reduced: Boolean): EnterTransition {
 /** Exit transition for full-screen overlay pages launched from the player, matching [pageTransition] Back. */
 internal fun overlayPageExit(reduced: Boolean): ExitTransition {
     if (reduced) return ExitTransition.None
-    val slide = tween<IntOffset>(Motion.STANDARD, easing = Motion.Emphasized)
-    val quick = tween<Float>(Motion.FAST)
+    val slide = tween<IntOffset>(Motion.Spatial.PageExitMs, easing = Motion.Emphasized)
+    val quick = tween<Float>(Motion.Effects.FadeFastMs)
     return slideOutHorizontally(slide) { it / 4 } + fadeOut(quick)
 }
+
+/** Expand transition for collapsible sections and inline panels. */
+internal fun expandSectionEnter(reduced: Boolean): EnterTransition =
+    if (reduced) EnterTransition.None
+    else expandVertically(tween<IntSize>(Motion.Spatial.ExpandMs, easing = Motion.Emphasized)) +
+        fadeIn(tween<Float>(Motion.Effects.FadeStandardMs))
+
+/** Collapse transition for collapsible sections and inline panels. */
+internal fun expandSectionExit(reduced: Boolean): ExitTransition =
+    if (reduced) ExitTransition.None
+    else shrinkVertically(tween<IntSize>(Motion.Spatial.ExpandMs, easing = Motion.Emphasized)) +
+        fadeOut(tween<Float>(Motion.Effects.FadeFastMs))
+
+/** Short fade-in/out for overlays, floating banners, and shortcut dialogs. */
+internal fun overlayFadeEnter(reduced: Boolean): EnterTransition =
+    if (reduced) fadeIn(tween(Motion.Effects.ReducedFadeMs))
+    else fadeIn(tween(Motion.Effects.FadeStandardMs, easing = Motion.Standard))
+
+internal fun overlayFadeExit(reduced: Boolean): ExitTransition =
+    if (reduced) fadeOut(tween(Motion.Effects.ReducedFadeMs))
+    else fadeOut(tween(Motion.Effects.FadeFastMs, easing = Motion.Standard))

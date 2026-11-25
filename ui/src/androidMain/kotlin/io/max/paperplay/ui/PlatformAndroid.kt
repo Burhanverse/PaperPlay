@@ -65,6 +65,31 @@ actual fun SystemBarAppearanceEffect(darkIcons: Boolean) {
 }
 
 @Composable
+actual fun rememberSystemReduceMotion(): Boolean {
+    val ctx = LocalContext.current
+    fun readScaleZero(): Boolean = runCatching {
+        android.provider.Settings.Global.getFloat(
+            ctx.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    }.getOrDefault(false)
+
+    var reduced by remember { mutableStateOf(readScaleZero()) }
+    DisposableEffect(ctx) {
+        val uri = android.provider.Settings.Global.getUriFor(android.provider.Settings.Global.ANIMATOR_DURATION_SCALE)
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                reduced = readScaleZero()
+            }
+        }
+        runCatching { ctx.contentResolver.registerContentObserver(uri, false, observer) }
+        onDispose { runCatching { ctx.contentResolver.unregisterContentObserver(observer) } }
+    }
+    return reduced
+}
+
+@Composable
 actual fun rememberAppForeground(): Boolean {
     val owner = generateSequence(LocalContext.current) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<LifecycleOwner>().firstOrNull()
     var foreground by remember { mutableStateOf(owner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) ?: true) }

@@ -159,7 +159,7 @@ internal val LocalPageBottomPadding = androidx.compose.runtime.compositionLocalO
 internal val subTitles = mapOf(
     "channels" to "Channels and chats", "bots" to "Bots", "account" to "Your account", "log" to "Activity log",
     "repair" to "Scan library", "recover" to "Recover songs", "folders" to "Music folders", "exports" to "Saved export lists", "cache" to "Cache manager", "sort" to "Sort General", "dupes" to "Find duplicates", "missing" to "Song info left", "uploadhub" to "Upload songs", "mixlearn" to "Mixes and learning", "weather" to "Weather",
-    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB DAC", "usb_probe" to "USB probe", "changelog" to "Change log",
+    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB DAC", "usb_probe" to "USB probe", "motion_lab" to "Motion Lab", "changelog" to "Change log",
 )
 
 @Composable
@@ -541,6 +541,7 @@ internal fun SettingsPage(
                     )
                 }
                 NavRow("USB probe", "Hardware descriptor probe and bit-perfect mixer spike", Icons.Rounded.BugReport) { stack.add("usb_probe") }
+                NavRow("Motion Lab", "Live-tune motion tokens and inspect frame timings", Icons.Rounded.Animation) { stack.add("motion_lab") }
                 SwitchRow(
                     "API 34+ bit-perfect mixer",
                     devApi34,
@@ -570,6 +571,7 @@ internal fun SettingsPage(
         "eq" -> EqualizerPage(backend)
         "usb_audio" -> UsbAudioPage(backend, stack)
         "usb_probe" -> UsbProbePage(backend)
+        "motion_lab" -> MotionLabPage()
         "devices" -> {
             if (isPhone) {
                 var keep by remember { mutableStateOf(pref("keep_running") == "true") }
