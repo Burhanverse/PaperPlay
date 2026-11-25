@@ -108,6 +108,40 @@ object Motion {
         const val PlainLyricsDriftMs = 900
         const val StandbyHintMs = 1200
     }
+
+    /** Desktop-specific interaction, wheel, scrollbar, and subtle card-navigation tokens. */
+    object Desktop {
+        const val HoverMs = 110
+        const val PressMs = 70
+        const val PressScale = 0.985f
+        const val FocusMs = 120
+        const val TooltipShowDelayMs = 450L
+        const val TooltipHideDelayMs = 80L
+        const val TooltipFadeMs = 120
+        const val TooltipShiftDp = 4f
+        const val PageEnterMs = 180
+        const val PageExitMs = 130
+        const val PageShiftDp = 16f
+        const val PageSideShiftDp = 8f
+        const val SidebarStiffness = 560f
+        const val PanelStiffness = 560f
+        const val PanelFadeMs = 150
+        const val WheelStepDp = 84f
+        const val WheelDecayTauSec = 0.085f
+        const val WheelMaxAccumulatedDp = 1200f
+        const val WheelSettleThresholdPx = 0.5f
+        const val ScrollbarIdleDelayMs = 950L
+        const val ScrollbarFadeInMs = 110
+        const val ScrollbarFadeOutMs = 280
+        const val ScrollbarRestWidthDp = 5f
+        const val ScrollbarHoverWidthDp = 8f
+        const val PaneSwitchMs = 180
+        const val PaneShiftDp = 14f
+        const val MiniEnterMs = 180
+        const val MiniExitMs = 130
+        const val MiniResizeStiffness = 520f
+        const val DropOverlayFadeMs = 140
+    }
 }
 
 /** Live-tunable motion multipliers used by the debug Motion Lab screen. */
@@ -282,6 +316,41 @@ fun <T> motionPopSpring(): FiniteAnimationSpec<T> =
 @Composable
 fun <T> motionReducedFade(): FiniteAnimationSpec<T> = tween(Motion.Effects.ReducedFadeMs, easing = Motion.Standard)
 
+@Composable
+fun <T> desktopHoverSpec(): FiniteAnimationSpec<T> = motionEffectTween(Motion.Desktop.HoverMs, easing = Motion.Standard)
+
+@Composable
+fun <T> desktopPressSpec(): FiniteAnimationSpec<T> = motionEffectTween(Motion.Desktop.PressMs, easing = Motion.Standard)
+
+@Composable
+fun <T> desktopFocusSpec(): FiniteAnimationSpec<T> = motionEffectTween(Motion.Desktop.FocusMs, easing = Motion.Standard)
+
+@Composable
+fun desktopScrollbarFadeInSpec(): FiniteAnimationSpec<Float> = motionEffectTween(Motion.Desktop.ScrollbarFadeInMs, easing = Motion.Standard)
+
+@Composable
+fun desktopScrollbarFadeOutSpec(): FiniteAnimationSpec<Float> = motionEffectTween(Motion.Desktop.ScrollbarFadeOutMs, easing = Motion.Standard)
+
+fun <T> desktopPageEnterSpec(reduced: Boolean): FiniteAnimationSpec<T> =
+    if (reduced) snap() else tween(Motion.Desktop.PageEnterMs, easing = Motion.Emphasized)
+
+fun <T> desktopPageExitSpec(reduced: Boolean): FiniteAnimationSpec<T> =
+    if (reduced) snap() else tween(Motion.Desktop.PageExitMs, easing = Motion.Standard)
+
+fun <T> desktopPaneEnterSpec(reduced: Boolean): FiniteAnimationSpec<T> =
+    if (reduced) snap() else tween(Motion.Desktop.PaneSwitchMs, easing = Motion.Emphasized)
+
+fun <T> desktopPaneExitSpec(reduced: Boolean): FiniteAnimationSpec<T> =
+    if (reduced) snap() else tween(Motion.Desktop.PageExitMs, easing = Motion.Standard)
+
+@Composable
+fun <T> desktopMiniResizeSpring(reduced: Boolean = LocalReduceMotion.current): FiniteAnimationSpec<T> =
+    if (reduced) snap()
+    else spring(
+        dampingRatio = Motion.Spatial.DampingNoBounce,
+        stiffness = LocalMotionTuning.current.scaledStiffness(Motion.Desktop.MiniResizeStiffness),
+    )
+
 /** Layer-phase tactile press feedback (scales down on press and springs back on release). */
 @Composable
 fun Modifier.pressScale(
@@ -323,12 +392,13 @@ fun LazyItemScope.motionItem(): Modifier = if (LocalReduceMotion.current) Modifi
 
 /**
  * A fixed width that glides to [target] when it changes, such as a sidebar opening and closing. The glide is read in the
- * layout phase, so the composable that sets it does not recompose while it runs.
+ * layout phase, so the composable that sets it does not recompose while it runs. Uses a critically damped spatial spring
+ * so rapid toggles or continuous window resizes remain interruptible and never overshoot.
  */
 @Composable
 fun Modifier.animatedWidth(target: Dp): Modifier {
     val width = remember { Animatable(target.value) }
-    val spec = motionTween<Float>(Motion.STANDARD, Motion.Emphasized)
+    val spec = motionSpatialSpring<Float>(Motion.Desktop.SidebarStiffness)
     LaunchedEffect(target) { width.animateTo(target.value, spec) }
     return layout { measurable, constraints ->
         val w = width.value.dp.roundToPx().coerceIn(constraints.minWidth, constraints.maxWidth)
@@ -340,14 +410,20 @@ fun Modifier.animatedWidth(target: Dp): Modifier {
 /** A side panel opening from the right edge. */
 @Composable
 fun panelEnter(): EnterTransition =
-    if (LocalReduceMotion.current) EnterTransition.None
-    else expandHorizontally(tween(Motion.STANDARD, easing = Motion.Emphasized), expandFrom = Alignment.End) + fadeIn(tween(Motion.STANDARD))
+    if (LocalReduceMotion.current) fadeIn(motionReducedFade())
+    else expandHorizontally(
+        motionSpatialSpring(Motion.Desktop.PanelStiffness),
+        expandFrom = Alignment.End,
+    ) + fadeIn(motionEffectTween(Motion.Desktop.PanelFadeMs))
 
 /** A side panel closing towards the right edge. */
 @Composable
 fun panelExit(): ExitTransition =
-    if (LocalReduceMotion.current) ExitTransition.None
-    else shrinkHorizontally(tween(Motion.STANDARD, easing = Motion.Emphasized), shrinkTowards = Alignment.End) + fadeOut(tween(Motion.FAST))
+    if (LocalReduceMotion.current) fadeOut(motionReducedFade())
+    else shrinkHorizontally(
+        motionSpatialSpring(Motion.Desktop.PanelStiffness),
+        shrinkTowards = Alignment.End,
+    ) + fadeOut(motionEffectTween(Motion.Effects.FadeFastMs))
 
 /** The same for the items of a lazy grid. */
 @Composable

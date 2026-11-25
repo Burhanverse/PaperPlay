@@ -10,11 +10,17 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import io.max.paperplay.ui.theme.Motion
+import io.max.paperplay.ui.theme.desktopPageEnterSpec
+import io.max.paperplay.ui.theme.desktopPageExitSpec
+import io.max.paperplay.ui.theme.desktopPaneEnterSpec
+import io.max.paperplay.ui.theme.desktopPaneExitSpec
 
 /** How the page changes: one level deeper, one level back, or a sideways switch such as another tab. */
 internal enum class NavMove { Forward, Back, Switch }
@@ -61,6 +67,62 @@ internal fun pageTransition(move: NavMove, reduced: Boolean): ContentTransform {
             // @MotionRawAllowed
             fadeOut(tween(Motion.Spatial.TabDelayMs, easing = Motion.Standard))
     }
+}
+
+/**
+ * Subtle desktop content-card transition. Sidebar and top bar stay fixed while only the card contents
+ * crossfade with a short, density-scaled shift.
+ */
+internal fun desktopPageTransition(
+    move: NavMove,
+    reduced: Boolean,
+    shiftPx: Int,
+    sideShiftPx: Int = (shiftPx / 2).coerceAtLeast(1),
+): ContentTransform {
+    if (reduced) return reducedCrossfade()
+    val enterOffsetSpec = desktopPageEnterSpec<IntOffset>(reduced = false)
+    val exitOffsetSpec = desktopPageExitSpec<IntOffset>(reduced = false)
+    val enterAlphaSpec = desktopPageEnterSpec<Float>(reduced = false)
+    val exitAlphaSpec = desktopPageExitSpec<Float>(reduced = false)
+    return when (move) {
+        NavMove.Forward -> (
+            slideInHorizontally(enterOffsetSpec) { shiftPx } +
+                fadeIn(enterAlphaSpec)
+            ) togetherWith (
+            slideOutHorizontally(exitOffsetSpec) { -shiftPx / 2 } +
+                fadeOut(exitAlphaSpec)
+            )
+        NavMove.Back -> ContentTransform(
+            targetContentEnter = slideInHorizontally(enterOffsetSpec) { -shiftPx / 2 } + fadeIn(enterAlphaSpec),
+            initialContentExit = slideOutHorizontally(exitOffsetSpec) { shiftPx } + fadeOut(exitAlphaSpec),
+            targetContentZIndex = -1f,
+        )
+        NavMove.Switch -> (
+            slideInVertically(enterOffsetSpec) { sideShiftPx } +
+                fadeIn(enterAlphaSpec)
+            ) togetherWith fadeOut(exitAlphaSpec)
+    }
+}
+
+/** Smooth pane swap inside the desktop Now Playing view (Queue <-> Lyrics, or player <-> full lyrics). */
+internal fun desktopPaneTransition(
+    forward: Boolean,
+    reduced: Boolean,
+    shiftPx: Int,
+): ContentTransform {
+    if (reduced) return reducedCrossfade()
+    val enterOffset = desktopPaneEnterSpec<IntOffset>(reduced = false)
+    val exitOffset = desktopPaneExitSpec<IntOffset>(reduced = false)
+    val enterAlpha = desktopPaneEnterSpec<Float>(reduced = false)
+    val exitAlpha = desktopPaneExitSpec<Float>(reduced = false)
+    val dir = if (forward) 1 else -1
+    return (
+        slideInHorizontally(enterOffset) { dir * shiftPx } +
+            fadeIn(enterAlpha)
+        ) togetherWith (
+        slideOutHorizontally(exitOffset) { -dir * (shiftPx / 2) } +
+            fadeOut(exitAlpha)
+        )
 }
 
 /** What the phone's page area shows. A different key is a page change; [level] is how deep in the navigation it is. */
