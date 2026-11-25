@@ -182,6 +182,7 @@ class UnifiedUsbDacManager(private val context: Context) {
                 AudioManager.ACTION_AUDIO_BECOMING_NOISY -> coordinator.onRouteChanged(nonUsbRouteActive = true)
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     getParcelableDevice(intent)?.let { askOnce.attached(it.deviceId) }
+                    dacMayBeUsed() // plugged in after the earbuds, so it wins
                     scanClassOnly()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
@@ -200,17 +201,29 @@ class UnifiedUsbDacManager(private val context: Context) {
 
     private val audioCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-            val nonUsbAdded = addedDevices.any {
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
-            }
-            if (nonUsbAdded && coordinator.mode.value == BitPerfectMode.ON) {
+            if (addedDevices.any(::isEarbuds) && coordinator.mode.value == BitPerfectMode.ON) {
                 PlayLog.log("usb", "UnifiedUsbDacManager: non-USB audio route added; releasing claim")
+                // Set first: the sink would take the DAC back with the next buffer.
+                UnifiedUsbAudioSink.otherOutputWins = true
                 coordinator.onRouteChanged(nonUsbRouteActive = true)
             }
         }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            if (!UnifiedUsbAudioSink.otherOutputWins || removedDevices.none(::isEarbuds)) return
+            if (audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any(::isEarbuds)) return
+            PlayLog.log("usb", "UnifiedUsbDacManager: non-USB audio route gone; the DAC may be used again")
+            dacMayBeUsed()
+        }
+    }
+
+    private fun isEarbuds(d: AudioDeviceInfo) = d.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || d.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+        d.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || d.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+
+    private fun dacMayBeUsed() {
+        if (!UnifiedUsbAudioSink.otherOutputWins) return
+        UnifiedUsbAudioSink.otherOutputWins = false
+        UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
     }
 
     fun start() {
@@ -279,6 +292,7 @@ class UnifiedUsbDacManager(private val context: Context) {
 
     private fun useGrantedDevice() {
         if (coordinator.mode.value != BitPerfectMode.ON) return
+        UnifiedUsbAudioSink.otherOutputWins = false
         UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
         val shouldRebuild = BitPerfectRebuildPolicy.shouldRebuildPlayer(
             SinkRebuildNeedInput(
@@ -298,7 +312,7 @@ class UnifiedUsbDacManager(private val context: Context) {
     }
 
     fun onModeChanged(mode: BitPerfectMode) {
-        if (mode == BitPerfectMode.ON) askOnce.askAgain()
+        if (mode == BitPerfectMode.ON) { askOnce.askAgain(); dacMayBeUsed() }
         coordinator.onModeChanged(mode)
         updateVolumeReceiverRegistration()
         scanClassOnly()

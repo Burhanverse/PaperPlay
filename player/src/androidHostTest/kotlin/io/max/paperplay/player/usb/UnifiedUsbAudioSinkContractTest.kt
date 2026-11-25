@@ -432,6 +432,34 @@ class UnifiedUsbAudioSinkContractTest {
     }
 
     @Test
+    fun `earbuds connected after the DAC keep the music until they are gone`() {
+        PlaybackCore.usbExclusiveMode = true
+        val delegate = FakeDelegateAudioSink(AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY)
+        var opens = 0
+        val sink = UnifiedUsbAudioSink(
+            context = null, normalSink = delegate, sessionApi = unusedSessionApi,
+            openWaitBudgetMs = 500L, reopenCooldownMs = 0L, usbOpenRunner = { opens++; false }, clockMs = { 10_000L },
+        )
+        try {
+            sink.configure(AudioSink.AudioSinkConfig.Builder(pcmFormat("audio/raw", C.ENCODING_PCM_24BIT, rate = 96000, channels = 2)).build())
+            UnifiedUsbAudioSink.otherOutputWins = true
+            sink.markPendingUsbAttach()
+            sink.play()
+            sink.markPendingUsbAttach()
+            assertTrue(sink.handleBuffer(ByteBuffer.allocateDirect(64), 0L, 1))
+            assertEquals(0, opens, "the DAC is left alone")
+            assertEquals(1, delegate.handleBufferCalls)
+            UnifiedUsbAudioSink.otherOutputWins = false
+            sink.markPendingUsbAttach()
+            sink.handleBuffer(ByteBuffer.allocateDirect(64), 0L, 1)
+            assertEquals(1, opens)
+        } finally {
+            UnifiedUsbAudioSink.otherOutputWins = false
+            sink.release()
+        }
+    }
+
+    @Test
     fun `fallback in handleBuffer never calls normalSink play while paused even if playerPlayWhenReady is stale true`() {
         PlaybackCore.usbExclusiveMode = true
         PlaybackCore.playerPlayWhenReady = true // stale flag!

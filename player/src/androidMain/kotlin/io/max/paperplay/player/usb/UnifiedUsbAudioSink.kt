@@ -129,6 +129,10 @@ class UnifiedUsbAudioSink internal constructor(
         var currentInstance: UnifiedUsbAudioSink? = null
             private set
 
+        /** Earbuds or headphones connected after the DAC: the music goes there, and the DAC is left alone until they are gone. */
+        @Volatile
+        var otherOutputWins: Boolean = false
+
         private val usbOpenExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "UsbOpenWorker").apply { isDaemon = true }
         }
@@ -300,7 +304,7 @@ class UnifiedUsbAudioSink internal constructor(
 
     private fun tryReopenAfterIdleRelease(forceBypassReturn: Boolean = false): Boolean {
         val eligible = releasedWhileIdle || pendingUsbAttach || forceBypassReturn
-        if (sinkReleased || !eligible || !PlaybackCore.usbExclusiveMode) return false
+        if (sinkReleased || !eligible || !PlaybackCore.usbExclusiveMode || otherOutputWins) return false
         val cfg = lastConfig ?: return false
         val runner = usbOpenRunner
         val opened = if (runner != null) {
@@ -452,7 +456,8 @@ class UnifiedUsbAudioSink internal constructor(
         }
 
         val usbManager = UsbAudioManager.instance
-        if (PlaybackCore.usbExclusiveMode && usbManager != null) {
+        val otherOutput = otherOutputWins
+        if (PlaybackCore.usbExclusiveMode && usbManager != null && !otherOutput) {
             if (usbManager.state.value !is UsbAudioState.Connected) {
                 val opened = runBoundedOffThreadOpen {
                     val mgr = UnifiedUsbDacManager.instance
@@ -488,6 +493,7 @@ class UnifiedUsbAudioSink internal constructor(
                 usbDacAttached = connected != null,
                 usbPermissionGranted = connected != null,
                 dacReady = connected != null,
+                nonUsbRouteActive = otherOutput,
                 isDoP = isDoP,
             )
         )
