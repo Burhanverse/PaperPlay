@@ -92,20 +92,29 @@ fun describeDuplicate(g: DuplicateGroup, topicOf: (DuplicatePost) -> String?): S
 fun survivorOf(g: DuplicateGroup, isTicked: (DuplicatePost) -> Boolean): DuplicatePost? =
     (listOf(g.keep) + g.others).firstOrNull { !isTicked(it) }
 
-/** Clearly worse than [keep]: lossy against lossless, or under two-thirds of the size in the same kind of format. */
-private fun clearlyWorse(post: DuplicatePost, keep: DuplicatePost): Boolean {
-    if (keep.lossless && !post.lossless) return true
-    return keep.lossless == post.lossless && post.size * 3 < keep.size * 2
-}
-
-/** Lossy against lossless, another format ranked lower, or the same format at a clearly smaller size. */
-private fun worseQuality(post: DuplicatePost, keep: DuplicatePost, rules: SongRules): Boolean {
-    if (clearlyWorse(post, keep)) return true
+/**
+ * Surely worse than [keep], so it may be ticked on its own. Between two lossless files only measured depth and rate count: a smaller FLAC is
+ * another release or master, not a worse copy. Lossy files go by size: the same format, or clearly smaller in another one.
+ */
+private fun worseQuality(post: DuplicatePost, keep: DuplicatePost): Boolean {
+    if (keep.lossless != post.lossless) return keep.lossless
+    if (!keep.lossless) return post.size * 3 < keep.size * 2 || (post.format == keep.format && post.size * 100 < keep.size * 95)
     val a = keep.song ?: return false
     val b = post.song ?: return false
-    if (rules.compareQuality(a, b) >= 0) return false
-    return post.format != keep.format || post.size * 100 < keep.size * 95
+    if (!measured(a) || !measured(b)) return false
+    val depth = b.bit_depth!!.compareTo(a.bit_depth!!)
+    val rate = b.sample_rate!!.compareTo(a.sample_rate!!)
+    return depth <= 0 && rate <= 0 && depth + rate != 0
 }
+
+private fun measured(s: Song) = s.bit_depth != null && s.sample_rate != null
+
+private val versionWords = Regex("\\b(remaster(?:ed)?|clean)\\b", RegexOption.IGNORE_CASE)
+
+/** Titles are compared without words like these, so two files can match and still be different versions. */
+private fun versionOf(s: Song) = versionWords.findAll(s.title).map { it.value.lowercase().removeSuffix("ed") }.toSet()
+
+private fun sameVersion(a: Song, b: Song) = versionOf(a) == versionOf(b) && abs(a.duration_sec - b.duration_sec) <= LENGTH_TOLERANCE
 
 /** The same format within a few percent of the size (a re-tag or re-cut of the same track): a re-upload, so the lesser one can go. */
 private fun reupload(post: DuplicatePost, keep: DuplicatePost) =
@@ -161,9 +170,16 @@ fun findDuplicates(songs: List<Song>, copies: List<PostCopy>, rules: SongRules, 
         same.sortBy { it.duration_sec }
         fun flush(run: List<Song>) {
             if (run.size < 2) return
-            // Best quality, then the larger file, then the newest post.
-            val posts = run.map { postOf(it, rules) }.sortedWith { a, b ->
-                val q = rules.compareQuality(a.song!!, b.song!!)
+            // Best quality, then the larger file, then the newest post. Depth and rate are known only once a song was played, so unless all
+            // lossless files have them the size decides: a file nobody played yet is not worse for that.
+            val all = run.map { postOf(it, rules) }
+            val byMeasure = all.all { !it.lossless || measured(it.song!!) }
+            val posts = all.sortedWith { a, b ->
+                val q = when {
+                    a.lossless != b.lossless -> b.lossless.compareTo(a.lossless)
+                    a.lossless && byMeasure -> rules.compareQuality(a.song!!, b.song!!)
+                    else -> b.size.compareTo(a.size)
+                }
                 if (q != 0) q else b.date.compareTo(a.date)
             }
             val keep = posts.first()
@@ -171,7 +187,7 @@ fun findDuplicates(songs: List<Song>, copies: List<PostCopy>, rules: SongRules, 
             groups += DuplicateGroup(
                 DuplicateKind.LikelySameSong, keep.song!!.title, keep.song.artist, keep, others,
                 // Lower quality always goes, in any topic. A re-upload of equal quality goes only from the same topic, as topics act as playlists.
-                others.filter { worseQuality(it, keep, rules) || (it.topicId == keep.topicId && reupload(it, keep)) }
+                others.filter { sameVersion(it.song!!, keep.song) && (worseQuality(it, keep) || (it.topicId == keep.topicId && reupload(it, keep))) }
                     .map { it.messageId }.toSet(),
             )
         }
