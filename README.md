@@ -240,7 +240,7 @@ that need the database or Telegram have no preview yet.
   is no native ARM build. It is not signed, so SmartScreen may warn.
 - **USB DACs:** direct playback was never reached on DACs that stop at 24 bit until the fix of 25 November 2026, and has not been
   heard since. Song endings are cut when the next song has another sample rate or depth.
-- **Pairing:** a device on your network that poses as your other one could find out the code while you pair. Pair on a network you trust.
+- **Pairing:** both devices need the same app version to pair or to join network play; devices already paired stay paired.
 - **App versions:** the block stops what reaches a device that has it. Two older apps still sync with each other, and a change an
   older app makes in Telegram itself is not stopped.
 - **Not tried on two devices yet:** the shared player (what the other plays, source switch, output names), the sync of song data,

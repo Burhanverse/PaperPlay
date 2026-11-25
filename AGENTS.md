@@ -107,7 +107,8 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Shutting down, restoring and erasing run on `LifeWork.app`, not on a screen's scope.
 - Before a commit build the UI and both apps, not only `core`.
 - Devices sync only with the same app version and `SYNC_FORMAT` (`LanSync.kt`). Raise `SYNC_FORMAT` when synced data changes its meaning; a new message that carries data goes into `SYNC_TYPES` (`JavaLanSync.kt`).
-- Seconds of work (matching titles, reading thousands of rows one by one) run outside a transaction, and many writes go in small steps: whoever waits for the library may be the screen. Android uses WAL, so reads pass a writer; writes on the main thread still wait. No database reads while drawing.
+- Seconds of work (matching titles, reading thousands of rows one by one) run outside a transaction, and many writes go in small steps: whoever waits for the library may be the screen. Android uses WAL, so reads pass a writer; a write from the screen goes through `scope.launch` or `LibraryRepository.savePref`, never straight to the file. No database reads while drawing.
+- A short code is never proven with a hash of it: pairing and network play use `CPace` (`pakeServer`, `pakeClient`), because whoever answers could try out every PIN.
 - The decoder gives float whatever the depth of the music, so a DAC setting is picked with `UsbFormatNegotiator.pickForSource`; a fall back to Android's mixer is logged with its reason. Earbuds connected after a DAC win (`UnifiedUsbAudioSink.otherOutputWins`).
 - Duplicates are ticked only when surely worse (`worseQuality` in `Duplicates.kt`); depth and rate are known only after playing, so a missing value says nothing.
 - TDLib file ids belong to one client; check which client an update came from.

@@ -366,7 +366,7 @@ Updated 14 Nov 2026 (section 6 is the 13 Nov code audit; the 14 Nov updates at t
 - [x] Desktop top bar: Home button has no background circle, drawn in the theme's contrast colour
 - [ ] Desktop memory, TEST NEXT: closing to the tray now removes the window (UI, Skia surface, caches) and a reopened window reuses the running services (`AppServices.isShutDown`). Measured hidden and playing: 142 MB working set against 361 MB before, 807 MB with the window open. Not yet checked: reopen from the tray (window comes back, music keeps playing, taskbar buttons return), then a second close and reopen, then Quit from the tray, erase everything and restore (they build new services)
 - [ ] Desktop memory with the window open (about 800 MB playing): libmpv about 109 MB and the Intel graphics driver (igc64, igxelpicd) about 110 MB are loaded; JVM itself about 270 MB (heap 125 MB, metaspace 59 MB). Try `SKIKO_RENDER_API=SOFTWARE_FAST`, load libmpv on first play, a lower `-Xmx`; measure with `-XX:NativeMemoryTracking=summary` and `jcmd <pid> VM.native_memory summary`
-- [ ] `UpstreamOffChainIdentityTest` (USB sink chain) fails in `:player:jvmTest`; not looked into, not from this work as far as known
+- [x] `UpstreamOffChainIdentityTest` failed only on Windows line ends (`e00e600`)
 - [x] Plain lyrics (no timestamps, any language) drift down with the song; dragging takes over, they follow again after 6 s
 - [x] Phone mini player: devices button opens the app's Devices dialog (This phone, live linked devices with controls, Audio output switcher, Network play, Connect devices)
 - [x] Desktop player bar Devices popup is live (it was a static placeholder): own addresses, linked devices with now playing and controls, paired devices away with Connect (`DevicesPanel.kt`, `LocalLanSync` from the shell)
@@ -467,7 +467,7 @@ Removed on 13 Nov: `account/Stubs.kt` (`NoAccount`, `NoIndex`) and the empty `li
 - `core/.../sync/WorkOwner.kt`: written, never called
 
 ### 6e. Build and CI to do
-- [ ] Find the test that hangs `:core:jvmTest` on CI (one run ran 6 hours, run 31 ran 53 minutes), then put the tests back in the workflow
+- [~] The tests are back on CI in a job that stops nothing (`a5d8964`, 25 minutes at most, the log names the last test started). Which test hung is not known: all 270 passed here with 1 and 2 processors. Two tests that waited out 60 s timeouts are fast now (`b2389d8`). Look at the first run after a push
 - [x] Windows CI job failed every time at the "Get libvlc" step: it now downloads with `curl --fail` from download.videolan.org and unzips with 7-Zip; the TDLib step no longer fails when the `deps` release is missing (14 Nov). The installers then built (`PaperPlay-1.2.0.exe` and `.msi`) but "Collect files" failed: `packageDistributionForCurrentOS` does not create the unpacked `main\app\PaperPlay` folder the zip step reads, only `createDistributable` does. The build step now runs both
 - [x] Linux and Windows jobs are back on and green (14 Nov, run #46: Windows zip, MSI and setup exe, Linux archive); the release-publishing job is now on (see the automatic releases update below)
 - [x] README now says Gradle runs on a JDK 25 daemon it downloads on first use. A machine that cannot reach the download (or the Google Maven repository for the Android plugin) cannot build
@@ -882,8 +882,7 @@ elease` must say Java 25 and the setup exe must start.
 
 ## 25 Nov 2026 code audit and crash fixes
 
-87 findings, 75 confirmed, 10 possible, 2 already fixed. Of the 85: 81 fixed, 1 half (USB endings), 3 open (2 of them not proven, and the pairing
-code). Earbuds over the DAC is what the owner wants (25 Nov); not tried since it was built. `[x]` was tried by the owner on the phone,
+87 findings, 75 confirmed, 10 possible, 2 already fixed. Of the 85: 82 fixed, 1 half (USB endings), 2 open (not proven). Earbuds over the DAC is what the owner wants (25 Nov); not tried since it was built. `[x]` was tried by the owner on the phone,
 `[~]` has passed tests or builds only.
 
 Left, in this order: 1. the owner opens the phone app (new database mode) and looks for missing songs and freezes; 2. DAC by ear, volume low;
@@ -923,9 +922,9 @@ Left, in this order: 1. the owner opens the phone app (new database mode) and lo
 - [~] USB: earbuds connected after the DAC keep the music until they are gone (`3318cf3`). The owner decided on 25 Nov to keep it this way. Not tried yet
 - [~] Sync is blocked between different app versions (switch "Block sync when versions differ", "Force sync" per device until the link ends; `329f953`). Tested with two devices in a test, not on the real ones
 - [~] Phone: screens no longer wait up to 10 s for the only database connection (`6725ce2`, `f467064`, WAL). Not tried yet
-- [ ] Saving from the screen can still wait a moment for another writer
-- [ ] The old USB sink (`useUnifiedBitPerfect` off) still asks a second time
+- [~] Settings changed on the screen are written beside it (`LibraryRepository.savePref`, `02179be`); favorites and playlists already were. Not timed on a phone
+- [~] The old USB sink (`useUnifiedBitPerfect` off) asks once per plug-in too (`6a7eb08`). Not tried
 - [ ] USB (not proven): a slow reopen, swallowed AudioTrack errors
-- [ ] Pairing code can be guessed offline by a device the owner dials on purpose (needs a new protocol)
+- [~] Pairing and network play use CPace (`d0e65f8`, test vectors of the draft): a fake device gets one guess per connection for each code the real one could accept, never all of them. Both devices need this build to pair; paired ones stay paired. Not tried on the real devices
 - [~] Basic groups, the recommender after an ended queue, cover and photo pickers, copying library-only songs after leaving the page
-- [ ] Memory while the PC window is hidden, measured again (142 MB before the backend was kept)
+- [ ] Memory while the PC window is hidden, measured again (142 MB before the backend was kept); needs the real app running
