@@ -124,14 +124,19 @@ internal fun MissingSheet(backend: CoreBackend, store: ImportStore, missing: Lis
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("${missing.size} not in your library", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+            Text("${missing.size} not matched", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             IconButton({
                 val rows = missing.map { ExportRow(it.title, it.artist, it.duration_sec.toInt(), spotifyLinkOf(it.track_key)) }
                 exportText = exportCsv(ExportList("missing", listName, 0L, rows))
             }) { AppIcon(Icons.Rounded.IosShare, "Export the missing list") }
         }
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-            items(missing, key = { it.track_key }) { t -> MissingTrackRow(backend, store, t, mine[t.track_key].orEmpty(), onChanged) }
+            // What a tap can settle comes first.
+            val (have, rest) = missing.partition { mine[it.track_key].orEmpty().isNotEmpty() }
+            if (have.isNotEmpty()) item { MissingHeader("Maybe in your library (${have.size})") }
+            items(have, key = { it.track_key }) { t -> MissingTrackRow(backend, store, t, mine[t.track_key]?.firstOrNull(), onChanged) }
+            if (have.isNotEmpty() && rest.isNotEmpty()) item { MissingHeader("Not in your library (${rest.size})") }
+            items(rest, key = { it.track_key }) { t -> MissingTrackRow(backend, store, t, null, onChanged) }
         }
     }
     exportText?.let { text ->
@@ -150,7 +155,15 @@ internal fun MissingSheet(backend: CoreBackend, store: ImportStore, missing: Lis
 }
 
 @Composable
-private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: MissingTrack, mine: List<io.max.paperplay.core.library.Song>, onChanged: () -> Unit) {
+private fun MissingHeader(text: String) = Text(
+    text, Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 4.dp),
+    style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+)
+
+private fun clockTime(sec: Int) = "${sec / 60}:${(sec % 60).toString().padStart(2, '0')}"
+
+@Composable
+private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: MissingTrack, mine: io.max.paperplay.core.library.Song?, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     var post by remember(t.track_key) { mutableStateOf<ChatPost?>(null) }
     var state by remember(t.track_key) { mutableStateOf<String?>(null) }
@@ -164,37 +177,34 @@ private fun MissingTrackRow(backend: CoreBackend, store: ImportStore, t: Missing
     var accepting by remember(t.track_key) { mutableStateOf(false) }
     val sure = p != null && p.durationSec > 0 && wanted > 0 && abs(p.durationSec - wanted) <= 8
     Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        AppIcon(if (p == null) Icons.Rounded.MusicOff else Icons.AutoMirrored.Rounded.HelpOutline, null, Modifier.padding(end = 16.dp).size(24.dp))
+        AppIcon(if (p == null && mine == null) Icons.Rounded.MusicOff else Icons.AutoMirrored.Rounded.HelpOutline, null, Modifier.padding(end = 16.dp).size(24.dp))
         Column(Modifier.weight(1f)) {
             Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
             Text(t.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (p != null) {
-                val what = "${p.title} · ${p.artist}"
-                Text(
-                    state ?: if (sure) "In your chats: $what" else "Maybe: $what (${p.durationSec}s, wanted ${wanted}s)",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
-                )
+            val hint = when {
+                state != null -> state
+                mine != null -> mine.title + if (abs(mine.duration_sec - wanted) > 3) " (${clockTime(mine.duration_sec.toInt())}, Spotify ${clockTime(wanted)})" else ""
+                p == null -> null
+                sure -> "In your chats"
+                else -> "Maybe in your chats: ${p.title} (${clockTime(p.durationSec)}, Spotify ${clockTime(wanted)})"
             }
-            for (s in mine) Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "In your library: ${s.title} · ${s.artist} (${s.duration_sec}s, wanted ${wanted}s)", Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
-                )
-                TextButton({
-                    accepting = true
-                    scope.launch {
-                        try {
-                            // A write waits while a scan holds the library, so not where the screen is drawn.
-                            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Default) { acceptMatch(store, t, s) }
-                            backend.services.library.invalidate()
-                            onChanged()
-                        } finally {
-                            accepting = false
-                        }
-                    }
-                }, enabled = !accepting) { Text("This one") }
-            }
+            if (hint != null) Text(hint, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
+        if (mine != null) TextButton({
+            accepting = true
+            scope.launch {
+                try {
+                    // A write waits while a scan holds the library, so not where the screen is drawn.
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Default) { acceptMatch(store, t, mine) }
+                    backend.services.library.invalidate()
+                    onChanged()
+                } finally {
+                    accepting = false
+                }
+            }
+        }, enabled = !accepting) { Text("This one") }
+        // A song that may be here already is not offered as a copy or a link too.
+        if (mine != null) return@Row
         CopyLinksButton(backend, t)
         if (p != null && state == null) IconButton({
             // A match in the chat index gets a + that copies it into the main chat (a post already in the main chat is only added to the library).
