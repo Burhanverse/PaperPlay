@@ -355,7 +355,8 @@ class MainActivity : ComponentActivity() {
             // Profile photo: copied into the app's files, so the picked document can be released.
             val photoPending = remember { arrayOfNulls<(String?) -> Unit>(1) }
             val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                val path = uri?.let {
+                // Copied beside the screen: a photo can be big, or come from the cloud.
+                Thread { val path = uri?.let {
                     runCatching {
                         val dir = File(filesDir, "profile").apply { mkdirs() }
                         dir.listFiles()?.filter { f -> f.name.startsWith("photo-") }?.forEach { f -> f.delete() }
@@ -364,12 +365,14 @@ class MainActivity : ComponentActivity() {
                         out.path
                     }.getOrNull()
                 }
-                photoPending[0]?.invoke(path)
+                runOnUiThread { photoPending[0]?.invoke(path) } }.start()
             }
             val imagePending = remember { arrayOfNulls<(ByteArray?) -> Unit>(1) }
             val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                val bytes = uri?.let { runCatching { contentResolver.openInputStream(it)!!.use { s -> s.readBytes() } }.getOrNull() }
-                imagePending[0]?.invoke(bytes)
+                Thread {
+                    val bytes = uri?.let { runCatching { contentResolver.openInputStream(it)!!.use { s -> s.readBytes() } }.getOrNull() }
+                    runOnUiThread { imagePending[0]?.invoke(bytes) }
+                }.start()
             }
             val audioPending = remember { arrayOfNulls<(List<String>, Boolean) -> Unit>(1) }
             val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
