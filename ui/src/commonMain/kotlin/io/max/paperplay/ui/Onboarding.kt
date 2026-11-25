@@ -1,6 +1,7 @@
 package io.max.paperplay.ui
 
 import io.max.paperplay.ui.app.blockTouchesBehind
+import io.max.paperplay.ui.theme.pressScale
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -137,7 +138,7 @@ fun Onboarding(
                 val source = remember { MutableInteractionSource() }
                 Button(
                     onClick = { if (last) onFinish(OnboardingChoice.Bot) else scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } },
-                    Modifier.bouncy(source), interactionSource = source, enabled = !blocked, shape = RoundedCornerShape(28.dp),
+                    Modifier.pressScale(source), interactionSource = source, enabled = !blocked, shape = RoundedCornerShape(28.dp),
                 ) { Text(if (last) (if (revisit) "Close" else "Start") else "Next") }
             }
         }

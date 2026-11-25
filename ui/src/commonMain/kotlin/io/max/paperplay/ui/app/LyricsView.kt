@@ -628,6 +628,7 @@ private fun PlainLyrics(
             following = true
         }
     }
+    val driftSpec = io.max.paperplay.ui.theme.motionLinearTween<Float>(Motion.Ambient.PlainLyricsDriftMs)
     LaunchedEffect(text, following) {
         snapshotFlow {
             // The first and last stretch of a song are usually instrumental, so the text is spread over the middle.
@@ -636,7 +637,7 @@ private fun PlainLyrics(
         }.collect { target ->
             if (following) {
                 if (reduceMotion) scroll.scrollTo(target)
-                else scroll.animateScrollTo(target, androidx.compose.animation.core.tween(900, easing = androidx.compose.animation.core.LinearEasing))
+                else scroll.animateScrollTo(target, driftSpec)
             }
         }
     }

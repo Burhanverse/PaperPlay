@@ -48,8 +48,13 @@ fun BackTopBar(title: String, onBack: () -> Unit, modifier: Modifier = Modifier,
         // The arrow arrives pointing forward (the way the page was entered) and turns to point back, as the page settles.
         val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
         val turn = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (reduceMotion) 180f else 0f) }
+        val turnSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(
+            durationMs = io.max.paperplay.ui.theme.Motion.Micro.IconTurnMs,
+            delayMillis = io.max.paperplay.ui.theme.Motion.Micro.IconTurnDelayMs,
+            easing = io.max.paperplay.ui.theme.Motion.Standard,
+        )
         androidx.compose.runtime.LaunchedEffect(Unit) {
-            if (!reduceMotion) turn.animateTo(180f, androidx.compose.animation.core.tween(380, delayMillis = 120, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            if (!reduceMotion) turn.animateTo(180f, turnSpec)
         }
         IconButton(onBack) { AppIcon(Icons.Rounded.ChevronRight, "Back", Modifier.graphicsLayer { rotationZ = turn.value }) }
         Text(title, Modifier.weight(1f).padding(start = 4.dp), style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)

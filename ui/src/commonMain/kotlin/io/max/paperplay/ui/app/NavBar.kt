@@ -1,4 +1,4 @@
-﻿package io.max.paperplay.ui.app
+package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
 
@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.clickable
-import io.max.paperplay.ui.bouncy
+import io.max.paperplay.ui.theme.pressScale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,7 +87,7 @@ fun NavBar(selected: Int, backdrop: Backdrop, prefs: UiPrefs, inset: Dp, onSelec
     val items: @Composable () -> Unit = {
         Row(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             entries.forEachIndexed { i, e ->
-                val w by animateFloatAsState(if (layout == NavLayout.Pill && i == selected) 1.9f else 1f, io.max.paperplay.ui.theme.motionSpring(), label = "pill")
+                val w by animateFloatAsState(if (layout == NavLayout.Pill && i == selected) 1.9f else 1f, io.max.paperplay.ui.theme.motionPillSpring(), label = "pill")
                 NavItem(e, i == selected, prefs, if (layout == NavLayout.Dock || layout == NavLayout.Pill) Modifier.weight(w) else Modifier, taskRunning = taskRunning && i == 3) { onSelect(i) }
             }
         }
@@ -132,8 +132,9 @@ private fun NavItem(e: NavEntry, on: Boolean, prefs: UiPrefs, modifier: Modifier
         }
     }
     val press = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    val inner = Modifier.bouncy(press, 0.92f).clip(shape).background(bg).then(ring)
-        .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick).animateContentSize()
+    val inner = Modifier.pressScale(press, 0.92f).clip(shape).background(bg).then(ring)
+        .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick)
+        .animateContentSize(io.max.paperplay.ui.theme.motionSpatialSpring())
     when (layout) {
         NavLayout.Pill -> Row(modifier.padding(horizontal = 2.dp).then(inner).padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             icon()
@@ -166,14 +167,14 @@ fun MiniPlayer(
     val cover = coverScheme(song.coverUri)
     val bg by androidx.compose.animation.animateColorAsState(
         if (cover == null) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.lerp(cover.primaryContainer, Color.Black, 0.35f),
-        androidx.compose.animation.core.tween(400),
+        io.max.paperplay.ui.theme.motionColorSpec(),
     )
     val ink = cover?.onSurface ?: MaterialTheme.colorScheme.onSecondaryContainer
     val press = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     androidx.compose.runtime.DisposableEffect(coverBounds) {
         onDispose { coverBounds?.clearMini() }
     }
-    Box(modifier.fillMaxWidth().bouncy(press, 0.98f).clip(RoundedCornerShape(12.dp)).background(bg)
+    Box(modifier.fillMaxWidth().pressScale(press, io.max.paperplay.ui.theme.Motion.Micro.CardPressScale).clip(RoundedCornerShape(12.dp)).background(bg)
         .clickable(interactionSource = press, indication = androidx.compose.foundation.LocalIndication.current, onClickLabel = "Open player", onClick = onOpen)) {
         Column {
             Row(Modifier.padding(start = 8.dp, top = 8.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -185,7 +186,7 @@ fun MiniPlayer(
                 // The title and artist fade into the next song's instead of jumping.
                 androidx.compose.animation.Crossfade(
                     Pair(song.title, song.artist), Modifier.weight(1f).padding(horizontal = 12.dp),
-                    animationSpec = io.max.paperplay.ui.theme.motionTween(io.max.paperplay.ui.theme.Motion.STANDARD), label = "mini title",
+                    animationSpec = io.max.paperplay.ui.theme.motionCrossfadeSpec(), label = "mini title",
                 ) { (title, artist) ->
                     Column {
                         Text(title, modifier = Modifier.basicMarquee(), maxLines = 1, style = MaterialTheme.typography.titleSmall, color = ink)

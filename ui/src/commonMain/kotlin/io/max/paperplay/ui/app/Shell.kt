@@ -337,7 +337,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     val base = MaterialTheme.colorScheme.background
     val dark = base.luminance() < 0.5f
     val tint = (if (prefs.coverGradient) coverScheme(pb.current?.coverUri, dark) else null)?.primaryContainer ?: MaterialTheme.colorScheme.primaryContainer
-    val g0 = androidx.compose.animation.animateColorAsState(backgroundTopColor(prefs, tint, base), androidx.compose.animation.core.tween(700))
+    val g0 = androidx.compose.animation.animateColorAsState(backgroundTopColor(prefs, tint, base), io.max.paperplay.ui.theme.motionWashSpec())
     // The page itself is drawn by AppBackground; g0 only tints the window and top areas.
     // Colour of the page where a pinned list bar sits, a fifth of the way down: the cover wash eases from g0 to g1 over the top 45%.
     val tintState = androidx.compose.runtime.rememberUpdatedState(tint)
@@ -489,6 +489,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         val density = androidx.compose.ui.platform.LocalDensity.current
                         val threshold = with(density) { 80.dp.toPx() }
                         val miniMaxShiftPx = with(density) { io.max.paperplay.ui.theme.PlayerMotionTokens.MINI_PLAYER_MAX_SHIFT_DP.dp.toPx() }
+                        val miniSwipeDismissSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs)
+                        val miniSwipeReturnSpec = io.max.paperplay.ui.theme.motionSpatialSpring<Float>()
                         MiniPlayer(pb, { playerController.open() }, backend::togglePlay, backend::next, backend::previous, { pos.value.progress(pb.durationMs) },
                             Modifier
                                 .focusRequester(miniFocusRequester)
@@ -508,11 +510,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                         val away = kotlin.math.abs(from) > threshold || kotlin.math.abs(velocity) > 800f
                                         if (away) {
                                             val dir = if (from != 0f) kotlin.math.sign(from) else kotlin.math.sign(velocity)
-                                            androidx.compose.animation.core.animate(from, dir * 1000f, animationSpec = androidx.compose.animation.core.tween(160)) { v, _ -> miniDrag = v }
+                                            androidx.compose.animation.core.animate(from, dir * 1000f, animationSpec = miniSwipeDismissSpec) { v, _ -> miniDrag = v }
                                             miniGone = true
                                             miniDrag = 0f
                                         } else {
-                                            androidx.compose.animation.core.animate(from, 0f, animationSpec = androidx.compose.animation.core.spring()) { v, _ -> miniDrag = v }
+                                            androidx.compose.animation.core.animate(from, 0f, animationSpec = miniSwipeReturnSpec) { v, _ -> miniDrag = v }
                                             miniDrag = 0f
                                         }
                                     },

@@ -6,9 +6,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,10 +19,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,8 +30,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import io.max.paperplay.ui.theme.motionSpatialSpring
+import kotlinx.coroutines.launch
 
 /** The app's snackbars: coloured (the page [tint], else the theme's container colour) and swiped sideways to dismiss, like [StatusToast]. */
 @Composable
@@ -52,17 +51,24 @@ private fun SwipeToast(data: SnackbarData, tint: Color?) {
     val scheme = MaterialTheme.colorScheme
     val bg = if (tint != null) lerp(tint, scheme.onSurface, 0.16f) else scheme.primaryContainer
     val fg = if (bg.luminance() < 0.5f) Color.White else Color.Black
-    var offset by remember(data) { mutableFloatStateOf(0f) }
+    val offset = remember(data) { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val snapBackSpec = motionSpatialSpring<Float>()
     Row(
         Modifier.padding(horizontal = 16.dp).widthIn(max = 440.dp)
-            .offset { IntOffset(offset.toInt(), 0) }
-            .graphicsLayer { alpha = (1f - kotlin.math.abs(offset) / 600f).coerceIn(0f, 1f) }
+            .graphicsLayer {
+                translationX = offset.value
+                alpha = (1f - kotlin.math.abs(offset.value) / 600f).coerceIn(0f, 1f)
+            }
             .toastSurface(bg, fg)
             .pointerInput(data) {
                 detectHorizontalDragGestures(
-                    onDragEnd = { if (kotlin.math.abs(offset) > 80f) data.dismiss() else offset = 0f },
-                    onDragCancel = { offset = 0f },
-                ) { _, dx -> offset += dx }
+                    onDragEnd = {
+                        if (kotlin.math.abs(offset.value) > 80f) data.dismiss()
+                        else scope.launch { offset.animateTo(0f, snapBackSpec) }
+                    },
+                    onDragCancel = { scope.launch { offset.animateTo(0f, snapBackSpec) } },
+                ) { _, dx -> scope.launch { offset.snapTo(offset.value + dx) } }
             }
             .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,

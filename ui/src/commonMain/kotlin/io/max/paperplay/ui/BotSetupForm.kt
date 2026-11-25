@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import io.max.paperplay.ui.theme.motionPopSpring
+import io.max.paperplay.ui.theme.motionSpatialSpring
+import io.max.paperplay.ui.theme.pressScale
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
@@ -110,7 +113,7 @@ internal fun BotSetupForm(
         val source = remember { MutableInteractionSource() }
         Button(
             { error = onSave(id, hash, token); saved = error == null },
-            Modifier.fillMaxWidth().bouncy(source), interactionSource = source,
+            Modifier.fillMaxWidth().pressScale(source), interactionSource = source,
             enabled = id.isNotBlank() && hash.isNotBlank() && token.isNotBlank(),
             shape = RoundedCornerShape(28.dp),
         ) { Text("Save and connect") }
@@ -123,7 +126,7 @@ internal fun BotSetupForm(
                 else -> 0
             },
             transitionSpec = {
-                (fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) + scaleIn(spring(dampingRatio = 0.5f), initialScale = 0.8f)) togetherWith
+                (fadeIn() + scaleIn(initialScale = 0.8f)) togetherWith
                     (fadeOut() + scaleOut(targetScale = 0.9f))
             },
             modifier = Modifier.animateContentSize(), label = "status",

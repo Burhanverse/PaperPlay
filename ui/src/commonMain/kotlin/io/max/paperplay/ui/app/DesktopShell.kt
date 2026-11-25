@@ -185,7 +185,7 @@ fun Sidebar(
         val hovered by hover.collectIsHoveredAsState()
         val fill by androidx.compose.animation.animateColorAsState(
             if (hovered && selectedFill == Color.Transparent) scheme.onSurface.copy(alpha = 0.07f) else selectedFill,
-            io.max.paperplay.ui.theme.motionTween(io.max.paperplay.ui.theme.Motion.FAST), label = "sidebar item",
+            io.max.paperplay.ui.theme.motionColorSpec(), label = "sidebar item",
         )
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).clip(itemShape)

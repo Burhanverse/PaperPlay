@@ -563,7 +563,7 @@ private fun ModernPhoneBody(
                 // Transport row: Previous | Play/Pause | Next
                 val playShapeRadius by animateDpAsState(
                     targetValue = if (state.playing) 24.dp else 32.dp,
-                    animationSpec = motionTween(Motion.STANDARD),
+                    animationSpec = io.max.paperplay.ui.theme.motionPlayMorphSpec(),
                     label = "playMorph",
                 )
                 Row(

@@ -69,7 +69,7 @@ fun TrayMenuContent(
                 val shape = androidx.compose.ui.graphics.RectangleShape // the window itself is rounded by Windows
                 // The menu fades in and rises a few pixels when it opens.
                 val appear = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
-                val appearSpec = io.max.paperplay.ui.theme.motionTween<Float>(io.max.paperplay.ui.theme.Motion.FAST)
+                val appearSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs)
                 androidx.compose.runtime.LaunchedEffect(Unit) { appear.animateTo(1f, appearSpec) }
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = appear.value; translationY = (1f - appear.value) * 12.dp.toPx() }) {
                     Column(Modifier.fillMaxSize().background(card).padding(vertical = 8.dp)) {

@@ -117,7 +117,7 @@ internal fun MiniBody(state: PlaybackUiState, controls: PlayerControls?, onClose
         Box(Modifier.fillMaxSize().clip(shape).background(MaterialTheme.colorScheme.primaryContainer)) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 if (song != null) {
-                    val coverScale by androidx.compose.animation.core.animateFloatAsState(if (state.playing) 1f else 0.86f, androidx.compose.animation.core.spring(0.6f, 280f), label = "miniCover")
+                    val coverScale by androidx.compose.animation.core.animateFloatAsState(if (state.playing) 1f else 0.86f, io.max.paperplay.ui.theme.motionPlayMorphSpec(), label = "miniCover")
                     Box(Modifier.size(110.dp), contentAlignment = Alignment.Center) {
                         CoverImage(song.coverUri, song.id, Modifier.graphicsLayer { scaleX = coverScale; scaleY = coverScale }, size = 110.dp, radius = 14.dp)
                     }
@@ -129,11 +129,18 @@ internal fun MiniBody(state: PlaybackUiState, controls: PlayerControls?, onClose
                     Row(Modifier.padding(top = 6.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         IconButton({ controls?.previous() }, Modifier.size(36.dp), enabled = song != null) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(26.dp), tint = ink) }
                         IconButton({ controls?.togglePlay() }, Modifier.size(44.dp), enabled = song != null) {
+                            val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+                            val enterFade = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs)
+                            val exitFade = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs)
                             androidx.compose.animation.AnimatedContent(
                                 state.playing, label = "miniPlayPause",
                                 transitionSpec = {
-                                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)) + androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(160), initialScale = 0.5f))
-                                        .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(110)) + androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(110), targetScale = 0.5f))
+                                    if (reduce) {
+                                        androidx.compose.animation.fadeIn(enterFade) togetherWith androidx.compose.animation.fadeOut(exitFade)
+                                    } else {
+                                        (androidx.compose.animation.fadeIn(enterFade) + androidx.compose.animation.scaleIn(enterFade, initialScale = 0.5f))
+                                            .togetherWith(androidx.compose.animation.fadeOut(exitFade) + androidx.compose.animation.scaleOut(exitFade, targetScale = 0.5f))
+                                    }
                                 },
                             ) { playing -> AppIcon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Play", Modifier.size(34.dp), tint = ink) }
                         }
@@ -153,7 +160,7 @@ internal fun MiniBody(state: PlaybackUiState, controls: PlayerControls?, onClose
             val pos = controls?.position?.collectAsState()
             val fill = ink
             val progress by androidx.compose.animation.core.animateFloatAsState(
-                pos?.value?.progress(state.durationMs) ?: 0f, androidx.compose.animation.core.tween(300, easing = androidx.compose.animation.core.LinearEasing), label = "miniProgress",
+                pos?.value?.progress(state.durationMs) ?: 0f, io.max.paperplay.ui.theme.motionLinearTween(io.max.paperplay.ui.theme.Motion.Effects.CoverCrossfadeMs), label = "miniProgress",
             )
             Box(
                 Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp)

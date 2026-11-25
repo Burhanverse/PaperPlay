@@ -222,8 +222,8 @@ private fun DefaultFullPlayer(
     onOpenStandby: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    val top by animateColorAsState(lerp(scheme.primaryContainer, Color.Black, 0.25f), tween(500))
-    val mid by animateColorAsState(lerp(scheme.surfaceContainerLow, Color.Black, 0.75f), tween(500))
+    val top by animateColorAsState(lerp(scheme.primaryContainer, Color.Black, 0.25f), io.max.paperplay.ui.theme.motionWashSpec())
+    val mid by animateColorAsState(lerp(scheme.surfaceContainerLow, Color.Black, 0.75f), io.max.paperplay.ui.theme.motionWashSpec())
     val insets = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     MaterialTheme(colorScheme = scheme) {
@@ -488,7 +488,7 @@ private fun PlayerBody(
 private fun Artwork(song: SongUi, playing: Boolean, size: androidx.compose.ui.unit.Dp) {
     val controller = LocalPlayerTransition.current
     val coverBounds = LocalCoverBounds.current
-    val scale by animateFloatAsState(if (playing) 1f else 0.92f, tween(500))
+    val scale by animateFloatAsState(if (playing) 1f else 0.92f, io.max.paperplay.ui.theme.motionPlayMorphSpec())
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         // One shadow around the cover; the covers of two songs fade into each other inside it.
         Box(

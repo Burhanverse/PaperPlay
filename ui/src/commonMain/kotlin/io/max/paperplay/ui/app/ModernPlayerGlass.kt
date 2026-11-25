@@ -196,27 +196,14 @@ internal fun ModernPlayerBackdrop(
     val desatFilter = remember {
         ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.76f) })
     }
-    val time = remember { mutableFloatStateOf(0f) }
+    val clock = io.max.paperplay.ui.theme.LocalAmbientClock.current
+        ?: io.max.paperplay.ui.theme.rememberAmbientClock(active = playing && settled)
+    clock.subscribe(active = playing && settled)
     val bloomAlpha by animateFloatAsState(
         targetValue = if (settled) 1f else 0f,
-        animationSpec = motionTween(Motion.FAST),
+        animationSpec = io.max.paperplay.ui.theme.motionEffectTween(Motion.Effects.FadeFastMs),
         label = "bloomSettled",
     )
-
-    LaunchedEffect(playing, foreground, settled, reduceMotion, reducedTransparency) {
-        if (!playing || !foreground || !settled || reduceMotion || reducedTransparency) return@LaunchedEffect
-        var last = 0L
-        while (isActive) {
-            withFrameNanos { now ->
-                if (last == 0L) last = now
-                val dt = now - last
-                if (dt >= BLOOM_FRAME_NANOS) {
-                    time.floatValue = (time.floatValue + dt / 1_000_000_000f) % 100_000f
-                    last = now
-                }
-            }
-        }
-    }
 
     val fallbackTop = lerp(scheme.primaryContainer, Color.Black, 0.35f)
     val fallbackMid = lerp(scheme.secondaryContainer, Color.Black, 0.65f)
@@ -264,7 +251,7 @@ internal fun ModernPlayerBackdrop(
             Canvas(Modifier.fillMaxSize()) {
                 val ba = bloomAlpha
                 if (ba <= 0.001f) return@Canvas
-                val t = time.floatValue
+                val t = clock.seconds
                 val w = size.width
                 val h = size.height
                 val x1 = w * (0.28f + 0.14f * sin(t * 0.22f))
@@ -365,7 +352,7 @@ internal fun GlassPillButton(
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (pressed && !reduceMotion) 0.94f else 1f,
-        animationSpec = motionTween(Motion.FAST),
+        animationSpec = io.max.paperplay.ui.theme.motionEffectTween(Motion.Effects.FadeFastMs),
         label = "glassPress",
     )
     val accent = MaterialTheme.colorScheme.primary
