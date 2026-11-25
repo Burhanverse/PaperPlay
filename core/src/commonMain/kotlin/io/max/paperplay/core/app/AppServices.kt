@@ -593,6 +593,7 @@ class AppServices(
         io.max.paperplay.core.filing.AutoFiler(
             scope, { client }, { id -> botPool.clientOf(id) }, { botPool.readyBots().map { it.second } }, library.repo,
             { line -> activityLog("Filing", line) },
+            canRun = platform::canRunBackground,
         )
     }
 

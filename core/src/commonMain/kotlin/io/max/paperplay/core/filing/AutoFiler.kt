@@ -56,6 +56,8 @@ class AutoFiler(
     private val others: () -> List<TdClient>,
     private val repo: LibraryRepo,
     private val log: (String) -> Unit,
+    /** False on a metered network, or in the background on battery. */
+    private val canRun: () -> Boolean = { true },
 ) {
     private val _state = MutableStateFlow(AutoFileState())
     val state: StateFlow<AutoFileState> = _state
@@ -110,6 +112,7 @@ class AutoFiler(
     /** Starts filing; does nothing when a run is going or nothing is confident enough. Returns how many songs are queued. */
     fun start(): Int {
         if (_state.value.running) return 0
+        if (!canRun()) return 0
         val picks = plan()
         if (picks.isEmpty()) { _state.value = AutoFileState(note = "Nothing to file"); return 0 }
         cancelled = false
@@ -123,6 +126,8 @@ class AutoFiler(
                     if (cancelled) break
                     if (i > 0) delay(Random.nextLong(6000, 12000))
                     if (cancelled) break
+                    // Whole songs go down and up again: not on a metered network, nor in the background on battery.
+                    if (!canRun()) { log("Auto filing paused: waiting for Wi-Fi or power"); break }
                     val c = main()
                     if (c == null) { log("Auto filing stopped: the main bot is not connected"); break }
                     try {
@@ -134,6 +139,11 @@ class AutoFiler(
                         failed[key(p.song)] = now()
                         log("Auto filing: \"${p.song.title}\" not filed: ${e.message}")
                         e.retryAfter?.let { delay((it + 1) * 1000L) }
+                        // Nothing else can be posted either; every further song would be downloaded for nothing.
+                        if (e.code == 403 || e.message.contains("not enough rights", ignoreCase = true) || e.message.contains("CHAT_WRITE_FORBIDDEN")) {
+                            log("Auto filing stopped: the main bot may not post in the main chat")
+                            break
+                        }
                     } catch (e: Throwable) {
                         failed[key(p.song)] = now()
                         log("Auto filing: \"${p.song.title}\" not filed: ${e.message ?: e::class.simpleName}")
