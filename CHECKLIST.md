@@ -906,9 +906,10 @@ elease` must say Java 25 and the setup exe must start.
 - [~] Restore and erase belong to the process (`LifeWork`); choosing a backup is off the main thread
 - [~] PC package: `engine.dll` and the Normalise plugin are in it; the installer clears old files; the window no longer redraws all on each song
 - [~] USB: a cut sample no longer shifts the next ones (test), sound after a fault, permission asked once, play after switching at the end (not tried on a DAC)
-- [ ] USB: song endings cut at a track change, and what happens when Bluetooth connects during bit-perfect (need a DAC and testing by ear)
+- [~] USB: song endings are kept when the next song has the same format (the DAC just goes on); not tried on a DAC
+- [ ] USB: endings are still cut when the next song has another rate or depth
+- [ ] USB: Bluetooth connecting during bit-perfect releases the DAC and takes it back at once (the owner has to say who wins)
 - [ ] USB (not proven): a slow reopen, swallowed AudioTrack errors
 - [ ] Pairing code can be guessed offline by a device the owner dials on purpose (needs a new protocol)
-- [ ] Basic groups in the index; the recommender is rebuilt after every song once a queue ended; picking a cover or photo reads it on the main thread
-- [ ] Copying library-only songs stops when the chats page is left
+- [~] Basic groups, the recommender after an ended queue, cover and photo pickers, copying library-only songs after leaving the page
 - [ ] Memory while the PC window is hidden, measured again (142 MB before the backend was kept)
