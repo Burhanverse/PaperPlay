@@ -422,6 +422,16 @@ class UnifiedUsbAudioSink internal constructor(
 
     override fun configure(config: AudioSink.AudioSinkConfig) {
         if (sinkReleased) return
+        // The next song in the same format: the DAC just goes on. Opening it again would throw away what it has not played yet.
+        val was = currentFormat
+        if (isUsbModeActive && was != null && coarseController.handle != 0L && !coarseController.isFallback && PlaybackCore.usbExclusiveMode &&
+            abs(PlaybackCore.speed - 1.0f) <= 0.001f && UsbAudioManager.instance?.state?.value is UsbAudioState.Connected &&
+            sameUsbStream(was.sampleRate, was.channelCount, was.pcmEncoding, was.sampleMimeType, config.format.sampleRate, config.format.channelCount, config.format.pcmEncoding, config.format.sampleMimeType)
+        ) {
+            lastConfig = config
+            currentFormat = config.format
+            return
+        }
         lastConfig = config
         releasedWhileIdle = false
         pendingUsbAttach = false
@@ -634,19 +644,16 @@ class UnifiedUsbAudioSink internal constructor(
     }
 
     override fun handleDiscontinuity() {
+        if (isUsbModeActive) {
+            // Comes when the last buffer of a song was taken, seconds before it is heard (a seek comes through flush). The times of the next
+            // song go on from this one's, so there is nothing to start over, and clearing the DAC's buffer cut the end of every song.
+            PlayLog.log("usb", "UnifiedUsbAudioSink handleDiscontinuity")
+            return
+        }
         anchorPositionUs = 0L
         hasAnchorPosition = false
         pendingEqBuf = null
-        if (isUsbModeActive) {
-            PlayLog.log("usb", "UnifiedUsbAudioSink handleDiscontinuity")
-            usbPcmEq.reset()
-            coarseController.onSeekOrFlush()
-            if (coarseController.readStats(statsScratch)) {
-                baseFramesConsumed = statsScratch[0]
-            }
-        } else if (normalSinkConfigured) {
-            super.handleDiscontinuity()
-        }
+        if (normalSinkConfigured) super.handleDiscontinuity()
     }
 
     override fun handleBuffer(
