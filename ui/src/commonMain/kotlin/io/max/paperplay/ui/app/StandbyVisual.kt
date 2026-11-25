@@ -17,7 +17,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import io.max.paperplay.player.AudioTap
-import io.max.paperplay.player.SpectralOnsetDetector
 import io.max.paperplay.ui.rememberAppForeground
 import kotlin.math.PI
 import kotlin.math.exp
@@ -44,14 +43,14 @@ fun StandbyVisual(style: StandbyStyle, color: Color, playing: Boolean, volume: F
     val running = playing && foreground && !io.max.paperplay.ui.theme.LocalReduceMotion.current
     var frame by remember { mutableIntStateOf(0) }
     val sm = remember(seed) { Smoother() }
-    LaunchedEffect(running, seed) {
+    LaunchedEffect(running, seed, style) {
         if (!running) { sm.settle(); frame++; return@LaunchedEffect }
         var last = 0L
         while (true) {
             withFrameNanos { now ->
                 val dt = if (last == 0L) 0.016f else ((now - last) / 1e9f).coerceIn(0.001f, 0.1f)
                 last = now
-                sm.update(dt)
+                sm.update(dt, now, style)
                 frame++
             }
         }
@@ -76,12 +75,26 @@ fun StandbyVisual(style: StandbyStyle, color: Color, playing: Boolean, volume: F
     }
 }
 
-/** Smoothed spectrum, bass, energy and spectral-flux onset with fast attack and slow release. Zero per-frame allocations. */
+internal data class StandbySmoothingProfile(val attackSec: Float, val releaseSec: Float)
+
+internal fun smoothingProfileFor(style: StandbyStyle): StandbySmoothingProfile = when (style) {
+    StandbyStyle.Wave, StandbyStyle.Rings, StandbyStyle.Orb, StandbyStyle.Particles, StandbyStyle.AsciiPulse ->
+        StandbySmoothingProfile(attackSec = 0.022f, releaseSec = 0.165f)
+    else ->
+        StandbySmoothingProfile(attackSec = 0.014f, releaseSec = 0.115f)
+}
+
+/**
+ * Display-rate asymmetric smoother reading playout-interpolated [AudioTap.TapFrame]
+ * (multi-res spectrum, time-domain 140 Hz bass envelope, and fixed-hop onset).
+ * Zero per-frame allocations.
+ */
 internal class Smoother {
     val n = AudioTap.BANDS
     val v = FloatArray(n)
-    private val raw = FloatArray(n)
-    private val onsetDetector = SpectralOnsetDetector(n)
+    private val tapFrame = AudioTap.TapFrame(FloatArray(n))
+    private val peakHold = FloatArray(n)
+    private var lastBeatSeq = 0
     var bass = 0f
     var energy = 0f
     var onset = 0f
@@ -104,55 +117,81 @@ internal class Smoother {
         val rnd = kotlin.random.Random
         val i = spawn++ % px.size
         px[i] = (band + 0.5f + (rnd.nextFloat() - 0.5f)) / n
-        py[i] = 1f; pv[i] = 0.25f + 0.9f * level; pl[i] = 0.7f + 0.9f * level
+        py[i] = 1f; pv[i] = 0.30f + 0.95f * level; pl[i] = 0.65f + 0.85f * level
         ps[i] = 2f + 3f * rnd.nextFloat()
     }
 
     fun settle() {
-        v.fill(0f); peak.fill(0f); pl.fill(0f)
+        v.fill(0f); peak.fill(0f); peakHold.fill(0f); pl.fill(0f)
         bass = 0f; energy = 0f; onset = 0f; liveSignal = false
-        onsetDetector.reset()
+        lastBeatSeq = 0
     }
 
-    fun update(dt: Float, nowNs: Long = System.nanoTime()) {
-        time += dt
-        val live = AudioTap.sample(raw, nowNs)
+    fun update(dt: Float, nowNs: Long = System.nanoTime(), style: StandbyStyle = StandbyStyle.Bars) {
+        val safeDt = dt.coerceIn(0.001f, 0.1f)
+        time += safeDt
+        val live = AudioTap.sampleFrame(tapFrame, nowNs)
         var beatHit = false
         if (live) {
-            onsetDetector.update(raw, dt)
-            onset = onsetDetector.onset
-            beatHit = onsetDetector.beatHit
+            onset = tapFrame.onset
+            if (tapFrame.beatSeq != lastBeatSeq) {
+                beatHit = true
+                lastBeatSeq = tapFrame.beatSeq
+            }
         } else {
-            onsetDetector.reset()
             onset = 0f
+            lastBeatSeq = 0
         }
+
+        val profile = smoothingProfileFor(style)
+        val atkAlpha = 1f - exp(-safeDt / profile.attackSec)
+        val relAlpha = 1f - exp(-safeDt / profile.releaseSec)
 
         var sum = 0f
-        var b = 0f
         for (i in 0 until n) {
-            val target = if (live) raw[i] else 0f
-            val tau = if (target > v[i]) 0.032f else 0.20f
-            v[i] += (target - v[i]) * (1f - exp(-dt / tau))
+            val target = if (live) tapFrame.bands[i] else 0f
+            val alpha = if (target > v[i]) atkAlpha else relAlpha
+            v[i] += (target - v[i]) * alpha
             if (v[i] < 0.0005f) v[i] = 0f
             sum += v[i]
-            if (i < 4) b += v[i]
         }
-        bass = b / 4f
+
+        val bassTarget = if (live) tapFrame.bass else 0f
+        val bassTau = if (bassTarget > bass) 0.010f else 0.085f
+        bass += (bassTarget - bass) * (1f - exp(-safeDt / bassTau))
+        if (bass < 0.0005f) bass = 0f
+
         energy = sum / n
-        liveSignal = live && energy > 0.004f
+        liveSignal = live && (energy > 0.002f || bass > 0.004f)
 
         // No audio means no motion: phases, rings, drops, and particle emission advance only with real sound.
-        if (energy > 0.004f) {
-            motionPhase += dt * (0.4f + 1.2f * energy)
-            ring = (ring + dt * (0.55f * energy) + (if (beatHit) 0.07f * onset else 0f)) % 1f
-            for (i in drop.indices) drop[i] = (drop[i] + dt * (0.04f + 0.9f * v[i * n / drop.size])) % 1f
-            for (i in 0 until n) if (v[i] > 0.28f && kotlin.random.Random.nextFloat() < v[i] * v[i] * dt * 14f) emit(i, v[i])
+        if (liveSignal) {
+            motionPhase += safeDt * (0.45f + 1.35f * energy)
+            ring = (ring + safeDt * (0.50f * energy + 0.15f * bass) + (if (beatHit) 0.09f * onset else 0f)) % 1f
+            for (i in drop.indices) drop[i] = (drop[i] + safeDt * (0.04f + 0.95f * v[i * n / drop.size])) % 1f
+            for (i in 0 until n) {
+                if (v[i] > 0.26f && kotlin.random.Random.nextFloat() < v[i] * v[i] * safeDt * 16f) emit(i, v[i])
+            }
+            if (beatHit) {
+                for (i in 0 until 8) {
+                    if (v[i] > 0.25f) emit(i, maxOf(v[i], bass))
+                }
+            }
         }
-        for (i in 0 until n) peak[i] = maxOf(v[i], (peak[i] - dt * 0.45f).coerceAtLeast(0f))
+        for (i in 0 until n) {
+            if (v[i] >= peak[i]) {
+                peak[i] = v[i]
+                peakHold[i] = 0.12f
+            } else if (peakHold[i] > 0f) {
+                peakHold[i] = (peakHold[i] - safeDt).coerceAtLeast(0f)
+            } else {
+                peak[i] = (peak[i] - safeDt * 0.55f).coerceAtLeast(0f)
+            }
+        }
         for (i in px.indices) if (pl[i] > 0f) {
-            pl[i] = (pl[i] - dt).coerceAtLeast(0f)
-            py[i] -= pv[i] * dt
-            px[i] += sin(motionPhase * 3f + i) * dt * 0.02f
+            pl[i] = (pl[i] - safeDt).coerceAtLeast(0f)
+            py[i] -= pv[i] * safeDt
+            px[i] += sin(motionPhase * 3f + i) * safeDt * 0.02f
         }
     }
 }

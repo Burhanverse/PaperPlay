@@ -90,6 +90,9 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
     val showClock = p.shows(StandbyWidget.Clock)
     // Once a second also when only the drift needs it, so the shift below is smooth.
     LaunchedEffect(showClock, p.pixelShift) { while (true) { clock = clockNow(); delay(if (showClock || p.pixelShift) 1000L else 20_000L) } }
+    LaunchedEffect(p.syncOffsetMs) {
+        io.max.paperplay.player.AudioTap.calibrationOffsetMs = p.syncOffsetMs.toLong()
+    }
     var sheet by remember { mutableStateOf(false) }
     // The first tap only shows the settings button; a second tap within a few seconds leaves standby.
     var armed by remember { mutableStateOf(false) }
@@ -200,8 +203,37 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                 AppIcon(Icons.Rounded.Settings, "Customise standby", tint = tone.copy(alpha = hintAlpha))
             }
         }
+        if (p.showDiagnostics) {
+            StandbyDiagOverlay(
+                syncOffsetMs = p.syncOffsetMs,
+                tone = tone,
+                modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
+            )
+        }
         if (sheet) StandbyCustomiseSheet(p) { sheet = false }
     }
+}
+
+@Composable
+private fun StandbyDiagOverlay(syncOffsetMs: Int, tone: Color, modifier: Modifier = Modifier) {
+    var text by remember { mutableStateOf("") }
+    LaunchedEffect(syncOffsetMs) {
+        while (true) {
+            val tap = io.max.paperplay.player.AudioTap
+            val src = tap.activeSourceTag.ifBlank { "none" }
+            text = "src=$src rate=${tap.effectiveSampleRateHz}Hz lat=${tap.measuredLatencyMs}ms off=${syncOffsetMs}ms hops=${tap.fftFrameCount} cpu=${tap.analysisMicrosPerHop}us"
+            delay(250)
+        }
+    }
+    Text(
+        text = text,
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.65f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.labelSmall,
+        color = tone.copy(alpha = 0.9f),
+    )
 }
 
 @Composable

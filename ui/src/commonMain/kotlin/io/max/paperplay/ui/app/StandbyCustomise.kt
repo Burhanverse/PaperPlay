@@ -65,6 +65,18 @@ class StandbyPrefs(private val read: (String) -> String?, private val write: (St
     var landscape by mutableStateOf(read("standby_landscape") == "true")
         private set
     fun putLandscape(on: Boolean) { landscape = on; write("standby_landscape", "$on") }
+    /** Manual audio-visual sync offset in ms (-200..200). Positive shifts visual earlier. */
+    var syncOffsetMs by mutableStateOf((read("standby_sync_offset_ms")?.toIntOrNull() ?: 0).coerceIn(-200, 200))
+        private set
+    fun putSyncOffsetMs(ms: Int) {
+        val clamped = ms.coerceIn(-200, 200)
+        syncOffsetMs = clamped
+        io.max.paperplay.player.AudioTap.calibrationOffsetMs = clamped.toLong()
+        write("standby_sync_offset_ms", "$clamped")
+    }
+    var showDiagnostics by mutableStateOf(read("standby_diag") == "true")
+        private set
+    fun putShowDiagnostics(on: Boolean) { showDiagnostics = on; write("standby_diag", "$on") }
     private val widgets = mutableStateOf(StandbyWidget.entries.filter { read("standby_w_${it.key}")?.let { v -> v == "true" } ?: it.default }.toSet())
 
     fun shows(w: StandbyWidget) = w in widgets.value
@@ -116,6 +128,20 @@ fun StandbyCustomiseSheet(p: StandbyPrefs, onDismiss: () -> Unit) {
             Slider(p.clockSize, p::putClockSize, valueRange = 0.5f..1.5f)
             Text("Brightness (right end keeps the system level)", style = MaterialTheme.typography.titleSmall)
             Slider(p.dim, p::putDim, valueRange = 0.02f..1f)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Audio sync offset (${p.syncOffsetMs} ms)", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                if (p.syncOffsetMs != 0) {
+                    androidx.compose.material3.TextButton({ p.putSyncOffsetMs(0) }) { Text("Reset") }
+                }
+            }
+            Text("Negative delays the visual; positive shifts it earlier", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Slider(
+                value = p.syncOffsetMs.toFloat(),
+                onValueChange = { p.putSyncOffsetMs(((it / 10f).toInt() * 10)) },
+                valueRange = -200f..200f,
+                steps = 39,
+            )
+            ToggleLine("Show audio diagnostics overlay", p.showDiagnostics, p::putShowDiagnostics)
         }
     }
 }
