@@ -2,6 +2,14 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.21.6] - 2026-11-25
+
+### Other changes
+- Opening a Spotify playlist no longer waits for the matching, which is also about six times faster ([`1597fe9`](https://github.com/maxcodl/PaperPlay/commit/1597fe946c447ecb1bf2e5bead1fb1966ebb7404))
+- Index keys are worked out before the write, in smaller steps ([`792952b`](https://github.com/maxcodl/PaperPlay/commit/792952b6b006f2a860c1dc7d5c257bb7919f46e4))
+
+**Full changes:** [v1.21.5...v1.21.6](https://github.com/maxcodl/PaperPlay/compare/v1.21.5...v1.21.6)
+
 ## [1.21.5] - 2026-11-25
 
 ### Other changes
