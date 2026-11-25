@@ -77,7 +77,8 @@ impl SpscRingBuffer {
         // Load read_pos before write_pos so a concurrent write + clear cannot make r > w.
         let r = self.read_pos.load(Ordering::Acquire);
         let w = self.write_pos.load(Ordering::Acquire);
-        w.wrapping_sub(r)
+        // A clear and a write between the two loads leave r behind: never more than fits.
+        w.wrapping_sub(r).min(self.capacity)
     }
 
     #[inline]
@@ -162,7 +163,7 @@ impl SpscRingBuffer {
         // Load read_pos before write_pos so a concurrent write + clear cannot make r > w.
         let r = self.read_pos.load(Ordering::Acquire);
         let w = self.write_pos.load(Ordering::Acquire);
-        let available = w.wrapping_sub(r);
+        let available = w.wrapping_sub(r).min(self.capacity);
 
         let to_read = dst.len().min(available);
         if to_read == 0 {
