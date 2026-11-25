@@ -74,7 +74,8 @@ class PlaylistAutoSync(
             // A song that arrived is matched soon, without waiting for Spotify to answer.
             scope.launch {
                 library.changes.collect {
-                    pause(MATCH_GAP)
+                    // A song-info run changes titles for minutes or hours.
+                    pause(if (library.enrichRunning.value) BUSY_GAP else MATCH_GAP)
                     runCatching { matchLibrary() }.onFailure { if (it is CancellationException) throw it; log("Match: ${it.message}") }
                 }
             },
@@ -164,6 +165,7 @@ class PlaylistAutoSync(
 
     private companion object {
         const val MATCH_GAP = 10_000L
+        const val BUSY_GAP = 60_000L
         const val RETRY = 15L * 60 * 1000
         const val SIX_HOURS = 6L * 60 * 60 * 1000
         const val THREE_HOURS = 3L * 60 * 60 * 1000

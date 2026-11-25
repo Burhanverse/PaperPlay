@@ -140,6 +140,26 @@ class PlaylistAutoSyncTest {
         assertEquals("Some Quite Long Title (Part One)", store.missing(list).single().title)
     }
 
+    /** On Android a statement that may write, and any transaction, waits while another one is open: opening a playlist and looking for matches start neither. */
+    @Test
+    fun openingAndComparingWriteNothing() {
+        val id = store.createPlaylist("PL", "https://open.spotify.com/playlist/abcdefghijklmnopqrstuv")
+        store.insertMissing(id, ImportedTrack("k", "One", "A", 200), 0)
+        var writes = 0
+        val watched = object : app.cash.sqldelight.db.SqlDriver by driver {
+            override fun execute(identifier: Int?, sql: String, parameters: Int, binders: (app.cash.sqldelight.db.SqlPreparedStatement.() -> Unit)?) =
+                driver.execute(identifier, sql, parameters, binders).also { writes++ }
+            override fun newTransaction() = driver.newTransaction().also { writes++ }
+        }
+        val opened = ImportStore(LibraryRepo(LibraryDatabase(watched)) { 1L }, watched) { 1L }
+        assertEquals(0, opened.entries(id).size)
+        assertEquals(1, opened.missing(id).size)
+        assertEquals(0, writes)
+        assertEquals(false, reconcileImports(opened))
+        // Reading the songs is one; the comparing is in none.
+        assertEquals(1, writes)
+    }
+
     @Test
     fun notLoggedInDoesNothing() = runBlocking {
         library.setPref("index_auto_copy", "true")

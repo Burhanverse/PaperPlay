@@ -126,6 +126,8 @@ private fun dropArtistBracket(title: String, artist: String): String {
 
 /** Title with featured-artist credits and remaster/version tags removed, so one song from different releases gets one key. */
 fun looseTitleKey(title: String, artist: String): String {
+    // Most titles have none of what is taken out below, and this runs for every song of the library and every post of the index.
+    if (title.none { it in "([-–—|/" } && !title.contains("feat", ignoreCase = true) && !title.contains("ft", ignoreCase = true)) return comparableText(foldAccents(title))
     val t = cleanTitle(title, artist)
         .replace(remasterBrackets, "")
         .replace(remasterDash, "")
@@ -147,12 +149,10 @@ private val ellipsis = Regex("""(?:\.{3}|…)[\s)\]]*$""")
 internal fun isCutTitle(title: String): Boolean =
     title.length >= 60 || ellipsis.containsMatchIn(title) || title.count { it == '(' || it == '[' } > title.count { it == ')' || it == ']' }
 
-/** True when [cut], a title that was cut off, is the start of [title]. Short starts prove nothing. */
-private fun startsCut(cut: String, cutArtist: String, title: String, artist: String): Boolean {
-    if (!isCutTitle(cut)) return false
-    val start = comparableText(foldAccents(cleanTitle(cut, cutArtist)))
-    return start.length >= 20 && comparableText(foldAccents(cleanTitle(title, artist))).startsWith(start)
-}
+private fun wholeKey(title: String, artist: String) = comparableText(foldAccents(cleanTitle(title, artist)))
+
+/** The start that a title that was cut off still has; null when it was not cut or the start is too short to prove anything. */
+private fun cutStart(title: String, artist: String): String? = if (isCutTitle(title)) wholeKey(title, artist).takeIf { it.length >= 20 } else null
 
 /** Artists credited on a track: its artist field plus any "feat." names in the title. */
 private fun credited(title: String, artist: String): List<String> =
@@ -174,7 +174,7 @@ fun matchKind(s: Song, title: String, artist: String, durationSec: Int): MatchKi
     val key = looseTitleKey(title, artist)
     if (key.isEmpty()) return null
     val same = looseTitleKey(s.title, s.artist) == key
-    if (!same && !startsCut(s.title, s.artist, title, artist)) return null
+    if (!same && cutStart(s.title, s.artist)?.let { wholeKey(title, artist).startsWith(it) } != true) return null
     if (!sharesArtist(s, title, artist)) return null
     val known = s.duration_sec > 0 && durationSec > 0
     return if (known && abs(s.duration_sec - durationSec) <= (if (same) 8 else 3)) MatchKind.Sure else MatchKind.Maybe
@@ -205,7 +205,9 @@ class ImportStore(val repo: LibraryRepo, private val driver: SqlDriver, val cloc
 
     init {
         // Tracks the owner matched by hand, so a refresh does not list them as missing again.
-        driver.execute(null, "CREATE TABLE IF NOT EXISTS import_accepted (playlist_id INTEGER NOT NULL, track_key TEXT NOT NULL, unique_id TEXT NOT NULL, PRIMARY KEY (playlist_id, track_key))", 0)
+        // Looked up first: a screen makes one of these when it opens, and creating, even for nothing, waits for whoever is writing.
+        val there = driver.executeQuery(null, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'import_accepted'", { c -> QueryResult.Value(c.next().value) }, 0).value
+        if (!there) driver.execute(null, "CREATE TABLE IF NOT EXISTS import_accepted (playlist_id INTEGER NOT NULL, track_key TEXT NOT NULL, unique_id TEXT NOT NULL, PRIMARY KEY (playlist_id, track_key))", 0)
     }
 
     fun accept(playlistId: Long, trackKey: String, uniqueId: String) {
@@ -427,18 +429,35 @@ fun reconcileImports(store: ImportStore): Boolean {
     if (imported.isEmpty()) return false
     val library = store.songs()
     val byTitle = library.groupBy { looseTitleKey(it.title, it.artist) }
-    val cut = library.filter { isCutTitle(it.title) }
+    val byId = library.associateBy { it.chat_id to it.message_id }
+    val cut = library.mapNotNull { s -> cutStart(s.title, s.artist)?.let { it to s } }
     fun sameTitle(title: String, artist: String) = byTitle[looseTitleKey(title, artist)].orEmpty()
+
+    // All comparing comes before the transaction: it takes a while on a phone, and nobody else can write during one.
+    val found = imported.map { p ->
+        val arrived = store.missing(p.id).mapNotNull { t ->
+            val whole = wholeKey(t.title, t.artist)
+            val candidates = sameTitle(t.title, t.artist) + cut.filter { whole.startsWith(it.first) }.map { it.second }
+            bestMatch(candidates, t.title, t.artist, t.duration_sec.toInt())?.let { t to it }
+        }
+        val improved = store.entries(p.id).filter { it.removed_at == null }.mapNotNull { e ->
+            val song = byId[e.chat_id to e.message_id]?.takeIf { !it.lossless() } ?: return@mapNotNull null
+            bestMatch(sameTitle(song.title, song.artist), song.title, song.artist, song.duration_sec.toInt())?.takeIf { it.lossless() }?.let { e to it }
+        }
+        Triple(p, arrived, improved)
+    }
+    if (found.all { it.second.isEmpty() && it.third.isEmpty() }) return false
 
     var changed = false
     val now = store.clock()
     store.transaction {
-        for (p in imported) {
+        for ((p, arrived, improved) in found) {
+            // Read again: the owner may have changed the playlist meanwhile.
             val entries = store.entries(p.id)
             val keys = entries.map { it.chat_id to it.message_id }.toMutableSet()
-
-            for (t in store.missing(p.id)) {
-                val song = bestMatch(sameTitle(t.title, t.artist) + cut, t.title, t.artist, t.duration_sec.toInt()) ?: continue
+            val waiting = store.missing(p.id).map { it.track_key }.toSet()
+            for ((t, song) in arrived) {
+                if (t.track_key !in waiting) continue
                 // A song someone removed from this playlist stays removed.
                 if (keys.add(song.chat_id to song.message_id)) {
                     store.addEntry(p.id, song.chat_id, song.message_id, now + t.position, t.source_added_at)
@@ -446,12 +465,8 @@ fun reconcileImports(store: ImportStore): Boolean {
                 store.deleteMissing(p.id, t.track_key)
                 changed = true
             }
-
-            for (e in entries.filter { it.removed_at == null }) {
-                val song = library.firstOrNull { it.chat_id == e.chat_id && it.message_id == e.message_id }
-                if (song == null || song.lossless()) continue
-                val better = bestMatch(sameTitle(song.title, song.artist), song.title, song.artist, song.duration_sec.toInt())
-                if (better == null || !better.lossless()) continue
+            for ((e, better) in improved) {
+                if (entries.none { it.chat_id == e.chat_id && it.message_id == e.message_id && it.removed_at == null }) continue
                 store.markEntryRemoved(p.id, e.chat_id, e.message_id, now)
                 store.upsertEntry(p.id, better.chat_id, better.message_id, e.added_at, null, keepSource = true, position = e.position)
                 changed = true

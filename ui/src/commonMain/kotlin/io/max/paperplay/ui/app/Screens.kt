@@ -259,7 +259,7 @@ fun DetailScreen(
     val source = remember(detail) { if (detail is Detail.Playlist) backend.playlistSource(detail.id) else null }
     val missing by androidx.compose.runtime.produceState(emptyList<io.max.paperplay.core.library.MissingTrack>(), detail, bump, refreshing) {
         if (detail !is Detail.Playlist) return@produceState
-        backend.services.library.changes.collect { value = detail.id.toLongOrNull()?.let { store.missing(it) }.orEmpty() }
+        backend.services.library.changes.collect { value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { detail.id.toLongOrNull()?.let { store.missing(it) }.orEmpty() } }
     }
     // Tracks the playlist has from Spotify but the library does not: greyed out, with their art, in the list where the chosen order puts them.
     val ghosts = remember(missing, songs, sort) {
