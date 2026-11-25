@@ -23,6 +23,7 @@ class AudioTapRedesignedTest {
         nowNs = 5_000_000_000_000L
         AudioTap.clockNs = { nowNs }
         AudioTap.calibrationOffsetMs = 0L
+        AudioTap.displayLatencyMs = 0L
         AudioTap.setReportedLatencyMs(80L)
         AudioTap.setSpeed(1f)
         AudioTap.reset()
@@ -32,6 +33,7 @@ class AudioTapRedesignedTest {
     fun tearDown() {
         AudioTap.reset()
         AudioTap.calibrationOffsetMs = 0L
+        AudioTap.displayLatencyMs = 0L
         AudioTap.setReportedLatencyMs(80L)
         AudioTap.setSpeed(1f)
         AudioTap.clockNs = { System.nanoTime() }
@@ -389,5 +391,134 @@ class AudioTapRedesignedTest {
         }
         val den = sqrt(da * db)
         return if (den < 1e-12) 1.0 else num / den
+    }
+
+    @Test
+    fun deepBuffer4SecondsDoesNotOverflowHistoryOrDropOut() {
+        val frame = AudioTap.TapFrame()
+        AudioTap.sampleFrame(frame, nowNs)
+        val rate = 44100
+        // Simulate 4.0 s deep-buffer AudioTrack: initial 4.0s fill, then 2.0s refill bursts
+        // while playback advances ~1.9s between bursts (matching Android FLAG_DEEP_BUFFER).
+        var written = 0
+        var played = 0
+        val initFill = rate * 4
+        AudioTap.updatePlaybackClock(0L, 1f, nowNs)
+        for (i in 0 until initFill) {
+            val ptsUs = (i.toLong() * 1_000_000L) / rate
+            AudioTap.pushWithPts(rate, 0.5f * sin(2.0 * PI * 220.0 * i / rate).toFloat(), ptsUs, "deep-buf")
+        }
+        written = initFill
+        repeat(3) {
+            for (step in 1..114) {
+                nowNs += 16_666_667L
+                played += (rate / 60)
+                val anchorUs = (played.toLong() * 1_000_000L) / rate
+                AudioTap.updatePlaybackClock(anchorUs, 1f, nowNs)
+                assertTrue(AudioTap.sampleFrame(frame, nowNs), "Deep buffer must not drop out during 2s refill pause")
+            }
+            val burst = rate * 2
+            val end = written + burst
+            for (i in written until end) {
+                val ptsUs = (i.toLong() * 1_000_000L) / rate
+                AudioTap.pushWithPts(rate, 0.5f * sin(2.0 * PI * 220.0 * i / rate).toFloat(), ptsUs, "deep-buf")
+            }
+            written = end
+        }
+        assertTrue(AudioTap.measuredLatencyMs in 3500L..4500L, "Expected deep-buffer latency ~4000ms, got ${AudioTap.measuredLatencyMs}")
+    }
+
+    @Test
+    fun pllClockSmoothsTimestampJitterAndSnapsOnSeek() {
+        val frame = AudioTap.TapFrame()
+        AudioTap.sampleFrame(frame, nowNs)
+        val rate = 44100
+        val hop = 512
+        val expectedHopMs = hop * 1000.0 / rate // ~11.61 ms
+        val startNs = nowNs
+
+        for (h in 0 until 40) {
+            val sampleBase = h * hop
+            val ptsUs = (sampleBase.toLong() * 1_000_000L) / rate
+            // Inject +-15 ms anchor jitter every hop
+            val jitterUs = if (h % 2 == 0) 15_000L else -15_000L
+            AudioTap.updatePlaybackClock((ptsUs - 80_000L + jitterUs).coerceAtLeast(0L), 1f, nowNs)
+            for (i in 0 until hop) {
+                val sPts = ((sampleBase + i).toLong() * 1_000_000L) / rate
+                AudioTap.pushWithPts(rate, 0.4f * sin(2.0 * PI * 440.0 * (sampleBase + i) / rate).toFloat(), sPts, "pll-test")
+            }
+            nowNs += (hop * 1_000_000_000L) / rate
+        }
+
+        // Verify consecutive hop deltas on framePlayoutNs in interior range are tightly smoothed despite +-15ms anchor jitter
+        val deltasMs = mutableListOf<Double>()
+        var prevNs = 0L
+        for (h in 3..25) {
+            val t = startNs + h * ((hop * 1_000_000_000L) / rate) + 65_000_000L
+            if (AudioTap.sampleFrame(frame, t)) {
+                if (prevNs > 0L && frame.framePlayoutNs > prevNs) {
+                    deltasMs += (frame.framePlayoutNs - prevNs) / 1_000_000.0
+                }
+                prevNs = frame.framePlayoutNs
+            }
+        }
+        assertTrue(deltasMs.size >= 15 && deltasMs.all { abs(it - expectedHopMs) < 3.5 }, "PLL should smooth +-15ms jitter, got deltas=$deltasMs")
+
+        // Seek +500 ms -> PLL must snap immediately
+        AudioTap.updatePlaybackClock(5_000_000L, 1f, nowNs)
+        for (i in 0 until hop) {
+            AudioTap.pushWithPts(rate, 0.4f * sin(2.0 * PI * 440.0 * i / rate).toFloat(), 5_500_000L + (i * 1_000_000L) / rate, "pll-seek")
+        }
+        assertTrue(AudioTap.measuredLatencyMs in 420L..560L, "PLL must snap on seek, got ${AudioTap.measuredLatencyMs}ms")
+    }
+
+    @Test
+    fun displayLatencyMsShiftsSampledPlayoutForward() {
+        val frame = AudioTap.TapFrame()
+        AudioTap.sampleFrame(frame, nowNs)
+        AudioTap.updatePlaybackClock(0L, 1f, nowNs)
+        val rate = 44100
+        // Silence for 200ms, then loud 1 kHz tone
+        for (i in 0 until (rate * 0.5).toInt()) {
+            val amp = if (i < rate / 5) 0f else 0.7f
+            AudioTap.pushWithPts(rate, amp * sin(2.0 * PI * 1000.0 * i / rate).toFloat(), (i * 1_000_000L) / rate, "disp-lat")
+        }
+        val probeNs = nowNs + 170_000_000L
+        AudioTap.displayLatencyMs = 0L
+        assertTrue(AudioTap.sampleFrame(frame, probeNs))
+        val atZero = frame.bands.max()
+
+        AudioTap.displayLatencyMs = 25L
+        assertTrue(AudioTap.sampleFrame(frame, probeNs))
+        val at25 = frame.bands.max()
+        assertTrue(at25 > atZero + 0.15f, "displayLatencyMs=25 should look 25ms ahead into rising tone: atZero=$atZero at25=$at25")
+        assertEquals(0L, AudioTap.calibrationOffsetMs)
+    }
+
+    @Test
+    fun interpolationProducesDistinctValuesOnEvery144HzFrame() {
+        val frame = AudioTap.TapFrame()
+        AudioTap.sampleFrame(frame, nowNs)
+        AudioTap.updatePlaybackClock(0L, 1f, nowNs)
+        val rate = 44100
+        for (i in 0 until (rate * 0.6).toInt()) {
+            val amp = if (i < rate / 5) 0f else 0.75f
+            AudioTap.pushWithPts(rate, amp * sin(2.0 * PI * 1000.0 * i / rate).toFloat(), (i * 1_000_000L) / rate, "144hz")
+        }
+        val stepNs = 1_000_000_000L / 144L
+        var t = nowNs + 185_000_000L
+        var prevAlpha = -1f
+        var interpCount = 0
+        var sameDraws = 0
+        repeat(12) {
+            if (AudioTap.sampleFrame(frame, t)) {
+                if (frame.interpolated) interpCount++
+                if (prevAlpha >= 0f && abs(frame.interpAlpha - prevAlpha) < 0.001f) sameDraws++
+                prevAlpha = frame.interpAlpha
+            }
+            t += stepNs
+        }
+        assertTrue(interpCount >= 10, "Expected continuous interpolation at 144Hz, got $interpCount/12")
+        assertEquals(0, sameDraws, "Expected distinct interpAlpha on every 144Hz frame")
     }
 }

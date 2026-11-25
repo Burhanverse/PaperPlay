@@ -125,4 +125,83 @@ class StandbyVisualTest {
         assertEquals(-200, prefs.syncOffsetMs)
         assertEquals(-200L, AudioTap.calibrationOffsetMs)
     }
+
+    @Test
+    fun smoothingIsFrameRateInvariantAcross60_90_120_144Hz() {
+        val rate = 44100
+        fun runAtHz(hz: Int): Pair<FloatArray, FloatArray> {
+            AudioTap.reset()
+            val sm = Smoother()
+            sm.update(1f / hz, nowNs, StandbyStyle.Bars)
+            AudioTap.updatePlaybackClock(0L, 1f, nowNs)
+            for (i in 0 until rate / 2) {
+                val ptsUs = (i * 1_000_000L) / rate
+                val s = 0.6f * sin(2 * PI * 220.0 * i / rate).toFloat() + 0.35f * sin(2 * PI * 1800.0 * i / rate).toFloat()
+                AudioTap.pushWithPts(rate, s, ptsUs, "fps-$hz")
+            }
+            val stepNs = 1_000_000_000L / hz
+            val dt = 1f / hz
+            var t = nowNs
+            val frames = (0.10f * hz).toInt()
+            repeat(frames) {
+                t += stepNs
+                sm.update(dt, t, StandbyStyle.Bars)
+            }
+            return sm.v.copyOf() to sm.v64.copyOf()
+        }
+
+        val (v60, v64_60) = runAtHz(60)
+        val (v90, _) = runAtHz(90)
+        val (v120, _) = runAtHz(120)
+        val (v144, v64_144) = runAtHz(144)
+
+        for (i in v60.indices) {
+            assertTrue(kotlin.math.abs(v60[i] - v90[i]) < 0.03f, "60 vs 90 mismatch at $i: ${v60[i]} vs ${v90[i]}")
+            assertTrue(kotlin.math.abs(v60[i] - v120[i]) < 0.03f, "60 vs 120 mismatch at $i: ${v60[i]} vs ${v120[i]}")
+            assertTrue(kotlin.math.abs(v60[i] - v144[i]) < 0.03f, "60 vs 144 mismatch at $i: ${v60[i]} vs ${v144[i]}")
+        }
+        for (i in v64_60.indices) {
+            assertTrue(kotlin.math.abs(v64_60[i] - v64_144[i]) < 0.03f, "v64 60 vs 144 mismatch at $i")
+        }
+    }
+
+    @Test
+    fun catmullRom64BandsAndGravityPeaksBehaveCleanlyAndStayStillInSilence() {
+        val sm = Smoother()
+        // Silence stays strictly 0
+        repeat(30) {
+            nowNs += 8_333_333L
+            sm.update(1f / 120f, nowNs, StandbyStyle.Bars)
+        }
+        assertTrue(sm.v64.all { it == 0f })
+        assertTrue(sm.peak64.all { it == 0f })
+        assertEquals(0f, sm.bassPunch)
+
+        // Drive live 440 Hz tone, then pause and verify ballistic peak64 hold + gravity fall
+        AudioTap.updatePlaybackClock(0L, 1f, nowNs)
+        val rate = 44100
+        for (i in 0 until 4096) {
+            AudioTap.pushWithPts(rate, 0.7f * sin(2 * PI * 440.0 * i / rate).toFloat(), (i * 1_000_000L) / rate, "catmull")
+        }
+        nowNs += 16_000_000L
+        sm.update(0.016f, nowNs, StandbyStyle.Bars)
+        val max64 = sm.v64.max()
+        assertTrue(max64 > 0.3f, "Expected v64 to rise, got $max64")
+        assertTrue(sm.v64.all { it in 0f..1f })
+        assertTrue(sm.peak64.max() >= max64)
+
+        val peakBefore = sm.peak64.max()
+        AudioTap.onPause()
+        // During 100ms hold, peak64 stays high; after ~250ms it drops under gravity
+        repeat(5) {
+            nowNs += 16_000_000L
+            sm.update(0.016f, nowNs, StandbyStyle.Bars)
+        }
+        assertTrue(sm.peak64.max() >= peakBefore - 0.01f, "Peak cap should hold briefly")
+        repeat(20) {
+            nowNs += 16_000_000L
+            sm.update(0.016f, nowNs, StandbyStyle.Bars)
+        }
+        assertTrue(sm.peak64.max() < peakBefore - 0.05f, "Peak cap should fall under gravity")
+    }
 }
