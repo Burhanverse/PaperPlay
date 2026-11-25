@@ -97,7 +97,8 @@ if (${'$'}d.ShowDialog(${'$'}host1) -eq 'OK') { ${'$'}d.FileName }
         val log = io.max.paperplay.player.PlayLog
         // The answer goes through a UTF-8 file: console output is in the OEM code page, which garbles folder names with accents or other scripts.
         val outFile = File.createTempFile("paperplay-folder", ".txt")
-        val script = FOLDER_SCRIPT.replace("__TITLE__", title.replace("'", "''")).replace("__OUT__", outFile.path.replace("'", "''"))
+        // Without progress records: they come as console text, and a cancel would be taken for a broken dialog.
+        val script = ("\$ProgressPreference = 'SilentlyContinue'" + WIN_HOST + FOLDER_SCRIPT).replace("__TITLE__", title.replace("'", "''")).replace("__OUT__", outFile.path.replace("'", "''"))
         val t0 = System.currentTimeMillis()
         var console = ""
         val failed = try {
@@ -164,19 +165,19 @@ public static class FolderPick {
     void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string t);
     void GetResult(out IShellItem s);
   }
-  public static string Pick(string title) {
+  public static string Pick(string title, IntPtr owner) {
     var d = (IFileDialog)new FileOpenDialog();
     uint o; d.GetOptions(out o);
     d.SetOptions(o | 0x20 | 0x40);
     d.SetTitle(title);
-    if (d.Show(IntPtr.Zero) != 0) return "";
+    if (d.Show(owner) != 0) return "";
     IShellItem r; d.GetResult(out r);
     string path; r.GetDisplayName(0x80058000, out path);
     return path;
   }
 }
 '@
-${'$'}r = [FolderPick]::Pick('__TITLE__')
+${'$'}r = [FolderPick]::Pick('__TITLE__', ${'$'}host1.Handle)
 [IO.File]::WriteAllText('__OUT__', ${'$'}r, (New-Object Text.UTF8Encoding ${'$'}false))
 """.trimIndent()
 }
