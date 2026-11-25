@@ -300,6 +300,18 @@ jobs:
       - name: Core, UI and player tests
         run: ./gradlew :core:jvmTest :ui:jvmTest :player:testAndroidHostTest --continue --no-daemon --console=plain
 
+      - name: Name the failed tests
+        if: failure()
+        shell: python3 {0}
+        run: |
+          import glob
+          import xml.etree.ElementTree as ET
+          for f in glob.glob('*/build/test-results/*/*.xml'):
+              for case in ET.parse(f).iter('testcase'):
+                  for bad in case.findall('failure') + case.findall('error'):
+                      first = ((bad.get('message') or bad.text or '').strip().splitlines() or [''])[0][:300]
+                      print(f"::error title=Test failed::{case.get('classname')}.{case.get('name')}: {first}")
+
   release:
     name: Publish release
     needs: [ version, android, desktop-windows, desktop-linux ]
