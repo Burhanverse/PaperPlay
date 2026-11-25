@@ -207,8 +207,9 @@ fun main() {
     application {
         val dir = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PaperPlay")
         val target = desktopRestoreTarget(dir)
-        var titleBarWindow: java.awt.Window? = null
-        val env = AppEnv(
+        val titleBar = androidx.compose.runtime.remember { arrayOfNulls<java.awt.Window>(1) }
+        // Kept: a new one on every play or pause would redraw everything and forget what it holds (the tour closed at the next song).
+        val env = androidx.compose.runtime.remember { AppEnv(
             restore = RestoreHooks(
                 pickBackup = { onPicked ->
                     NativeDialogs.openFiles("Choose a backup", "*.zip").firstOrNull()?.let { onPicked(fileBackupSource(it.path)) }
@@ -260,8 +261,8 @@ fun main() {
             authRedirectUri = SPOTIFY_REDIRECT,
             onboarded = { File(dir, "onboarded").exists() },
             setOnboarded = { runCatching { dir.mkdirs(); File(dir, "onboarded").writeText("1") } },
-            windowTheme = { dark, bg, text -> WindowsTitleBar.apply(titleBarWindow, dark, bg, text) },
-        )
+            windowTheme = { dark, bg, text -> WindowsTitleBar.apply(titleBar[0], dark, bg, text) },
+        ) }
         // The close button hides the window to the tray and music keeps playing; Quit in the tray menu ends the app.
         var mainVisible by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
         val mainState = rememberWindowState(width = 1320.dp, height = 840.dp)
@@ -366,7 +367,7 @@ fun main() {
                 } else false
             },
         ) {
-            titleBarWindow = window
+            titleBar[0] = window
             // Taskbar preview buttons (previous, play or pause, next); a switch in Settings turns them off, from the next start.
             androidx.compose.runtime.LaunchedEffect(window) {
                 kotlinx.coroutines.delay(1_500)
@@ -426,23 +427,27 @@ fun main() {
             App(env)
         }
         val miniVisible by io.max.paperplay.ui.app.DesktopMini.visible.collectAsState()
-        // The mini window is as wide as its song text needs (see rememberMiniWidth).
-        val miniWidth = io.max.paperplay.ui.app.rememberMiniWidth()
-        val miniState = rememberWindowState(width = miniWidth, height = 110.dp)
-        androidx.compose.runtime.LaunchedEffect(miniWidth) { miniState.size = androidx.compose.ui.unit.DpSize(miniWidth, 110.dp) }
-        if (miniVisible) {
-            Window(
-                onCloseRequest = { io.max.paperplay.ui.app.DesktopMini.visible.value = false },
-                title = "Paper Play mini", state = miniState,
-                undecorated = true,
-                alwaysOnTop = true, resizable = false, icon = androidx.compose.ui.res.painterResource("icon.png"),
-            ) {
-                // No title bar: the whole card drags the window, and the close button sits on the card. Windows rounds the corners.
-                androidx.compose.runtime.LaunchedEffect(Unit) { WindowsTitleBar.roundCorners(window) }
-                WindowDraggableArea {
-                    io.max.paperplay.ui.app.DesktopMiniContent(onClose = { io.max.paperplay.ui.app.DesktopMini.visible.value = false })
-                }
-            }
+        if (miniVisible) MiniWindow()
+    }
+}
+
+/** Its own composable: it follows what plays, and only it is redrawn for that. */
+@androidx.compose.runtime.Composable
+private fun androidx.compose.ui.window.ApplicationScope.MiniWindow() {
+    // The mini window is as wide as its song text needs (see rememberMiniWidth).
+    val miniWidth = io.max.paperplay.ui.app.rememberMiniWidth()
+    val miniState = rememberWindowState(width = miniWidth, height = 110.dp)
+    androidx.compose.runtime.LaunchedEffect(miniWidth) { miniState.size = androidx.compose.ui.unit.DpSize(miniWidth, 110.dp) }
+    Window(
+        onCloseRequest = { io.max.paperplay.ui.app.DesktopMini.visible.value = false },
+        title = "Paper Play mini", state = miniState,
+        undecorated = true,
+        alwaysOnTop = true, resizable = false, icon = androidx.compose.ui.res.painterResource("icon.png"),
+    ) {
+        // No title bar: the whole card drags the window, and the close button sits on the card. Windows rounds the corners.
+        androidx.compose.runtime.LaunchedEffect(Unit) { WindowsTitleBar.roundCorners(window) }
+        WindowDraggableArea {
+            io.max.paperplay.ui.app.DesktopMiniContent(onClose = { io.max.paperplay.ui.app.DesktopMini.visible.value = false })
         }
     }
 }

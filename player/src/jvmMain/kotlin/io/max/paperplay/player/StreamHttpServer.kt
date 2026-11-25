@@ -15,7 +15,8 @@ class StreamHttpServer : AutoCloseable {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StreamSource>?) = size > MAX_SOURCES
         },
     )
-    private val pool = Executors.newFixedThreadPool(4) { r -> Thread(r, "stream-http").apply { isDaemon = true } }
+    // A skipped song can wait 20 s for its first bytes; with a few threads the song wanted now would wait behind them.
+    private val pool = Executors.newCachedThreadPool() { r -> Thread(r, "stream-http").apply { isDaemon = true } }
     private val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
         executor = pool
         createContext("/") { handle(it) }

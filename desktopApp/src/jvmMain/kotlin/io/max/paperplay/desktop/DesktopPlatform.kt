@@ -35,7 +35,8 @@ class DesktopPlatform(dir: File) : Platform {
     }
     override val deviceModel: String get() = System.getProperty("os.name") ?: "Desktop"
     override fun deleteAllData() {
-        File(dataDir).listFiles()?.forEach { it.deleteRecursively() }
+        // The lock and the port of the running app stay: a second start finds the window through them.
+        File(dataDir).listFiles()?.filter { it.name != "app.lock" && it.name != "app.port" }?.forEach { it.deleteRecursively() }
     }
 
     override val appVersion: String get() = System.getProperty("paperplay.version") ?: "dev"
