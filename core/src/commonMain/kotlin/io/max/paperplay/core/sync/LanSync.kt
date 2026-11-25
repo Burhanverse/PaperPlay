@@ -18,7 +18,22 @@ data class LanDevice(
     /** True when the device is in the paired list (it can link without a code). False when it linked with the token mode. */
     val paired: Boolean,
     val connectedAt: Long,
-) : DeviceInfo
+    /** The app version the other device runs; null for a build too old to say. */
+    val appVersion: String? = null,
+    /** Nothing is synced: the versions differ and this device blocks that ([LanSync.blockVersions]). */
+    val syncBlocked: Boolean = false,
+    /** Nothing is synced: the other device said it blocks this version. */
+    val syncRefused: Boolean = false,
+) : DeviceInfo {
+    /** Whether data goes between the two devices, so work may be split with it. */
+    val syncs: Boolean get() = !syncBlocked && !syncRefused
+}
+
+/**
+ * Raise it when synced data changes its meaning, so a build that reads it the old way neither sends nor gets any. Compared beside the app
+ * version, which is the same for every build made between two releases.
+ */
+const val SYNC_FORMAT = 1
 
 /** A device found by "Find devices automatically" or "Scan this network". Not linked yet. */
 data class DiscoveredDevice(
@@ -54,6 +69,10 @@ enum class LanFailure {
     BadProof,
     /** This device is not listening, or has no such device. */
     NotReady,
+    /** The app versions differ and this device blocks syncing then. */
+    VersionBlocked,
+    /** The app versions differ and the other device blocks syncing then. */
+    VersionRefused,
 }
 
 /** Result of a connect. [device] is set when [ok]. */
@@ -108,6 +127,8 @@ interface LanSync {
     /** True when a password is set (the password itself is never exposed). */
     val passwordSet: StateFlow<Boolean>
     val onlyPaired: StateFlow<Boolean>
+    /** Nothing is synced with a device that runs another app version (on unless switched off). Playing and controls go on. */
+    val blockVersions: StateFlow<Boolean>
     val tokenMode: StateFlow<Boolean>
     val discoveryOn: StateFlow<Boolean>
     val scanning: StateFlow<Boolean>
@@ -163,6 +184,10 @@ interface LanSync {
     suspend fun setDeviceName(name: String)
     suspend fun setPort(port: Int)
     suspend fun setOnlyPaired(on: Boolean)
+    suspend fun setBlockVersions(on: Boolean)
+
+    /** Syncs with one device although the versions differ, and lets it sync until the link ends. */
+    suspend fun forceSync(deviceId: String): SyncResult
     suspend fun setTokenMode(on: Boolean)
     suspend fun setDiscovery(on: Boolean)
 
@@ -284,6 +309,7 @@ class LanEnv(
     val saveCover: (uniqueId: String, at: Long, bytes: ByteArray, sourceUrl: String?) -> Unit = { _, _, _, _ -> },
     /** Library rows and the chat index, pulled from each linked device on every sync. */
     val data: LanDataSync? = null,
+    val appVersion: String = "",
 )
 
 /** Builds the sockets, crypto and discovery (Android and desktop share one implementation). Does not start it. */

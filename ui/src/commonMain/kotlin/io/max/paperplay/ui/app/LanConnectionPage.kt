@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Info
@@ -86,6 +87,7 @@ data class LanUi(
     val scanning: Boolean = false,
     val error: String? = null,
     val remoteNow: Map<String, io.max.paperplay.core.sync.RemoteNow> = emptyMap(),
+    val blockVersions: Boolean = true,
 )
 
 /** A result to show as text. */
@@ -98,6 +100,7 @@ class LanActions(
     val setDiscovery: (Boolean) -> Unit = {},
     val setOnlyPaired: (Boolean) -> Unit = {},
     val setTokenMode: (Boolean) -> Unit = {},
+    val setBlockVersions: (Boolean) -> Unit = {},
     val showPin: () -> Unit = {},
     val hidePin: () -> Unit = {},
     val setPassword: (String?) -> Unit = {},
@@ -116,6 +119,7 @@ class LanActions(
     val connectCode: suspend (String, Int, String) -> LanOutcome = { _, _, _ -> LanOutcome(true, "Connected") },
     val connectToken: suspend (String, Int) -> LanOutcome = { _, _ -> LanOutcome(true, "Connected") },
     val syncNow: suspend (String) -> LanOutcome = { LanOutcome(true, "Synced") },
+    val forceSync: suspend (String) -> LanOutcome = { LanOutcome(true, "Synced") },
     /** Returns how many devices answered. */
     val scan: suspend () -> Int = { 0 },
 )
@@ -128,6 +132,8 @@ private fun failureText(f: LanFailure?) = when (f) {
     LanFailure.NotPaired -> "That device does not accept this one. Link it with a code first"
     LanFailure.BadProof -> "The other device could not prove it knows the code"
     LanFailure.NotReady -> "Not ready. Check that sync is on"
+    LanFailure.VersionBlocked -> "Not synced: the app versions differ. Update both, or force the sync"
+    LanFailure.VersionRefused -> "Not synced: the other device blocks this version. Update both, or force the sync there"
     null -> "Failed"
 }
 
@@ -167,6 +173,7 @@ internal fun LanConnectionPage(backend: CoreBackend) {
             setDiscovery = { scope.launch { sync.setDiscovery(it) } },
             setOnlyPaired = { scope.launch { sync.setOnlyPaired(it) } },
             setTokenMode = { scope.launch { sync.setTokenMode(it) } },
+            setBlockVersions = { scope.launch { sync.setBlockVersions(it) } },
             showPin = { scope.launch { sync.showPin() } },
             hidePin = { scope.launch { sync.hidePin() } },
             setPassword = { scope.launch { sync.setPassword(it) } },
@@ -182,6 +189,7 @@ internal fun LanConnectionPage(backend: CoreBackend) {
             connectCode = { host, port, code -> sync.connectWithCode(host, port, code).outcome() },
             connectToken = { host, port -> sync.connectWithToken(host, port).outcome() },
             syncNow = { sync.syncNow(it).outcome() },
+            forceSync = { sync.forceSync(it).outcome() },
             scan = { sync.scanNetwork().size },
         )
     }
@@ -207,9 +215,10 @@ private fun LanSync.collectUi(): LanUi {
     val scanning by l.scanning.collectAsState()
     val error by l.lastError.collectAsState()
     val remote by l.remoteNow.collectAsState()
+    val blockVersions by l.blockVersions.collectAsState()
     return LanUi(
         true, listening, port, name, addresses, connected, saved, paired, discovered, pin, passwordSet,
-        onlyPaired, tokenMode, discoveryOn, scanning, error, remote,
+        onlyPaired, tokenMode, discoveryOn, scanning, error, remote, blockVersions,
     )
 }
 
@@ -220,6 +229,7 @@ private sealed interface LanDialog {
     data class EditAddress(val key: String, val current: String) : LanDialog
     data object ResetCode : LanDialog
     data object UnpairAll : LanDialog
+    data class Force(val device: LanDevice) : LanDialog
     data class Code(val host: String, val port: Int, val name: String) : LanDialog
 }
 
@@ -232,6 +242,14 @@ internal fun LanConnectionContent(ui: LanUi, a: LanActions) {
     var syncing by remember { mutableStateOf<Set<String>>(emptySet()) }
     var dialog by remember { mutableStateOf<LanDialog?>(null) }
     val pairedIds = ui.paired.map { it.id }.toSet()
+    fun runSync(id: String, how: suspend (String) -> LanOutcome) {
+        syncing = syncing + id
+        scope.launch {
+            val r = how(id)
+            syncNotes = syncNotes + (id to r.text)
+            syncing = syncing - id
+        }
+    }
 
     Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         note?.let { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary) }
@@ -265,19 +283,20 @@ internal fun LanConnectionContent(ui: LanUi, a: LanActions) {
             for (d in ui.connected) {
                 ConnectedRow(
                     d, syncNotes[d.id], d.id in syncing,
-                    onSync = {
-                        syncing = syncing + d.id
-                        scope.launch {
-                            val r = a.syncNow(d.id)
-                            syncNotes = syncNotes + (d.id to r.text)
-                            syncing = syncing - d.id
-                        }
-                    },
+                    onSync = { runSync(d.id, a.syncNow) },
+                    onForce = { dialog = LanDialog.Force(d) },
                     onDisconnect = { a.disconnect(d.id) },
                     now = ui.remoteNow[d.id],
                     onControl = { action -> a.control(d.id, action) },
                 )
             }
+        }
+
+        LanCard("App versions") {
+            SwitchRow(
+                "Block sync when versions differ", ui.blockVersions, a.setBlockVersions, Icons.Rounded.Sync,
+                subtitle = "Nothing is taken from or given to a device with another app version, until both match. Playing and controls still work",
+            )
         }
 
         LanCard("Pairing") {
@@ -398,6 +417,12 @@ internal fun LanConnectionContent(ui: LanUi, a: LanActions) {
             "Unpair all", "Every paired device is forgotten and needs a code to link again.", "Unpair all",
             { a.unpairAll(); note = "All devices unpaired" }, { dialog = null },
         )
+        is LanDialog.Force -> ConfirmDialog(
+            "Force sync with ${d.device.name}?",
+            "It runs ${d.device.appVersion ?: "an older version"}. Another version can send wrong data, and what it changes here stays. " +
+                "It may then sync until the two disconnect.",
+            "Force sync", { runSync(d.device.id, a.forceSync) }, { dialog = null },
+        )
         is LanDialog.Code -> LanTextDialog(
             "Connect to ${d.name}", "PIN or password", "Connect", { dialog = null }, secret = true,
             message = "Enter the PIN shown on ${d.name}, or its password.",
@@ -450,12 +475,12 @@ internal fun PinRow(pin: PairingPin?, onShow: () -> Unit, onHide: () -> Unit) {
 @Composable
 internal fun ConnectedRow(
     d: LanDevice, syncNote: String?, syncing: Boolean, onSync: () -> Unit, onDisconnect: () -> Unit,
-    now: io.max.paperplay.core.sync.RemoteNow? = null, onControl: ((String) -> Unit)? = null,
+    now: io.max.paperplay.core.sync.RemoteNow? = null, onControl: ((String) -> Unit)? = null, onForce: () -> Unit = {},
 ) {
     Column {
         SettingsRow(
             d.name, icon = Icons.Rounded.Devices,
-            subtitle = "${d.host}:${d.port}. ${if (d.desktop) "PC" else "Phone"}. ${if (d.paired) "Paired" else "Linked with the bot token"}",
+            subtitle = "${d.host}:${d.port}. ${if (d.desktop) "PC" else "Phone"}. ${if (d.paired) "Paired" else "Linked with the bot token"}. ${d.appVersion?.let { "Version $it" } ?: "Older version"}",
         )
         // What that device is playing, with its own controls. Only a paired device accepts them.
         if (onControl != null && d.paired) Row(Modifier.padding(start = 56.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -468,10 +493,12 @@ internal fun ConnectedRow(
             IconButton({ onControl("next") }) { AppIcon(Icons.Rounded.SkipNext, "Next on ${d.name}") }
         }
         Row(Modifier.padding(start = 56.dp, end = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onSync, enabled = !syncing) { Text(if (syncing) "Syncing" else "Sync now") }
+            if (d.syncBlocked) OutlinedButton(onForce, enabled = !syncing) { Text(if (syncing) "Syncing" else "Force sync") }
+            else Button(onSync, enabled = !syncing) { Text(if (syncing) "Syncing" else "Sync now") }
             TextButton(onDisconnect) { Text("Disconnect") }
         }
-        syncNote?.let { Text(it, Modifier.padding(start = 56.dp, end = 20.dp, top = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val state = if (d.syncBlocked) failureText(LanFailure.VersionBlocked) else if (d.syncRefused) failureText(LanFailure.VersionRefused) else null
+        (state ?: syncNote)?.let { Text(it, Modifier.padding(start = 56.dp, end = 20.dp, top = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
@@ -617,6 +644,10 @@ private fun PinRowPreview() = io.max.paperplay.ui.PreviewFrame {
 @org.jetbrains.compose.ui.tooling.preview.Preview(name = "Connected row", widthDp = 390, heightDp = 220, showBackground = true)
 @Composable
 private fun ConnectedRowPreview() = io.max.paperplay.ui.PreviewFrame { ConnectedRow(sampleDevice, "Synced both ways. Updated on this device: 3 songs, 0 playlists. Updated on the other: 1", false, {}, {}) }
+
+@org.jetbrains.compose.ui.tooling.preview.Preview(name = "Connected row, blocked", widthDp = 390, heightDp = 220, showBackground = true)
+@Composable
+private fun ConnectedRowBlockedPreview() = io.max.paperplay.ui.PreviewFrame { ConnectedRow(sampleDevice.copy(syncBlocked = true), null, false, {}, {}) }
 
 @org.jetbrains.compose.ui.tooling.preview.Preview(name = "Saved row", widthDp = 390, heightDp = 200, showBackground = true)
 @Composable

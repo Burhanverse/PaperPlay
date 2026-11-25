@@ -110,6 +110,7 @@ class AppServices(
                 startIndexing = ::startIndexing,
                 mainChat = { io.max.paperplay.core.filing.parseMainChat(library.pref(io.max.paperplay.core.filing.MAIN_CHAT_KEY)) },
             ),
+            appVersion = platform.appVersion,
         ),
     ).also { lanSync = it; bindLan(it); bindIndexToLan(it, isDesktop) }
 
@@ -134,7 +135,7 @@ class AppServices(
      * posts), pause and resume on either device hold on both, and new posts reach the other device within seconds.
      */
     private fun bindIndexToLan(lan: io.max.paperplay.core.sync.LanSync, isDesktop: Boolean) {
-        fun leader(): String? = if (isDesktop) null else lan.connected.value.firstOrNull { it.desktop && it.paired }?.id
+        fun leader(): String? = if (isDesktop) null else lan.connected.value.firstOrNull { it.desktop && it.paired && it.syncs }?.id
         realIndex.delegate = { action, chat ->
             val to = leader()
             // Only when the PC says it has started: a dead link, a PC without the account or an older build must not make the button do
@@ -145,6 +146,14 @@ class AppServices(
             }, 6_000)?.get("ok") as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
             if (to != null) activityLog("Index", if (ok) "The linked PC reads the chats" else "The linked PC did not answer; reading the chats here")
             ok
+        }
+        scope.launch {
+            val told = HashSet<String>()
+            lan.connected.collect { l ->
+                for (d in l) if (d.syncBlocked && told.add("${d.id} ${d.appVersion}")) {
+                    activityLog("Sync", "Not syncing with ${d.name}: it runs ${d.appVersion ?: "an older version"}, this device ${platform.appVersion}")
+                }
+            }
         }
         realIndex.onPausedChanged = { paused ->
             val at = realIndex.pauseState().second

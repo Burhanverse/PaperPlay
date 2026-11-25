@@ -119,6 +119,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     private val _pin = MutableStateFlow<PairingPin?>(null)
     private val _passwordSet = MutableStateFlow(false)
     private val _onlyPaired = MutableStateFlow(lib.pref("lan_require_pairing") == "true")
+    private val _blockVersions = MutableStateFlow(lib.pref("lan_block_versions") != "false")
     private val _tokenMode = MutableStateFlow(lib.pref("lan_token_mode") == "true")
     private val _discovery = MutableStateFlow(lib.pref("lan_discovery") != "false")
     private val _scanning = MutableStateFlow(false)
@@ -152,6 +153,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     override val pin: StateFlow<PairingPin?> get() = _pin
     override val passwordSet: StateFlow<Boolean> get() = _passwordSet
     override val onlyPaired: StateFlow<Boolean> get() = _onlyPaired
+    override val blockVersions: StateFlow<Boolean> get() = _blockVersions
     override val tokenMode: StateFlow<Boolean> get() = _tokenMode
     override val discoveryOn: StateFlow<Boolean> get() = _discovery
     override val scanning: StateFlow<Boolean> get() = _scanning
@@ -341,6 +343,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             buildJsonObject {
                 put("t", "auth-ok"); put("id", deviceId); put("name", _name.value); put("desktop", env.isDesktop)
                 put("spub", b64(identityPub)); put("proof", b64(serverProof)); put("port", _port.value)
+                put("app", env.appVersion); put("sync", SYNC_FORMAT)
                 put("addrs", buildJsonArray { for (x in _addresses.value) add(x) })
             }.toString().encodeToByteArray(),
         )
@@ -353,12 +356,21 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             }
         }
         s.soTimeout = 0
-        return Peer(LanDevice(id, name, desktop, source, port, !viaToken, env.clock()), hs.channel, s)
+        return Peer(LanDevice(id, name, desktop, source, port, !viaToken, env.clock(), a.str("app")?.take(40)), sameBuild(a), hs.channel, s)
     }
 
     // Peers
 
-    private inner class Peer(val info: LanDevice, val ch: SecureChannel, val socket: Socket) {
+    /** Builds from before this check say nothing, so they count as another version. */
+    private fun sameBuild(o: JsonObject) = o.str("app") == env.appVersion && o.lng("sync") == SYNC_FORMAT.toLong()
+
+    private inner class Peer(val info: LanDevice, val sameBuild: Boolean, val ch: SecureChannel, val socket: Socket) {
+        /** The owner said to sync with it all the same, for as long as this link lasts. */
+        @Volatile var forced = false
+        /** It answered that it blocks this device's version. */
+        @Volatile var refused = false
+        val blocked get() = !sameBuild && !forced && _blockVersions.value
+
         val waiting = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
         /** An index pull it asked for is running. */
         val nudged = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -419,7 +431,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     }
 
     private fun publishConnected() {
-        _connected.value = peers.values.map { it.info }.sortedBy { it.name }
+        _connected.value = peers.values.map { it.info.copy(syncBlocked = it.blocked, syncRefused = it.refused) }.sortedBy { it.name }
         _remoteNow.update { m -> m.filterKeys { it in peers.keys } }
     }
 
@@ -443,7 +455,14 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     }
 
     private fun handle(p: Peer, m: JsonObject) {
-        when (m.str("t")) {
+        val type = m.str("t")
+        // Another version's data is neither taken nor given. It is told why; an older build sees a failed sync and goes on.
+        if (p.blocked && type in SYNC_TYPES) {
+            val rid = m.str("rid") ?: return
+            if (type == "sync" || type == "data") p.send(buildJsonObject { put("t", "$type-reply"); put("rid", rid); put("error", true); put("why", VERSION) })
+            return
+        }
+        when (type) {
             "sync" -> {
                 val rid = m.str("rid") ?: return
                 try {
@@ -543,6 +562,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 buildJsonObject {
                     put("t", "auth"); put("m", method); put("id", deviceId); put("name", _name.value); put("desktop", env.isDesktop)
                     put("spub", b64(identityPub)); put("port", _port.value)
+                    put("app", env.appVersion); put("sync", SYNC_FORMAT)
                     put("addrs", buildJsonArray { for (x in _addresses.value) add(x) })
                     put("proof", b64(proof(secret, label, "client", t, identityPub)))
                 }.toString().encodeToByteArray(),
@@ -570,7 +590,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
                 }
             }
             s.soTimeout = 0
-            peer = Peer(LanDevice(sid, sname, reply.flag("desktop") ?: false, host, port, !viaToken, env.clock()), hs.channel, s)
+            peer = Peer(LanDevice(sid, sname, reply.flag("desktop") ?: false, host, port, !viaToken, env.clock(), reply.str("app")?.take(40)), sameBuild(reply), hs.channel, s)
         } catch (e: AuthFail) {
             return ConnectResult(false, e.why)
         } catch (e: Exception) {
@@ -650,6 +670,7 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         var other = 0
         var failure: LanFailure? = null
         for (p in targets) {
+            if (p.blocked) { failure = failure ?: LanFailure.VersionBlocked; continue }
             // Rows and index posts first, so the song state below also covers the songs that just arrived.
             env.data?.let { data ->
                 runCatching { data.pull(p.info.id) { q -> ask(p, q) } }.onSuccess { songs += it }
@@ -660,6 +681,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
             try {
                 p.send(buildJsonObject { put("t", "sync"); put("rid", rid); put("data", SnapshotCodec.encode(store.build())) })
                 val reply = withTimeoutOrNull(60_000) { waiter.await() }
+                setRefused(p, reply?.str("why") == VERSION)
+                if (p.refused) { failure = failure ?: LanFailure.VersionRefused; continue }
                 if (reply == null || reply.flag("error") == true) { failure = failure ?: LanFailure.Protocol; continue }
                 val res = store.apply(SnapshotCodec.decode(reply.obj("data") ?: throw IllegalArgumentException("no data")))
                 askCovers(p, res)
@@ -676,8 +699,22 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
         SyncResult(failure == null, failure, songs, lists, other)
     }
 
+    private fun setRefused(p: Peer, on: Boolean) {
+        if (p.refused == on) return
+        p.refused = on
+        publishConnected()
+    }
+
+    override suspend fun forceSync(deviceId: String): SyncResult {
+        val p = peers[deviceId] ?: return SyncResult(false, LanFailure.NotReady)
+        p.forced = true
+        publishConnected()
+        return syncNow(deviceId)
+    }
+
     /** Sends a data request to [p] and waits for its answer; throws when the link fails or the other side could not answer. */
     private suspend fun ask(p: Peer, q: JsonObject, timeoutMs: Long = 120_000): JsonObject {
+        if (p.blocked) throw IOException("another version")
         val rid = newUuid()
         val waiter = CompletableDeferred<JsonObject>()
         p.waiting[rid] = waiter
@@ -697,7 +734,8 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     }
 
     override suspend fun sendMessage(deviceId: String?, body: JsonObject): Boolean = withContext(Dispatchers.IO) {
-        val targets = if (deviceId == null) peers.values.toList() else listOfNotNull(peers[deviceId])
+        // Index and listening notices: they only lead to a sync.
+        val targets = (if (deviceId == null) peers.values.toList() else listOfNotNull(peers[deviceId])).filter { !it.blocked }
         targets.count { p -> runCatching { p.send(body) }.isSuccess } > 0
     }
 
@@ -798,6 +836,14 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
     override suspend fun setOnlyPaired(on: Boolean) {
         _onlyPaired.value = on
         lib.setPref("lan_require_pairing", on.toString())
+    }
+
+    override suspend fun setBlockVersions(on: Boolean) {
+        _blockVersions.value = on
+        lib.setPref("lan_block_versions", on.toString())
+        // Switched on again means now, also for a link that was forced.
+        if (on) for (p in peers.values) p.forced = false
+        publishConnected()
     }
 
     override suspend fun setTokenMode(on: Boolean) {
@@ -1000,6 +1046,10 @@ internal class JavaLanSync(private val env: LanEnv) : LanSync {
 }
 
 private const val OUT_QUEUE = 512
+private const val VERSION = "version"
+
+/** Messages that carry or fetch synced data. Playing, queues and controls are not among them. Replies are awaited by what this device asked. */
+private val SYNC_TYPES = setOf("sync", "data", "indexnudge", "indexctl", "listennudge", "coverreq", "cover")
 private const val STALLED_NS = 60_000_000_000L
 private const val QUIET_MS = 90_000
 private const val MAX_SEEN_ADDRESSES = 8

@@ -44,10 +44,12 @@ class LanSyncTest {
 
     private class Node(val lib: LibraryRepository, val sync: LanSync, val port: Int)
 
-    private suspend fun node(name: String, token: String = "tok", vararg songs: Song): Node {
+    private suspend fun node(name: String, token: String = "tok", vararg songs: Song): Node = versionNode(name, "1", token, *songs)
+
+    private suspend fun versionNode(name: String, version: String, token: String = "tok", vararg songs: Song): Node {
         val lib = library(*songs)
         val port = freePort()
-        val s = createLanSync(LanEnv(lib, Secrets(), CoroutineScope(Dispatchers.Default), true, name, { token }))
+        val s = createLanSync(LanEnv(lib, Secrets(), CoroutineScope(Dispatchers.Default), true, name, { token }, appVersion = version))
         s.setDiscovery(false)
         s.setPort(port)
         s.start()
@@ -102,6 +104,40 @@ class LanSyncTest {
             assertEquals(LanFailure.NotPaired, a.sync.connect(bId).failure)
         } finally {
             a.sync.stop(); b.sync.stop(); c.sync.stop()
+        }
+    }
+
+    /** Versions differ: nothing goes either way until forced on each side that blocks, or the block is off. Playing goes on. */
+    @Test fun anotherVersionIsNotSyncedUntilForced() = runBlocking {
+        val mine = song(1, 1, "u1")
+        val a = versionNode("New", "2", "tok", mine)
+        val b = versionNode("Old", "1", "tok", mine.copy(favorite = true, favorite_at = 50))
+        fun liked(n: Node) = n.lib.songByUniqueId("u1")!!.favorite
+        try {
+            val bId = a.sync.connectWithCode("127.0.0.1", b.port, b.sync.showPin().code).device!!.id
+            waitFor("linked") { b.sync.connected.value.size == 1 }
+            val aId = b.sync.connected.value.single().id
+            assertEquals("1", a.sync.connected.value.single().appVersion)
+            assertTrue(a.sync.connected.value.single().syncBlocked)
+            assertEquals(LanFailure.VersionBlocked, a.sync.syncNow().failure)
+            assertEquals(LanFailure.VersionBlocked, b.sync.syncNow().failure)
+            // The old one does not block (as a build from before this does not): what it sends is refused, and it is told why.
+            b.sync.setBlockVersions(false)
+            assertEquals(LanFailure.VersionRefused, b.sync.syncNow(aId).failure)
+            assertFalse(b.sync.connected.value.single().syncs)
+            assertEquals(null, a.sync.request(bId, JsonObject(emptyMap()), 2_000))
+            assertFalse(liked(a))
+            assertTrue(a.sync.sendControl(bId, "pause"), "controls are not data")
+            // Forced here, it goes both ways; the switch ends that.
+            assertTrue(a.sync.forceSync(bId).ok)
+            assertTrue(liked(a))
+            assertFalse(a.sync.connected.value.single().syncBlocked)
+            assertTrue(b.sync.syncNow(aId).ok)
+            assertTrue(b.sync.connected.value.single().syncs)
+            a.sync.setBlockVersions(true)
+            assertEquals(LanFailure.VersionRefused, b.sync.syncNow(aId).failure)
+        } finally {
+            a.sync.stop(); b.sync.stop()
         }
     }
 
