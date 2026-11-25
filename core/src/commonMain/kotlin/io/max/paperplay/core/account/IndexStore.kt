@@ -410,10 +410,11 @@ class IndexStore(private val driver: SqlDriver) {
     /**
      * Sets the library flags of every post. [libraryIds] are unique ids the library has as real posts; [libraryKeys] the loose keys of its
      * songs; [judge] decides, for a post whose key the library has, whether it is the same song (1 same file is decided by id) and why it
-     * would be better (null when it is not); [wantedKeys] are keys Spotify playlists still wait for. Runs as a few set-based updates plus
+     * would be better (null when it is not); [wantedKeys] are keys Spotify playlists still wait for and [pickWanted] says which of the posts
+     * with such a key are really waited for (a title alone is shared by many songs). Runs as a few set-based updates plus
      * one pass over the posts that share a key with the library.
      */
-    fun refreshFlags(libraryIds: Set<String>, libraryKeys: Set<String>, wantedKeys: Set<String>, judge: (ChatPost) -> Pair<Boolean, String?>) {
+    fun refreshFlags(libraryIds: Set<String>, libraryKeys: Set<String>, wantedKeys: Set<String>, pickWanted: (List<ChatPost>) -> Set<Pair<Long, Long>>, judge: (ChatPost) -> Pair<Boolean, String?>) {
         db.transaction {
             exec("CREATE TEMP TABLE IF NOT EXISTS idx_ids (v TEXT PRIMARY KEY)")
             exec("CREATE TEMP TABLE IF NOT EXISTS idx_keys (v TEXT PRIMARY KEY)")
@@ -426,8 +427,15 @@ class IndexStore(private val driver: SqlDriver) {
             // disk writes every time the library changes.
             exec("UPDATE index_posts SET in_library = 1, better = NULL WHERE unique_id IN (SELECT v FROM idx_ids) AND (in_library <> 1 OR better IS NOT NULL)")
             exec("UPDATE index_posts SET in_library = 0, better = NULL WHERE in_library <> 0 AND unique_id NOT IN (SELECT v FROM idx_ids) AND loose_key NOT IN (SELECT v FROM idx_keys)")
-            exec("UPDATE index_posts SET wanted = 1 WHERE wanted = 0 AND loose_key IN (SELECT v FROM idx_wanted)")
             exec("UPDATE index_posts SET wanted = 0 WHERE wanted = 1 AND loose_key NOT IN (SELECT v FROM idx_wanted)")
+            val sameTitle = query("SELECT $postColumns, wanted FROM index_posts WHERE loose_key IN (SELECT v FROM idx_wanted)") { c -> post(c) to c.getLong(11)!! }
+            val picked = pickWanted(sameTitle.map { it.first })
+            for ((p, was) in sameTitle) {
+                val now = if ((p.chatId to p.messageId) in picked) 1L else 0L
+                if (now != was) exec("UPDATE index_posts SET wanted = ? WHERE chat_id = ? AND message_id = ?", 3) {
+                    bindLong(0, now); bindLong(1, p.chatId); bindLong(2, p.messageId)
+                }
+            }
             // Posts sharing a title with a library song are judged one by one (a few thousand at most).
             val sameKey = query(
                 "SELECT $postColumns, in_library, better FROM index_posts WHERE unique_id NOT IN (SELECT v FROM idx_ids) AND loose_key IN (SELECT v FROM idx_keys)",

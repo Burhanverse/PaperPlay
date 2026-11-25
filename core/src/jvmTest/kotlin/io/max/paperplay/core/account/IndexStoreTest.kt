@@ -44,7 +44,7 @@ class IndexStoreTest {
         store.saveChat(-5, "C")
         store.upsertPosts(listOf(post(-5, 1, uid = "same"), post(-5, 2, "Song", "Artist"), post(-5, 3, "Wanted", "B"), post(-5, 4, "New", "C")), 1)
         store.prepare()
-        store.refreshFlags(setOf("same"), setOf(looseTitleKey("Song", "Artist")), setOf(looseTitleKey("Wanted", "B"))) { p -> true to (if (p.messageId == 2L) "FLAC instead of your MP3" else null) }
+        store.refreshFlags(setOf("same"), setOf(looseTitleKey("Song", "Artist")), setOf(looseTitleKey("Wanted", "B")), { l -> l.map { it.chatId to it.messageId }.toSet() }) { p -> true to (if (p.messageId == 2L) "FLAC instead of your MP3" else null) }
         assertEquals(listOf(4, 2, 1, 2, 1), store.counts(-5, ""))
         val better = store.page(-5, IndexFilter.Better, "", 0, 10, null).single()
         assertEquals("FLAC instead of your MP3", better.betterWhy)

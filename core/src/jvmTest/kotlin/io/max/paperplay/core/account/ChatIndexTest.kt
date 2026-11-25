@@ -105,6 +105,20 @@ class ChatIndexTest {
     }
 
     @Test
+    fun aPlaylistWaitsForTheSongNotForEveryoneWithItsTitle() = runBlocking {
+        val list = library.createPlaylist("Spotify")
+        library.repo.db.playlistsQueries.insertMissingTrack(io.max.paperplay.core.db.Missing_tracks(list, "k", "Insomnia", "Craig David", 200, 0, null))
+        account.batches = listOf(listOf(
+            post(60, "a", "Insomnia", "Faithless"), post(50, "b", "Insomnia", "Eve"), post(40, "c", "Insomnia", "Craig David", dur = 320),
+            post(30, "d", "Insomnia", "Craig David", size = 300), post(20, "e", "Insomnia", "Craig David", dur = 203), post(10, "f", "Insomnia", "Unknown artist"),
+        ))
+        index.indexChat(ChatInfo(-1_000_000_000_005, "Chat", true), false)
+        index.updateFlags()
+        // One copy, the best one, of the right artist and length.
+        assertEquals(listOf("d"), index.page(-1_000_000_000_005, IndexFilter.Wanted, "", 0, 10).map { it.post.uniqueId })
+    }
+
+    @Test
     fun matchesPreferSureThenCloserLength() = runBlocking {
         account.batches = listOf(listOf(post(30, "a", "Song", dur = 300), post(20, "b", "Song", dur = 201), post(10, "c", "Other")))
         index.indexChat(ChatInfo(-1_000_000_000_005, "Chat", true), false)

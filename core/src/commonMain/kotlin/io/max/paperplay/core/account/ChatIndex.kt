@@ -3,6 +3,7 @@ package io.max.paperplay.core.account
 import io.max.paperplay.core.library.allSongsNow
 import io.max.paperplay.core.app.LibraryRepository
 import io.max.paperplay.core.integrations.MatchKind
+import io.max.paperplay.core.integrations.bestMatch
 import io.max.paperplay.core.integrations.looseTitleKey
 import io.max.paperplay.core.integrations.matchKind
 import io.max.paperplay.core.library.Song
@@ -342,11 +343,19 @@ class ChatIndex(
         val lists = library.repo.db.playlistsQueries
         val wanted = lists.livePlaylists().executeAsList()
             .flatMap { pl -> lists.missingTracks(pl.id).executeAsList() }
-            .map { looseTitleKey(it.title, it.artist) }.filter { it.isNotEmpty() }.toSet()
+            .map { Triple(it.title, it.artist, it.duration_sec.toInt()) }.distinct()
+            .groupBy { looseTitleKey(it.first, it.second) }.filterKeys { it.isNotEmpty() }
         val mainId = mainChat()
         val input = listOf(ids, byKey.mapValues { (_, v) -> v.map { Triple(it.unique_id, it.size, it.duration_sec) } }, wanted, mainId)
         if (input == flagsInput && store.changes.value == flagsStamp) return@withLock
-        store.refreshFlags(ids, byKey.keys, wanted) { p ->
+        // Of each track waited for: the best copy in each chat, and only when the artist and the length agree too.
+        fun pickWanted(posts: List<ChatPost>): Set<Pair<Long, Long>> = posts.groupBy { looseTitleKey(it.title, it.artist) }.flatMap { (key, sameTitle) ->
+            sameTitle.groupBy { it.chatId }.flatMap { (chat, inChat) ->
+                val songs = inChat.map { it.asSong() }
+                wanted[key].orEmpty().mapNotNull { (t, a, d) -> bestMatch(songs, t, a, d)?.let { chat to it.message_id } }
+            }
+        }.toSet()
+        store.refreshFlags(ids, byKey.keys, wanted.keys, ::pickWanted) { p ->
             val mine = byKey[looseTitleKey(p.title, p.artist)].orEmpty().firstOrNull { matchKind(it, p.title, p.artist, p.durationSec) == MatchKind.Sure }
                 ?: return@refreshFlags false to null
             // A post in the main chat is already in your channel; comparing it with a library copy is not a "better" file to fetch.
