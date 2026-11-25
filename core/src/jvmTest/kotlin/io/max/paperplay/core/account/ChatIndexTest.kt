@@ -205,6 +205,22 @@ class ChatIndexTest {
     }
 
     @Test
+    fun aRepeatOfAFileTheLibraryHasIsNotCountedAsAdded() = runBlocking {
+        library.addChat(main, "Main")
+        fun at(id: Long, uid: String) = post(id, uid, "S$uid").copy(chatId = main)
+        library.upsertBotSong(at(1, "a").asSong().copy(remote_id = "r1"))
+        // The chat holds the same file again (post 2) and one song the library lacks (post 3).
+        account.batches = listOf(listOf(at(3, "c"), at(2, "a"), at(1, "a")))
+        index.indexChat(ChatInfo(main, "Main", true), true)
+        val first = index.addPostsNotInLibrary()
+        assertEquals(1, first.added)
+        assertEquals(1, first.repeats)
+        assertEquals(2, library.songsInChat(main).size)
+        // The next scan has nothing new to say.
+        assertEquals(0, index.addPostsNotInLibrary().added)
+    }
+
+    @Test
     fun aReadThatMissesManyPostsRemovesNothing() = runBlocking {
         for (m in 1L..20L) library.upsertBotSong(post(m, "u$m", "S$m").asSong().copy(remote_id = "r$m"))
         account.batches = listOf((11L..20L).map { post(it, "u$it", "S$it") })

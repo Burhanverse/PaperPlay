@@ -407,9 +407,10 @@ class ChatIndex(
         val seen = fullRead[chat] ?: return MainChatAdd(0, 0, 0)
         val have = knownPostIds(chat)
         val missing = store.posts(chat).filter { it.messageId in seen && it.messageId !in have }
-        missing.forEach { addToLibrary(it) }
+        // A post whose file the library lists under another post is a repeat: remembered as one, not counted as a new song at every scan.
+        val added = library.batch { missing.count { library.repo.upsertBotSong(it.asSong().copy(remote_id = io.max.paperplay.core.app.ACCOUNT_REMOTE)) } }
         val repeats = library.repo.db.filingQueries.allPostCopies().executeAsList().count { it.chat_id == chat }
-        return MainChatAdd(seen.size, missing.size, repeats)
+        return MainChatAdd(seen.size, added, repeats)
     }
 
     /** Posts the library already holds: the listed song of each file, and its other posts (repeats) kept as copies. */
