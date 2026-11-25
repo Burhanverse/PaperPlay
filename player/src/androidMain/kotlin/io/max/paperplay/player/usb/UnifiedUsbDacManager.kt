@@ -51,6 +51,8 @@ class UnifiedUsbDacManager(private val context: Context) {
         }
     }
 
+    private val askedFor: MutableSet<Int> = java.util.Collections.synchronizedSet(HashSet())
+
     private val systemOps = object : UsbSystemOps {
         override fun loadNativeLibrary() {
             if (coordinator.mode.value != BitPerfectMode.ON) return
@@ -67,6 +69,8 @@ class UnifiedUsbDacManager(private val context: Context) {
         override fun requestUsbPermission(deviceId: Int) {
             if (coordinator.mode.value != BitPerfectMode.ON) return
             val dev = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId } ?: return
+            // Asked once per plug-in: the answer "no" starts a scan, and that scan would ask again at once, for ever.
+            if (!askedFor.add(deviceId)) return
             val pi = PendingIntent.getBroadcast(
                 appContext,
                 0,
@@ -179,7 +183,7 @@ class UnifiedUsbDacManager(private val context: Context) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> scanClassOnly()
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val dev = getParcelableDevice(intent)
-                    dev?.let { coordinator.onHotUnplug(it.deviceId) }
+                    dev?.let { askedFor.remove(it.deviceId); coordinator.onHotUnplug(it.deviceId) }
                     scanClassOnly()
                 }
                 permissionAction -> {

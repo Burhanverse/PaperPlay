@@ -937,6 +937,8 @@ class AndroidPlayerEngine : PlayerEngine {
 
     override fun play() = withController { mc ->
         failed = false
+        // The player was rebuilt after the queue had ended (bit-perfect switched), so it holds nothing.
+        if (mc.mediaItemCount == 0 && fullQueue.isNotEmpty()) setQueueNow(mc, fullQueue, 0)
         if (mc.playbackState == Player.STATE_ENDED && mc.mediaItemCount > 0) {
             mc.seekToDefaultPosition(mc.currentMediaItemIndex.coerceAtLeast(0))
         } else if (mc.playbackState == Player.STATE_IDLE && mc.mediaItemCount > 0) {

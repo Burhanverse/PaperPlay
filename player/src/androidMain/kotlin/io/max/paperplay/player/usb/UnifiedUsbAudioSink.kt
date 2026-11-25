@@ -250,6 +250,8 @@ class UnifiedUsbAudioSink internal constructor(
         return runCatching {
             super.configure(cfg)
             normalSinkConfigured = true
+            // It only sounds when it was told to play, and that went to the DAC's path.
+            if (sinkPlaying) runCatching { super.play() }
             true
         }.getOrDefault(false)
     }
