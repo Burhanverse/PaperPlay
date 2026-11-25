@@ -72,6 +72,20 @@ android {
 
 kotlin { jvmToolchain(17) }
 
+// A native library older than its source lacks functions the Kotlin side calls, and the app then crashes where they are used.
+val nativeLibs = file("src/main/jniLibs/arm64-v8a")
+val nativeSources = mapOf("libengine.so" to rootProject.file("engine/src"), "libusb_audio.so" to rootProject.file("engine/usb_audio/src"))
+tasks.named("preBuild") {
+    doFirst {
+        for ((name, src) in nativeSources) {
+            val lib = File(nativeLibs, name)
+            if (!lib.exists()) { println("warning: $name is missing, the APK goes without it"); continue }
+            val newest = src.walkTopDown().filter { it.isFile }.maxOf { it.lastModified() }
+            if (lib.lastModified() < newest) throw GradleException("$name is older than ${src.path}; build it first (AGENTS.md, Audio engine)")
+        }
+    }
+}
+
 dependencies {
     implementation(project(":ui"))
     implementation(project(":core"))
