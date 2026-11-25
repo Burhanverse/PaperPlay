@@ -32,6 +32,7 @@ val vlcKeep = mapOf(
     "audio_filter" to setOf(
         "audio_format", "equalizer", "gain", "remap", "scaletempo", "scaletempo_pitch", "simple_channel_mixer",
         "trivial_channel_mixer", "ugly_resampler", "speex_resampler", "mono", "headphone_channel_mixer",
+        "normvol", // Normalise
     ),
     "audio_mixer" to setOf("float_mixer", "integer_mixer"),
     "audio_output" to setOf("mmdevice", "wasapi", "directsound", "waveout", "adummy"),
@@ -62,6 +63,10 @@ val stagePackagingResources = tasks.register<Copy>("stagePackagingResources") {
     from("src/jvmMain/resources/mpv") { into("mpv") }
     val tdlib = file(System.getenv("PAPERPLAY_TDLIB") ?: "third_party/tdlib")
     if (tdlib.exists()) from(tdlib) { into("native"); include("*.dll") }
+    // The equalizer's maths (cargo build --release in engine/); without it the curve is flat and there is no automatic preamp.
+    val engine = file("../engine/target/release")
+    if (File(engine, "engine.dll").exists()) from(engine) { into("native"); include("engine.dll") }
+    else logger.warn("engine/target/release/engine.dll not found; run cargo build --release in engine/")
 }
 // libvlc 3 rescans every plugin at start unless plugins/plugins.dat exists. vlc-cache-gen.exe (from a local VLC install)
 // builds it against the trimmed folder. Without VLC installed the step is skipped and the app scans (and, once the

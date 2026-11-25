@@ -32,6 +32,11 @@ DisableProgramGroupPage=yes
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
+; The jars carry a hash in their names, so every update would leave the old ones behind.
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\runtime"
+
 [Files]
 Source: "{#AppDir}\*"; DestDir: "{app}"; Flags: ignoreversion overwritereadonly recursesubdirs createallsubdirs
 

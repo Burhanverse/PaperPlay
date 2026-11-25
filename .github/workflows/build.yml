@@ -223,6 +223,11 @@ jobs:
           Copy-Item "$env:RUNNER_TEMP\mpv\libmpv-2.dll" $dst
           "libmpv: {0:N1} MB" -f ((Get-Item "$dst\libmpv-2.dll").Length / 1MB)
 
+      # The equalizer's maths for the desktop app; packed by stagePackagingResources.
+      - name: Build the audio engine
+        working-directory: engine
+        run: cargo build --release
+
       - name: Build release app image
         shell: cmd
         env:
