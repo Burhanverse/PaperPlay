@@ -910,6 +910,7 @@ elease` must say Java 25 and the setup exe must start.
 - [ ] USB: endings are still cut when the next song has another rate or depth
 - [~] USB: music decoded as float uses the DAC's 24 bit setting (`41a2f4f`); before, a 24 bit DAC always got Android's mixer. Not tried yet
 - [~] USB: earbuds connected after the DAC keep the music until they are gone (`3318cf3`). Not tried yet
+- [~] Sync is blocked between different app versions (switch "Block sync when versions differ", "Force sync" per device until the link ends; `329f953`). Tested with two devices in a test, not on the real ones
 - [~] Phone: screens no longer wait up to 10 s for the only database connection (`6725ce2`, `f467064`, WAL). Not tried yet
 - [ ] USB (not proven): a slow reopen, swallowed AudioTrack errors
 - [ ] Pairing code can be guessed offline by a device the owner dials on purpose (needs a new protocol)

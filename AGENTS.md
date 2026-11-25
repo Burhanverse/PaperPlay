@@ -106,6 +106,7 @@ Read `README.md` and `CHECKLIST.md` before changing anything.
 - Only posts Telegram itself said are deleted go to `IndexStore.markGonePosts`; never a guess, it deletes on linked devices too.
 - Shutting down, restoring and erasing run on `LifeWork.app`, not on a screen's scope.
 - Before a commit build the UI and both apps, not only `core`.
+- Devices sync only with the same app version and `SYNC_FORMAT` (`LanSync.kt`). Raise `SYNC_FORMAT` when synced data changes its meaning; a new message that carries data goes into `SYNC_TYPES` (`JavaLanSync.kt`).
 - TDLib file ids belong to one client; check which client an update came from.
 
 ## Git
