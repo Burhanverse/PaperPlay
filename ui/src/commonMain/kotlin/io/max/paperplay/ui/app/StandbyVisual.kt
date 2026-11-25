@@ -41,7 +41,7 @@ enum class StandbyStyle(val label: String) {
 @Composable
 fun StandbyVisual(style: StandbyStyle, color: Color, playing: Boolean, volume: Float, seed: String, modifier: Modifier = Modifier) {
     val foreground = rememberAppForeground()
-    val running = playing && foreground
+    val running = playing && foreground && !io.max.paperplay.ui.theme.LocalReduceMotion.current
     var frame by remember { mutableIntStateOf(0) }
     val rhythm = remember(seed) { Rhythm(seed) }
     val sm = remember(seed) { Smoother() }

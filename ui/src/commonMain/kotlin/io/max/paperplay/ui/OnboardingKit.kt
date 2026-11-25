@@ -1,19 +1,8 @@
 package io.max.paperplay.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,7 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,28 +37,27 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.max.paperplay.ui.theme.LocalAmbientClock
+import io.max.paperplay.ui.theme.LocalReduceMotion
+import io.max.paperplay.ui.theme.Motion
 import io.max.paperplay.ui.theme.PaperPlayTheme
+import io.max.paperplay.ui.theme.motionEffectTween
+import io.max.paperplay.ui.theme.motionPopSpring
+import io.max.paperplay.ui.theme.motionSpatialSpring
+import io.max.paperplay.ui.theme.rememberAmbientClock
 import kotlinx.coroutines.delay
 import org.jetbrains.compose.ui.tooling.preview.Preview
-
-/** Scales down a little while pressed and springs back, the Material 3 Expressive way. */
-@Composable
-internal fun Modifier.bouncy(source: MutableInteractionSource, pressedScale: Float = 0.94f): Modifier {
-    val pressed by source.collectIsPressedAsState()
-    val reduced = io.max.paperplay.ui.theme.LocalReduceMotion.current
-    val scale by androidx.compose.animation.core.animateFloatAsState(
-        if (pressed && !reduced) pressedScale else 1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium), label = "press",
-    )
-    return graphicsLayer { scaleX = scale; scaleY = scale }
-}
 
 /** Fades and rises into place after [index] steps; later items arrive a moment after earlier ones. */
 @Composable
 internal fun Staggered(index: Int, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    val p = remember { Animatable(0f) }
+    val reduced = LocalReduceMotion.current
+    val p = remember { Animatable(if (reduced) 1f else 0f) }
+    val spec = motionEffectTween<Float>(Motion.Spatial.StaggerEnterMs, easing = Motion.Emphasized)
     LaunchedEffect(Unit) {
-        delay(index * 70L)
-        p.animateTo(1f, spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessLow))
+        if (reduced) return@LaunchedEffect
+        delay(index * Motion.Spatial.StaggerStepMs)
+        p.animateTo(1f, spec)
     }
     Box(modifier.graphicsLayer { alpha = p.value.coerceIn(0f, 1f); translationY = (1f - p.value) * 48f }) { content() }
 }
@@ -82,18 +69,20 @@ internal fun ExpressiveHero(
     /** Moves the glyph sideways inside the badge for icons whose weight sits off centre, like the paper plane. */
     nudge: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
-    val t = rememberInfiniteTransition(label = "hero")
-    val corner by t.animateFloat(
-        0.3f, 0.5f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "corner",
-    )
-    val wiggle by t.animateFloat(
-        -6f, 6f, infiniteRepeatable(tween(1900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "wiggle",
-    )
-    val pop = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { pop.animateTo(1f, spring(dampingRatio = 0.42f, stiffness = Spring.StiffnessLow)) }
+    val reduced = LocalReduceMotion.current
+    val clock = LocalAmbientClock.current ?: rememberAmbientClock(active = !reduced)
+    clock.subscribe(active = !reduced)
+    val pop = remember { Animatable(if (reduced) 1f else 0f) }
+    val popSpec = motionPopSpring<Float>()
+    LaunchedEffect(Unit) { if (!reduced) pop.animateTo(1f, popSpec) }
     Box(
-        modifier.size(size).graphicsLayer { scaleX = pop.value; scaleY = pop.value; rotationZ = wiggle }
-            .clip(RoundedCornerShape((corner * 100).toInt())).background(MaterialTheme.colorScheme.primaryContainer),
+        modifier.size(size).graphicsLayer {
+            scaleX = pop.value
+            scaleY = pop.value
+            rotationZ = if (reduced) 0f else -6f + 12f * clock.pingPong(Motion.Ambient.HeroWigglePeriodMs)
+        }
+            .clip(RoundedCornerShape(38))
+            .background(MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, null, Modifier.offset(x = nudge).size(size / 2), tint = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -115,10 +104,9 @@ private const val BACKDROP_LOOP_MS = 60_000
  */
 @Composable
 internal fun GradientBackdrop(modifier: Modifier = Modifier) {
-    val reduced = io.max.paperplay.ui.theme.LocalReduceMotion.current
-    val t = rememberInfiniteTransition(label = "wash")
-    val drift by t.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "drift")
-    val loop by t.animateFloat(0f, 1f, infiniteRepeatable(tween(BACKDROP_LOOP_MS, easing = LinearEasing)), label = "rise")
+    val reduced = LocalReduceMotion.current
+    val clock = LocalAmbientClock.current ?: rememberAmbientClock(active = !reduced)
+    clock.subscribe(active = !reduced)
     val a = MaterialTheme.colorScheme.primaryContainer
     val b = MaterialTheme.colorScheme.tertiaryContainer
     val base = MaterialTheme.colorScheme.background
@@ -137,6 +125,8 @@ internal fun GradientBackdrop(modifier: Modifier = Modifier) {
     }
     Box(
         modifier.fillMaxSize().background(base).drawBehind {
+            val drift = if (reduced) 0.3f else clock.pingPong(Motion.Ambient.OnboardingDriftMs)
+            val loop = if (reduced) 0f else clock.phase(Motion.Ambient.OnboardingRiseMs)
             drawRect(
                 Brush.radialGradient(
                     listOf(a.copy(alpha = 0.55f), a.copy(alpha = 0f)),
@@ -174,7 +164,7 @@ internal fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
     Row(modifier, horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         repeat(count) { i ->
             val on = i == current
-            val w by animateDpAsState(if (on) 28.dp else 8.dp, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow), label = "dot")
+            val w by animateDpAsState(if (on) 28.dp else 8.dp, motionSpatialSpring(), label = "dot")
             Box(
                 Modifier.padding(horizontal = 3.dp).size(width = w, height = 8.dp).clip(CircleShape)
                     .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),

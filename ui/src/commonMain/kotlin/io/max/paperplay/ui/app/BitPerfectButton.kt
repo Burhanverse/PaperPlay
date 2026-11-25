@@ -1,11 +1,5 @@
 package io.max.paperplay.ui.app
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -21,7 +15,10 @@ import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.components.AppIcon
 import io.max.paperplay.ui.components.TrueAudioIcon
 import io.max.paperplay.ui.components.toggleOnColor
+import io.max.paperplay.ui.theme.LocalAmbientClock
 import io.max.paperplay.ui.theme.LocalReduceMotion
+import io.max.paperplay.ui.theme.Motion
+import io.max.paperplay.ui.theme.rememberAmbientClock
 
 /**
  * The bit-perfect switch for the player bar: a gem for true audio. While it is on, tiny notes and sparks drift up from it
@@ -40,8 +37,8 @@ fun BitPerfectButton(on: Boolean, off: Color, iconSize: Modifier, onToggle: () -
 /** Four small marks that rise from the button and fade, each a quarter of the cycle behind the one before. */
 @Composable
 private fun Floaters(color: Color) {
-    val t = rememberInfiniteTransition(label = "true audio")
-    val phase = t.animateFloat(0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart), label = "phase")
+    val clock = LocalAmbientClock.current ?: rememberAmbientClock(active = true)
+    clock.subscribe(active = true)
     val marks = listOf(
         Triple(Icons.Rounded.MusicNote, (-10).dp, 0.00f),
         Triple(Icons.Rounded.Bolt, 8.dp, 0.25f),
@@ -52,7 +49,7 @@ private fun Floaters(color: Color) {
         Icon(
             icon, null,
             Modifier.size(10.dp).graphicsLayer {
-                val p = (phase.value + shift) % 1f
+                val p = (clock.phase(Motion.Ambient.BitPerfectPeriodMs) + shift) % 1f
                 translationX = (19.dp + dx).toPx()
                 translationY = (30f - 34f * p).dp.toPx()
                 alpha = if (p < 0.15f) p / 0.15f else 1f - (p - 0.15f) / 0.85f

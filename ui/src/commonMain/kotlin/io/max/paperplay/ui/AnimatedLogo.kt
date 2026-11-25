@@ -1,20 +1,12 @@
 package io.max.paperplay.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -38,8 +30,12 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import io.max.paperplay.ui.res.Res
 import io.max.paperplay.ui.res.app_plane
-import org.jetbrains.compose.resources.imageResource
+import io.max.paperplay.ui.theme.LocalAmbientClock
 import io.max.paperplay.ui.theme.LocalReduceMotion
+import io.max.paperplay.ui.theme.Motion
+import io.max.paperplay.ui.theme.motionPopSpring
+import io.max.paperplay.ui.theme.rememberAmbientClock
+import org.jetbrains.compose.resources.imageResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.math.PI
 import kotlin.math.cos
@@ -74,19 +70,20 @@ private const val NOTE_SIZE = 0.2f
 internal fun AnimatedLogo(modifier: Modifier = Modifier, size: Dp = 96.dp) {
     val reduced = LocalReduceMotion.current
     val pop = remember { Animatable(if (reduced) 1f else 0f) }
-    LaunchedEffect(Unit) { if (!reduced) pop.animateTo(1f, spring(dampingRatio = 0.42f, stiffness = Spring.StiffnessLow)) }
+    val popSpec = motionPopSpring<Float>()
+    LaunchedEffect(Unit) { if (!reduced) pop.animateTo(1f, popSpec) }
     if (reduced) {
         LogoCanvas(0f, modifier, size)
         return
     }
-    val t = rememberInfiniteTransition(label = "logo")
-    val cycle by t.animateFloat(0f, 1f, infiniteRepeatable(tween(LOOP_MS, easing = LinearEasing)), label = "cycle")
-    LogoCanvas(cycle, modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }, size)
+    val clock = LocalAmbientClock.current ?: rememberAmbientClock(active = true)
+    clock.subscribe(active = true)
+    LogoCanvas({ clock.phase(Motion.Ambient.LogoLoopMs) }, modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }, size)
 }
 
 /** The icon standing still, for places that only show it (the About card on Profile). */
 @Composable
-internal fun StaticLogo(modifier: Modifier = Modifier, size: Dp = 56.dp) = LogoCanvas(0f, modifier, size)
+internal fun StaticLogo(modifier: Modifier = Modifier, size: Dp = 56.dp) = LogoCanvas({ 0f }, modifier, size)
 
 private class Flight(val dx: Float, val lift: Float, val tilt: Float, val trail: Float)
 
@@ -122,12 +119,17 @@ private fun flight(cycle: Float): Flight = when {
 
 /** Draws the icon for one moment of the loop ([cycle] 0..1). A pure function of its inputs, so each beat can be previewed. */
 @Composable
-internal fun LogoCanvas(cycle: Float, modifier: Modifier = Modifier, size: Dp = 96.dp) {
+internal fun LogoCanvas(cycle: Float, modifier: Modifier = Modifier, size: Dp = 96.dp) =
+    LogoCanvas({ cycle }, modifier, size)
+
+@Composable
+internal fun LogoCanvas(cycleProvider: () -> Float, modifier: Modifier = Modifier, size: Dp = 96.dp) {
     val note = rememberVectorPainter(Icons.Rounded.MusicNote)
     val plane = imageResource(Res.drawable.app_plane)
     val badge = androidx.compose.material3.MaterialTheme.colorScheme.primary
     val ink = androidx.compose.material3.MaterialTheme.colorScheme.onPrimary
     Canvas(modifier.size(size)) {
+        val cycle = cycleProvider()
         val s = this.size.minDimension
         val c = Offset(s / 2, s / 2)
 

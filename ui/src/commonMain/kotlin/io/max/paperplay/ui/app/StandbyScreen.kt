@@ -187,7 +187,10 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
         // Shown briefly on entry, then fades to invisible; it still works where it was.
         var hint by remember { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(3000); hint = false }
-        val hintAlpha by androidx.compose.animation.core.animateFloatAsState(if (armed) 0.7f else if (hint) 0.35f else 0f, androidx.compose.animation.core.tween(1500))
+        val hintAlpha by androidx.compose.animation.core.animateFloatAsState(
+            if (armed) 0.7f else if (hint) 0.35f else 0f,
+            io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Ambient.StandbyHintMs),
+        )
         androidx.compose.foundation.layout.Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
             IconButton({ p.putLandscape(!p.landscape) }) {
                 AppIcon(Icons.Rounded.ScreenRotation, if (p.landscape) "Landscape standby on" else "Landscape standby off",
@@ -232,19 +235,25 @@ private fun StandbyAlertRow(tone: Color) {
     val charging = rememberCharging()
     val alerts = rememberStandbyAlerts()
     if (!charging && alerts.isEmpty()) return
-    val hasCall = alerts.any { it.call }
-    val pulse = if (hasCall) {
-        androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
-            0.35f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
-        ).value
-    } else {
-        0.8f
-    }
+    val hasCall = alerts.any { it.call } && !io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val clock = if (hasCall) {
+        (io.max.paperplay.ui.theme.LocalAmbientClock.current ?: io.max.paperplay.ui.theme.rememberAmbientClock(active = true)).also {
+            it.subscribe(active = true)
+        }
+    } else null
     Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         if (charging) AppIcon(Icons.Rounded.Bolt, "Charging", Modifier.size(22.dp), tint = tone)
         alerts.take(8).forEach { a ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                AlertIcon(a.packageName, Modifier.size(if (a.call) 30.dp else 22.dp), tone.copy(alpha = if (a.call) pulse else 0.8f))
+                AlertIcon(
+                    a.packageName,
+                    Modifier.size(if (a.call) 30.dp else 22.dp).graphicsLayer {
+                        if (a.call && clock != null) {
+                            alpha = 0.35f + 0.65f * clock.pingPong(io.max.paperplay.ui.theme.Motion.Ambient.CallPulsePeriodMs)
+                        }
+                    },
+                    tone.copy(alpha = 0.8f),
+                )
                 if (a.count > 1) Text("${a.count}", color = tone.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -319,7 +328,10 @@ private fun StandbyLyricScroll(lines: List<io.max.paperplay.core.metadata.LrcLin
     ) {
         itemsIndexed(lines) { i, l ->
             val d = kotlin.math.abs(i - current)
-            val a by androidx.compose.animation.core.animateFloatAsState(when (d) { 0 -> 0.95f; 1 -> 0.45f; 2 -> 0.22f; else -> 0.1f }, androidx.compose.animation.core.tween(450))
+            val a by androidx.compose.animation.core.animateFloatAsState(
+                when (d) { 0 -> 0.95f; 1 -> 0.45f; 2 -> 0.22f; else -> 0.1f },
+                io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Effects.LyricsFocusMs),
+            )
             Box(Modifier.fillMaxWidth().height(itemH), contentAlignment = Alignment.Center) {
                 Text(
                     l.text.ifBlank { " " }, color = tone.copy(alpha = a), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
