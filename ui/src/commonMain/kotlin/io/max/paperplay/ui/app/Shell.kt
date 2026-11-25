@@ -1,6 +1,7 @@
 package io.max.paperplay.ui.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import io.max.paperplay.ui.theme.schemeFromSeed
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -42,11 +43,17 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.animation.AnimatedContent
 import io.max.paperplay.ui.theme.animatedWidth
 import io.max.paperplay.ui.theme.panelEnter
 import io.max.paperplay.ui.theme.panelExit
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.key.isAltPressed
@@ -106,21 +113,27 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     val settingsStack = remember { mutableStateListOf<String>() }
     // True when a page was opened straight from Profile or a library link: Back then returns there, not to the Settings list.
     var settingsDeep by remember { mutableStateOf(false) }
-    var showPlayer by remember { mutableStateOf(false) }
-    // How far the full player has slid up; it follows a drag and the back swipe.
-    val sheet = remember { PlayerSheetState() }
+    val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    var savedPlayerOpen by rememberSaveable { mutableStateOf(false) }
+    val playerController = rememberPlayerTransitionController(
+        initiallyOpen = savedPlayerOpen && pb.current != null,
+        reduceMotion = reduceMotion,
+    )
+    LaunchedEffect(playerController.isTargetOpen) {
+        savedPlayerOpen = playerController.isTargetOpen
+    }
+    val coverBounds = remember { CoverBoundsRegistry() }
+    val miniFocusRequester = remember { FocusRequester() }
     // Left for a while (phone in the background): free the decoded covers and compact the heap. Opening the app decodes what is on screen again.
     val inForeground = io.max.paperplay.ui.rememberAppForeground()
     androidx.compose.runtime.LaunchedEffect(inForeground) {
         if (!inForeground) { kotlinx.coroutines.delay(10_000); SharedCovers.loader.clear(); System.gc() }
     }
-    // While the full player has covered the screen, the underlying page stays mounted but skips drawing (with hysteresis so it never flickers).
-    val coveredState = rememberSheetCovered(showPlayer, sheet)
     // Where the phone came from, so Back returns there instead of jumping to Home or Settings.
     val history = remember { mutableStateListOf<NavSnapshot>() }
     fun snapshot() = NavSnapshot(tab, libraryTab, profilePage, detail, settings, settingsStack.toList(), settingsDeep, page)
     // Every screen change goes in the log, so a shared log shows what was open when something went wrong.
-    val where = "tab=$tab page=$page library=$libraryTab profile=$profilePage detail=${detail?.let { it::class.simpleName }} settings=${if (settings) settingsStack.joinToString("/").ifEmpty { "list" } else "-"} player=$showPlayer"
+    val where = "tab=$tab page=$page library=$libraryTab profile=$profilePage detail=${detail?.let { it::class.simpleName }} settings=${if (settings) settingsStack.joinToString("/").ifEmpty { "list" } else "-"} player=${playerController.phase.name}"
     LaunchedEffect(where) { io.max.paperplay.player.PlayLog.log("nav", where) }
     fun navigate(change: () -> Unit) {
         val before = snapshot()
@@ -150,12 +163,18 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
     var showEqFullScreen by remember { mutableStateOf(false) }
     var showLyricsFullScreen by remember { mutableStateOf(false) }
-    LaunchedEffect(pb.current == null) { if (pb.current == null) showLyricsFullScreen = false }
+    LaunchedEffect(pb.current == null) {
+        if (pb.current == null) {
+            showLyricsFullScreen = false
+            showEqFullScreen = false
+            playerController.snapClosed()
+        }
+    }
     fun handleBack() {
         when {
             showEqFullScreen -> showEqFullScreen = false
             showLyricsFullScreen -> showLyricsFullScreen = false
-            showPlayer -> showPlayer = false
+            playerController.isComposed -> playerController.commitBack()
             settings && settingsStack.size > (if (settingsDeep || !isPhone) 1 else 0) -> settingsStack.removeAt(settingsStack.lastIndex)
             else -> goBack()
         }
@@ -183,11 +202,13 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     androidx.compose.runtime.SideEffect {
         backend.services.outputInfo = { out.name to (if (out.external) "headphones" else if (isPhone) "phone" else "speakers") }
     }
-    // Prewarm the full-player cover bitmap and palette on track change rather than on the first frame of opening the sheet.
-    LaunchedEffect(pb.current?.coverUri) {
+    // Prewarm the full-player cover bitmap, backdrop thumbnail, and palette on track change rather than on the first frame of opening the sheet.
+    LaunchedEffect(pb.current?.coverUri, prefs.modernPlayerBlur) {
         pb.current?.coverUri?.let { uri ->
             loader.preload(listOf(uri), 1280)
+            loader.preload(listOf(uri), modernBackdropDecodePx(prefs.modernPlayerBlur))
             CoverSeeds.palette(uri)
+            CoverSeeds.prewarmScheme(uri, dark = true)
         }
     }
     val actions = remember(backend) {
@@ -268,17 +289,25 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     }
     LaunchedEffect(openRequest) {
         when (openRequest) {
-            "player" -> showPlayer = true
-            "upload" -> { page = "upload"; detail = null; settings = false; showPlayer = false }
-            "tasks" -> { navigate { tab = 3; profilePage = "tasks"; detail = null; settings = false }; page = "tasks"; showPlayer = false }
+            "player" -> if (pb.current != null) playerController.open()
+            "upload" -> { page = "upload"; detail = null; settings = false; playerController.close() }
+            "tasks" -> { navigate { tab = 3; profilePage = "tasks"; detail = null; settings = false }; page = "tasks"; playerController.close() }
         }
         if (openRequest != null) open?.value = null
     }
     // One handler: several enabled handlers would let the last one win.
     PlatformBackHandler(
-        showEqFullScreen || showLyricsFullScreen || showPlayer || settings || detail != null || profilePage != null || tab != 0 || history.isNotEmpty(),
-        // The player shrinks a little as the swipe goes; a cancelled swipe puts it back.
-        onProgress = { p -> if (showPlayer && !showEqFullScreen && !showLyricsFullScreen) scope.launch { sheet.progress.snapTo(1f - 0.3f * p) } },
+        enabled = showEqFullScreen || showLyricsFullScreen || playerController.isComposed || settings || detail != null || profilePage != null || tab != 0 || history.isNotEmpty(),
+        onProgress = { p ->
+            if (playerController.isComposed && !showEqFullScreen && !showLyricsFullScreen) {
+                playerController.backProgress(p)
+            }
+        },
+        onCancel = {
+            if (playerController.phase == PlayerSheetPhase.BackGesture) {
+                playerController.cancelBack()
+            }
+        },
         onBack = ::handleBack,
     )
 
@@ -332,21 +361,39 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
             copyPreview = { backend.copyPreview(it) },
             openSearch = { id, q -> openChat(id, backend.chatIndex.chats.value.firstOrNull { it.id == id }?.title ?: "Indexed chat", q) },
         )
-    }, LocalOpenDetail provides { d: Detail -> showPlayer = false; navigate { detail = d; settings = false } }, LocalOutputDevice provides out, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput, { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } }, { id -> backend.switchOutput(id, move = true) { m -> scope.launch { snack.showSnackbar(m) } } }) }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
+    }, LocalOpenDetail provides { d: Detail -> playerController.close(); navigate { detail = d; settings = false } }, LocalOutputDevice provides out, LocalOutputSwitch provides remember(backend) { OutputSwitch(backend.activeOutput, { id -> backend.switchOutput(id) { m -> scope.launch { snack.showSnackbar(m) } } }, { id -> backend.switchOutput(id, move = true) { m -> scope.launch { snack.showSnackbar(m) } } }) }, LocalPageTop provides pinnedBar, io.max.paperplay.ui.LocalGlassBackdrop provides (if (anyGlass) pageBackdrop else null)) {
         TagDialogHost(backend, tagDialogs) { m -> scope.launch { snack.showSnackbar(m) } }
         Box(Modifier.fillMaxSize()) {
             // The page background alone is the layer glass cards and bars blur (content on it would recurse).
-            Box(Modifier.fillMaxSize().drawWithContent { if (!coveredState.value) drawContent() }.then(if (anyGlass) Modifier.layerBackdrop(pageBackdrop) else Modifier)) {
-                AppBackground(prefs, pb.current?.coverUri, base, playing = pb.playing && !coveredState.value)
+            Box(Modifier.fillMaxSize().drawWithContent { if (!playerController.isCovered) drawContent() }.then(if (anyGlass) Modifier.layerBackdrop(pageBackdrop) else Modifier)) {
+                AppBackground(prefs, pb.current?.coverUri, base, playing = pb.playing && !playerController.isCovered)
             }
             if (isPhone) {
                 val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                 val navHeight = if (prefs.navLayout == NavLayout.Labels || prefs.navLayout == NavLayout.Dock) 76.dp else 64.dp
                 val barsHeight = (if (pb.current != null) 70.dp + 8.dp else 0.dp) + navHeight + (if (prefs.floatingNav) 24.dp else 0.dp) + bottomInset + 40.dp // extra scroll room so the last item clears the bar
+                val forceDarkBars = playerController.isPlayerSystemBars && !showEqFullScreen && !showLyricsFullScreen
+                io.max.paperplay.ui.SystemBarAppearanceEffect(darkIcons = !dark && !forceDarkBars)
                 // The layer the nav bar blurs: the page colour (a still copy, so it costs no animation) with the page on top. Without the colour there
                 // would be almost nothing under the bar to blur or refract.
-                Box(Modifier.fillMaxSize().drawWithContent { if (!coveredState.value) drawContent() }.then(if (navGlass) Modifier.layerBackdrop(backdrop) else Modifier)) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .drawWithContent { if (!playerController.isCovered) drawContent() }
+                        .then(if (navGlass) Modifier.layerBackdrop(backdrop) else Modifier)
+                        .graphicsLayer {
+                            val s = backdropScale(playerController.progress, playerController.reduceMotion)
+                            scaleX = s
+                            scaleY = s
+                            compositingStrategy = if (playerController.isTransitioning) {
+                                CompositingStrategy.Offscreen
+                            } else {
+                                CompositingStrategy.Auto
+                            }
+                        }
+                        .semantics { if (playerController.isCovered) hideFromAccessibility() },
+                ) {
                 // The second copy of the background (for the glass bar to blur) joins after the page has animated in: drawing two blurred
                 // backgrounds in the first frames was a large part of their cost.
                 var navBackground by remember { mutableStateOf(false) }
@@ -405,18 +452,25 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 }
                 }
                 Column(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().drawWithContent { if (!coveredState.value) drawContent() }.blockTouchesBehind().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().drawWithContent { if (!playerController.isCovered) drawContent() }.blockTouchesBehind().then(if (prefs.floatingNav) Modifier.padding(start = 16.dp, end = 16.dp, bottom = bottomInset.coerceAtLeast(12.dp)) else Modifier),
                 ) {
                     // Toasts sit above the mini player and the bar, where they cover the least; swipe one sideways to dismiss it.
                     AppSnackbarHost(snack, Modifier.fillMaxWidth().padding(bottom = 8.dp), tint)
                     RemoteNowStrip(backend)
                     if (pb.current != null && !miniGone) {
-                        val threshold = with(androidx.compose.ui.platform.LocalDensity.current) { 80.dp.toPx() }
-                        MiniPlayer(pb, { showPlayer = true }, backend::togglePlay, backend::next, backend::previous, { pos.value.progress(pb.durationMs) },
-                            Modifier.graphicsLayer {
-                                alpha = (1f - sheet.progress.value.coerceIn(0f, 1f)) * (1f - kotlin.math.abs(miniDrag) / 700f).coerceIn(0f, 1f)
-                                translationX = miniDrag
-                            }.then(if (prefs.floatingNav) Modifier else Modifier.padding(horizontal = 8.dp))
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val threshold = with(density) { 80.dp.toPx() }
+                        val miniMaxShiftPx = with(density) { io.max.paperplay.ui.theme.PlayerMotionTokens.MINI_PLAYER_MAX_SHIFT_DP.dp.toPx() }
+                        MiniPlayer(pb, { playerController.open() }, backend::togglePlay, backend::next, backend::previous, { pos.value.progress(pb.durationMs) },
+                            Modifier
+                                .focusRequester(miniFocusRequester)
+                                .focusable()
+                                .graphicsLayer {
+                                    val p = playerController.progress
+                                    alpha = miniPlayerAlpha(p, playerController.reduceMotion) * (1f - kotlin.math.abs(miniDrag) / 700f).coerceIn(0f, 1f)
+                                    translationX = miniDrag
+                                    translationY = miniPlayerTranslationY(p, miniMaxShiftPx, playerController.reduceMotion)
+                                }.then(if (prefs.floatingNav) Modifier else Modifier.padding(horizontal = 8.dp))
                                 // Only a paused mini player can be swiped away; playing again brings it back. It ends fully gone or fully back, never half way.
                                 .draggable(
                                     androidx.compose.foundation.gestures.rememberDraggableState { d -> miniDrag += d },
@@ -435,8 +489,13 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                                         }
                                     },
                                 ),
-                            onDevices = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } })
+                            onDevices = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } },
+                            coverBounds = coverBounds,
+                            coverHidden = { playerController.isCoverFlightActive(coverBounds) })
                         Box(Modifier.height(8.dp))
+                    }
+                    val navTotalPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+                        (navHeight + bottomInset + (if (prefs.floatingNav) 24.dp else 0.dp)).toPx()
                     }
                     NavBar(
                         selected = if (settings) 3 else tab,
@@ -444,17 +503,33 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         prefs = prefs,
                         inset = bottomInset,
                         onSelect = { sel -> navigate { tab = sel; detail = null; settings = false; settingsStack.clear(); profilePage = null } },
+                        modifier = Modifier.graphicsLayer {
+                            val p = playerController.progress
+                            alpha = navBarAlpha(p, playerController.reduceMotion)
+                            translationY = navBarTranslationY(p, navTotalPx, playerController.reduceMotion)
+                        },
                         taskRunning = scanning,
                     )
                 }
-                PlayerSheetHost(showPlayer, sheet) {
+                PlayerSheetHost(
+                    controller = playerController,
+                    coverBounds = coverBounds,
+                    onRequestFocusReturn = { runCatching { miniFocusRequester.requestFocus() } },
+                    overlayActive = showEqFullScreen || showLyricsFullScreen,
+                ) {
                     FullPlayer(
-                        pb, pbError, backend, actions, { showPlayer = false },
+                        pb, pbError, backend, actions, { playerController.close() },
                         onOpenSettings = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } },
                         onOpenEq = { showEqFullScreen = true },
                         onOpenLyrics = { showLyricsFullScreen = true },
                     )
                 }
+                SharedCoverLayer(
+                    controller = playerController,
+                    coverBounds = coverBounds,
+                    song = pb.current,
+                    targetCornerRadiusDp = if (resolveEffectivePlayerStyle(prefs) == PlayerStyle.Modern) 24.dp else 28.dp,
+                )
                 val eqReduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
                 androidx.compose.animation.AnimatedVisibility(
                     visible = showLyricsFullScreen && pb.current != null,
@@ -588,13 +663,13 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         androidx.compose.animation.AnimatedVisibility(panel, enter = panelEnter(), exit = panelExit()) {
                             Row {
                                 Spacer(Modifier.width(12.dp))
-                                if (pb.current != null) NowPlayingPanel(pb, backend, actions, { showPlayer = true }, { prefs.putNowPlayingPanel(false) }, Modifier.width(320.dp).fillMaxHeight().deskCard())
+                                if (pb.current != null) NowPlayingPanel(pb, backend, actions, { playerController.open() }, { prefs.putNowPlayingPanel(false) }, Modifier.width(320.dp).fillMaxHeight().deskCard())
                                 else Box(Modifier.width(320.dp).fillMaxHeight().deskCard())
                             }
                         }
                     }
                     RemoteNowStrip(backend)
-                    PlayerBar(pb, volume, backend, actions, { showPlayer = true },
+                    PlayerBar(pb, volume, backend, actions, { playerController.open() },
                         onNowPlaying = { showNow = !showNow }, transportInPage = showNow && pb.current != null, extras = { DevicePickerButton(onOpen = { id -> navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add(id) } }); MiniPlayerToggle() })
                 }
                 }
@@ -609,8 +684,8 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                         })
                         shell()
                     }
-                } else Box(Modifier.fillMaxSize().drawWithContent { if (!coveredState.value) drawContent() }) { shell() }
-                PlayerSheetHost(showPlayer, sheet) { FullPlayer(pb, pbError, backend, actions, { showPlayer = false }) }
+                } else Box(Modifier.fillMaxSize().drawWithContent { if (!playerController.isCovered) drawContent() }) { shell() }
+                PlayerSheetHost(playerController) { FullPlayer(pb, pbError, backend, actions, { playerController.close() }) }
                 AppSnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp), tint)
                 ShortcutsOverlay(keys, Modifier.fillMaxSize())
             }
@@ -622,7 +697,7 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                     backend, Modifier,
                 ) { navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("netplay") } }
                 // Only a way to open the panel: hidden while the panel, the now playing view or the full player is up, back once the panel is closed.
-                if (!isPhone && pb.current != null && !prefs.nowPlayingPanel && !showPlayer) {
+                if (!isPhone && pb.current != null && !prefs.nowPlayingPanel && !playerController.isComposed) {
                     val panelOn = prefs.nowPlayingPanel
                     val on = MaterialTheme.colorScheme.primary
                     val off = MaterialTheme.colorScheme.onSurfaceVariant
