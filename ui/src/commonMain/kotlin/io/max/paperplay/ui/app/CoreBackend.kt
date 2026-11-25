@@ -320,7 +320,8 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         if (!keepPlaying.value) return null
         val songs = repo.allSongs().first()
         val t = taste.value
-        val events = services.playEvents.all().let { ev -> if (t.useListens) ev else ev.filter { it.heardMs == 0L } }
+        // The newest are enough: old listens hardly count, and all of them are gone through again after every song once a queue has ended.
+        val events = services.playEvents.all().takeLast(MAX_SUGGEST_EVENTS).let { ev -> if (t.useListens) ev else ev.filter { it.heardMs == 0L } }
         return io.max.paperplay.core.recs.RecMixes.next(
             songs, services.audioFeatures.all(), events, tasteLists(songs.filter { it.favorite }, t), nowMoment(), queue,
         )
@@ -2132,3 +2133,4 @@ internal suspend fun loadSavedHome(services: AppServices): HomeUi? {
     return buildHomeUi(plan, mixes) { it }
 }
 
+private const val MAX_SUGGEST_EVENTS = 4_000
