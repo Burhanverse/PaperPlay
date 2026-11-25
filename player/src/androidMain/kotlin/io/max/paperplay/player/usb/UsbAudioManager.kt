@@ -59,11 +59,10 @@ class UsbAudioManager(private val context: Context) {
     private var volumeContentObserver: ContentObserver? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var pendingPermissionJob: Runnable? = null
 
     private val cachedDescriptions = mutableMapOf<Int, UsbAudioDeviceDescription>()
     private val cachedCaps = mutableMapOf<Int, DacCapabilities>()
-    private val requestedPermissionDeviceIds = mutableSetOf<Int>()
+    private val askOnce = UsbAskOnce()
     @Volatile
     private var isForeground = false
     var forwardingPlayer: UsbVolumeForwardingPlayer? = null
@@ -189,8 +188,6 @@ class UsbAudioManager(private val context: Context) {
 
     fun stop() {
         if (!isRegistered) return
-        pendingPermissionJob?.let { mainHandler.removeCallbacks(it) }
-        pendingPermissionJob = null
         mainHandler.removeCallbacks(volumePollRunnable)
         unregisterVolumeObserver()
         try {
@@ -206,8 +203,13 @@ class UsbAudioManager(private val context: Context) {
         return usbManager.deviceList.values.filter { isAudioDevice(it) }
     }
 
+    /** For what happens by itself; UnifiedUsbDacManager asks in the unified mode. A tap on "allow" goes to [requestPermission]. */
+    private fun askUnlessAsked(device: UsbDevice) {
+        if (!PlaybackCore.useUnifiedBitPerfect && askOnce.mayAsk(device.deviceId)) requestPermission(device)
+    }
+
     fun requestPermission(device: UsbDevice) {
-        requestedPermissionDeviceIds.add(device.deviceId)
+        askOnce.attached(device.deviceId)
         UsbRingLog.record(
             "UsbAudioManager",
             "requestPermission for ${device.productName ?: "USB Audio"} (vid=${device.vendorId}, pid=${device.productId})",
@@ -245,9 +247,8 @@ class UsbAudioManager(private val context: Context) {
             if (activeConnection == null) {
                 openDevice(target)
             }
-        } else if (!PlaybackCore.useUnifiedBitPerfect && !requestedPermissionDeviceIds.contains(target.deviceId)) {
-            // Otherwise UnifiedUsbDacManager asks; two questions for one device helped nobody.
-            requestPermission(target)
+        } else {
+            askUnlessAsked(target)
         }
     }
 
@@ -258,8 +259,6 @@ class UsbAudioManager(private val context: Context) {
 
     fun onDeviceAttachedFromIntent(device: UsbDevice) {
         if (!isAudioDevice(device)) return
-        pendingPermissionJob?.let { mainHandler.removeCallbacks(it) }
-        pendingPermissionJob = null
         UsbRingLog.record(
             "UsbAudioManager",
             "onDeviceAttachedFromIntent: ${device.productName ?: "USB Audio"} (vid=${device.vendorId}, pid=${device.productId})",
@@ -275,12 +274,13 @@ class UsbAudioManager(private val context: Context) {
         if (hasPerm) {
             openDevice(device)
         } else {
-            requestPermission(device)
+            askUnlessAsked(device)
         }
     }
 
     fun onUsbExclusiveModeChanged(enabled: Boolean) {
         if (enabled) {
+            askOnce.askAgain()
             UsbEngineNative.ensureLoaded()
             registerVolumeObserver()
             mainHandler.removeCallbacks(volumePollRunnable)
@@ -313,7 +313,8 @@ class UsbAudioManager(private val context: Context) {
             }
             if (!usbManager.hasPermission(device)) {
                 _state.value = UsbAudioState.Attached(device, hasPermission = false)
-                requestPermission(device)
+                // The probe asks on its own.
+                if (!forceForProbe) askUnlessAsked(device)
                 return@synchronized false
             }
 
@@ -592,21 +593,19 @@ class UsbAudioManager(private val context: Context) {
             openDevice(target)
         } else {
             _state.value = UsbAudioState.Attached(target, hasPermission = false)
-            if (isForeground && !requestedPermissionDeviceIds.contains(target.deviceId)) {
-                requestPermission(target)
-            }
+            if (isForeground) askUnlessAsked(target)
         }
     }
 
     private fun handleDeviceAttached(device: UsbDevice) {
-        pendingPermissionJob?.let { mainHandler.removeCallbacks(it) }
-        pendingPermissionJob = null
         UsbRingLog.record(
             "UsbAudioManager",
             "deviceAttached: ${device.productName ?: "USB Audio"} (vid=${device.vendorId}, pid=${device.productId})",
             UsbRingLog.CODE_DEVICE_ATTACH,
             device.deviceId.toLong()
         )
+        // Plugged in while the app runs: Android's own question ("Open PaperPlay to handle ...") is on the screen.
+        askOnce.attached(device.deviceId)
         val hasPerm = usbManager.hasPermission(device)
         _state.value = UsbAudioState.Attached(device, hasPermission = hasPerm)
         if (!PlaybackCore.usbExclusiveMode) {
@@ -615,24 +614,11 @@ class UsbAudioManager(private val context: Context) {
         }
         if (hasPerm) {
             openDevice(device)
-        } else if (isForeground && !requestedPermissionDeviceIds.contains(device.deviceId)) {
-            // Give 400ms grace window for MainActivity's USB_DEVICE_ATTACHED intent-filter
-            // to deliver the persistent permission grant before prompting with a transient dialog
-            val job = Runnable {
-                pendingPermissionJob = null
-                if (PlaybackCore.usbExclusiveMode && !usbManager.hasPermission(device)) {
-                    requestPermission(device)
-                }
-            }
-            pendingPermissionJob = job
-            mainHandler.postDelayed(job, 400L)
         }
     }
 
     private fun handleDeviceDetached(device: UsbDevice) {
-        pendingPermissionJob?.let { mainHandler.removeCallbacks(it) }
-        pendingPermissionJob = null
-        requestedPermissionDeviceIds.remove(device.deviceId)
+        askOnce.detached(device.deviceId)
         cachedDescriptions.remove(device.deviceId)
         cachedCaps.remove(device.deviceId)
         UsbRingLog.record(
@@ -815,8 +801,6 @@ class UsbAudioManager(private val context: Context) {
 
     fun closeCurrentConnection() {
         synchronized(connectionLock) {
-            pendingPermissionJob?.let { mainHandler.removeCallbacks(it) }
-            pendingPermissionJob = null
             try {
                 // stopAndRelease restores DAC mute/volume while interface 0 is still claimed, then releases & reattaches.
                 activeStreamer?.stopAndRelease()
