@@ -42,6 +42,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     private val playlist = ArrayList<Int>()
     private var loaded = false
     @Volatile private var paused = false
+    private val tapFeeder = DesktopAudioTapFeeder("desktop-mpv")
 
     // After a seek the data for the new position may not be there yet (a song still downloading), and the stream can end early.
     // That is not the end of the song: it is opened again at the place that was asked for, twice at most.
@@ -112,6 +113,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     }
 
     private fun int(name: String): Int? = str(name)?.toIntOrNull()
+    private fun audioDelayMs(): Long = ((str("audio-delay")?.toDoubleOrNull() ?: 0.0) * 1000.0).toLong()
 
     private fun cmd(block: () -> Unit) {
         if (closed || io.isShutdown) return
@@ -201,12 +203,17 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
             "time-pos" -> if (format == MpvC.FORMAT_DOUBLE) {
                 val ms = (data.getDouble(0) * 1000).toLong().coerceAtLeast(0)
                 if (abs(ms - lastPos) >= 100 || paused) { lastPos = ms; _positionMs.value = ms }
+                if (!paused && !seekPaused && loaded) tapFeeder.onPosition(ms, speed)
             }
             "duration" -> if (format == MpvC.FORMAT_DOUBLE) _durationMs.value = (data.getDouble(0) * 1000).toLong().coerceAtLeast(0)
             "demuxer-cache-time" -> if (format == MpvC.FORMAT_DOUBLE) _bufferedMs.value = (data.getDouble(0) * 1000).toLong().coerceAtLeast(0)
             "pause" -> if (format == MpvC.FORMAT_FLAG) {
                 paused = data.getInt(0) != 0
-                if (loaded && !seekPaused && (_state.value == PlayerState.Playing || _state.value == PlayerState.Paused)) _state.value = if (paused) PlayerState.Paused else PlayerState.Playing
+                if (loaded && !seekPaused && (_state.value == PlayerState.Playing || _state.value == PlayerState.Paused)) {
+                    _state.value = if (paused) PlayerState.Paused else PlayerState.Playing
+                    if (paused) tapFeeder.onPause()
+                    else tapFeeder.onPlaying(true, _positionMs.value, speed, 0L)
+                }
             }
         }
     }
@@ -227,6 +234,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         _currentIndex.value = first
         loaded = false
         _state.value = PlayerState.Loading
+        tapFeeder.onTrack(str("path") ?: if (first in queue.indices) mrlFor(first) else null)
     }
 
     private fun onFileLoaded() {
@@ -240,6 +248,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         }
         publishInfo()
         prepareNext()
+        tapFeeder.onPlaying(!paused, _positionMs.value, speed, audioDelayMs())
         PlayLog.log("mpv", "playing after ${System.currentTimeMillis() - startedAt}ms ${_info.value?.let { "codec=${it.codec} rate=${it.sampleRateHz}Hz" } ?: ""}")
     }
 
@@ -253,7 +262,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     private fun onEndFile(reason: Int) {
         when (reason) {
             MpvC.END_STOP, MpvC.END_QUIT, MpvC.END_REDIRECT -> return
-            MpvC.END_ERROR -> { _state.value = PlayerState.Error; return }
+            MpvC.END_ERROR -> { _state.value = PlayerState.Error; tapFeeder.onStop(); return }
         }
         val now = System.currentTimeMillis()
         val dur = _durationMs.value
@@ -267,7 +276,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
         }
         // With a next song appended mpv carries on by itself. Without one, the end of the queue (or a song that did not get appended).
         if (playlist.size > 1) return
-        if (cur + 1 in queue.indices) start(cur + 1) else { loaded = false; _positionMs.value = _durationMs.value; _state.value = PlayerState.Ended }
+        if (cur + 1 in queue.indices) start(cur + 1) else { loaded = false; _positionMs.value = _durationMs.value; _state.value = PlayerState.Ended; tapFeeder.onStop() }
     }
 
     // ---- playback
@@ -308,6 +317,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 _currentIndex.value = -1
                 _positionMs.value = 0L
                 _state.value = PlayerState.Idle
+                tapFeeder.onStop()
             } else start(startIndex.coerceIn(items.indices), startPositionMs = safePos)
         }
     }
@@ -334,12 +344,16 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     // Exclusive output holds the sound device for this app alone, so it is given back while paused and taken again on play.
     override fun play() = cmd {
         if (exclusive) setProp("audio-exclusive", "yes")
-        if (_state.value == PlayerState.Ended) start(_currentIndex.value) else setProp("pause", "no")
+        if (_state.value == PlayerState.Ended) start(_currentIndex.value) else {
+            setProp("pause", "no")
+            tapFeeder.onPlaying(true, _positionMs.value, speed, audioDelayMs())
+        }
     }
     override fun pause() = cmd {
         // A pause during a seek's own pause sets nothing new in mpv, so the state is set here.
         if (seekPaused) { seekPaused = false; if (loaded) _state.value = PlayerState.Paused }
         setProp("pause", "yes")
+        tapFeeder.onPause()
         if (exclusive) { setProp("audio-exclusive", "no"); publishInfo() }
     }
     override fun next() = cmd { val i = _currentIndex.value; if (i + 1 in queue.indices) start(i + 1) }
@@ -374,6 +388,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
                 Thread { Thread.sleep(SEEK_RESUME_LIMIT_MS); cmd { if (seekAt == at) endSeekMute() } }.apply { isDaemon = true; name = "seek-resume" }.start()
             }
             command("seek", "%.3f".format(java.util.Locale.ROOT, positionMs.coerceAtLeast(0) / 1000.0), "absolute+exact")
+            tapFeeder.onSeek(positionMs.coerceAtLeast(0L))
         }
     }
 
@@ -394,6 +409,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
 
     override fun setSpeed(speed: Float) {
         this.speed = speed.coerceIn(0.5f, 2f)
+        tapFeeder.onSpeed(this.speed)
         cmd { setProp("speed", "%.3f".format(java.util.Locale.ROOT, this.speed)); publishInfo() }
     }
 
@@ -536,6 +552,7 @@ internal class MpvPlayerEngine(private val lib: MpvLib, options: Map<String, Str
     override fun release() {
         if (closed) return
         closed = true
+        tapFeeder.release()
         lib.mpv_wakeup(ctx)
         events.join(2000)
         io.shutdown()
