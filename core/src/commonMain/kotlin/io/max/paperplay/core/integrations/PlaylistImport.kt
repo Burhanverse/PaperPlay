@@ -102,9 +102,27 @@ private fun findKey(node: JsonElement?, key: String): JsonElement? {
 private val credit = Regex("""(?:[\[(]|\s[-–]\s|\s)(?:feat|ft|featuring)\b\.?\s*([^\])]*)[\])]?""", RegexOption.IGNORE_CASE)
 private val remasterBrackets = Regex("""\s*[\[(][^\])]*remaster[^\])]*[\])]""", RegexOption.IGNORE_CASE)
 private val remasterDash = Regex("""\s+[-–]\s+[^-–]*remaster.*$""", RegexOption.IGNORE_CASE)
-private val versionTags = Regex("""\s*[\[(](?:mono|stereo|single version|album version|radio edit)[\])]""", RegexOption.IGNORE_CASE)
+private const val SAME_SONG = "mono|stereo|single version|album version|original version|radio edit|original mix|bonus track"
+private val versionTags = Regex("""\s*[\[(](?:$SAME_SONG)[\])]""", RegexOption.IGNORE_CASE)
 /** Spotify writes the same tag after a dash: "Song (feat. X) - Radio Edit". */
-private val dashVersionTag = Regex("""\s+[-–]\s+(?:mono|stereo|single version|album version|radio edit)\s*$""", RegexOption.IGNORE_CASE)
+private val dashVersionTag = Regex("""\s+[-–—]\s+(?:$SAME_SONG)\s*$""", RegexOption.IGNORE_CASE)
+private const val FROM_FILM = "(?:as )?(?:featured|heard) in|(?:music |theme )?from"
+private val filmBrackets = Regex("""\s*[\[(](?:$FROM_FILM)\b[^\])]*[\])]""", RegexOption.IGNORE_CASE)
+private val filmDash = Regex("""\s+[-–—]\s+(?:$FROM_FILM)\b.*$""", RegexOption.IGNORE_CASE)
+/** "(Male Version)" and "(Male)" are one tag, also after a dash. */
+private val versionInBrackets = Regex("""(?<=\S)\s+version(?=\s*[\])])""", RegexOption.IGNORE_CASE)
+private val versionAfterDash = Regex("""(\s[-–—]\s[^-–—]*\S)\s+version\s*$""", RegexOption.IGNORE_CASE)
+private val brackets = Regex("""\s*[\[(]([^\])]*)[\])]""")
+
+/** Letters without their accents, so "Beyoncé" is "Beyonce". */
+internal expect fun foldAccents(s: String): String
+
+/** Drops a bracket that only names the song's own artists: "Annihilate (...) (Metro Boomin & Swae Lee, Lil Wayne, Offset)". */
+private fun dropArtistBracket(title: String, artist: String): String {
+    if ('(' !in title && '[' !in title) return title
+    val names = artistsOf(artist).toSet()
+    return title.replace(brackets) { m -> if (artistsOf(m.groupValues[1]).any { it in names }) "" else m.value }.ifBlank { title }
+}
 
 /** Title with featured-artist credits and remaster/version tags removed, so one song from different releases gets one key. */
 fun looseTitleKey(title: String, artist: String): String {
@@ -112,12 +130,16 @@ fun looseTitleKey(title: String, artist: String): String {
         .replace(remasterBrackets, "")
         .replace(remasterDash, "")
         .replace(versionTags, "")
+        .replace(filmBrackets, "")
+        .replace(filmDash, "")
         .replace(dashVersionTag, "")
         .replace(credit, "")
-    return comparableText(searchTitle(t))
+        .replace(versionInBrackets, "")
+        .replace(versionAfterDash, "$1")
+    return comparableText(foldAccents(searchTitle(dropArtistBracket(t, artist))))
 }
 
-private fun artistsOf(artist: String): List<String> = splitArtists(artist).map(::comparableText).filter { it.isNotEmpty() }
+private fun artistsOf(artist: String): List<String> = splitArtists(foldAccents(artist)).map(::comparableText).filter { it.isNotEmpty() }
 
 /** Artists credited on a track: its artist field plus any "feat." names in the title. */
 private fun credited(title: String, artist: String): List<String> =

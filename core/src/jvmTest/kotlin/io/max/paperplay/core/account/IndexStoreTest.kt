@@ -9,7 +9,19 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class IndexStoreTest {
-    private val store = IndexStore(libraryDriver())
+    private val driver = libraryDriver()
+    private val store = IndexStore(driver)
+
+    /** Posts saved with the keys of an older version get today's, so a Spotify track still finds them. */
+    @Test
+    fun oldKeysAreWorkedOutAgain() {
+        store.saveChat(-5, "Big")
+        store.upsertPosts(listOf(post(-5, 1, title = "Song (Male Version)"), post(-5, 2, title = "Plain")), 1)
+        driver.execute(null, "UPDATE index_posts SET loose_key = 'old'", 0)
+        store.prepare()
+        assertEquals(1L, store.postsWithKey(looseTitleKey("Song (Male)", "A")).single().messageId)
+        assertEquals(2L, store.postsWithKey("old").single().messageId)
+    }
 
     private fun post(chat: Long, msg: Long, title: String = "T$msg", artist: String = "A", uid: String = "u$chat:$msg") =
         ChatPost(chat, msg, uid, title, artist, 200, 1000, "audio/flac", "$title.flac", msg)

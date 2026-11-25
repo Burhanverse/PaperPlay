@@ -47,6 +47,11 @@ enum class IndexFilter { All, New, Better, Have, Wanted }
  * flags, a page at a time, so a chat of 80,000 songs never has to be held in memory.
  */
 class IndexStore(private val driver: SqlDriver) {
+    private companion object {
+        /** Raise it when [looseTitleKey] gives other keys than before. */
+        const val KEY_VERSION = 1
+    }
+
     /** Counts every write, for flows that re-read. */
     val changes = MutableStateFlow(0L)
 
@@ -89,6 +94,12 @@ class IndexStore(private val driver: SqlDriver) {
 
     /** Works out the loose title key of posts saved before keys existed, a few thousand at a time. Run off the main thread. */
     fun prepare() {
+        // Keys are worked out again when looseTitleKey changed; plain titles have the same key as before.
+        exec("CREATE TABLE IF NOT EXISTS index_key_version (version INTEGER NOT NULL)")
+        if (query("SELECT COALESCE(MAX(version), 0) FROM index_key_version") { it.getLong(0)!! }.first() < KEY_VERSION) db.transaction {
+            exec("UPDATE index_posts SET loose_key = '' WHERE title GLOB '*[-([]*' OR title GLOB '*[^ -~]*'")
+            exec("INSERT INTO index_key_version (version) VALUES ($KEY_VERSION)")
+        }
         while (true) {
             val rows = query("SELECT chat_id, message_id, title, artist FROM index_posts WHERE loose_key = '' LIMIT 5000") {
                 Triple(it.getLong(0)!! to it.getLong(1)!!, it.getString(2)!!, it.getString(3)!!)

@@ -1,7 +1,9 @@
 package io.max.paperplay.core.metadata
 
 /** Text reduced to lowercase letters and digits, for comparing names. */
-fun comparableText(s: String): String = s.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "")
+fun comparableText(s: String): String = s.lowercase().replace(notLetterOrDigit, "")
+
+private val notLetterOrDigit = Regex("[^\\p{L}\\p{N}]+")
 
 private val artistSplit = Regex("\\s*(?:,|&|;|\\s/\\s|\\bfeat\\.?\\s|\\bft\\.?\\s)\\s*", RegexOption.IGNORE_CASE)
 
