@@ -74,6 +74,8 @@ class UsbAudioSink(
     private var lastDelegateDiagLogMs = 0L
     private val usbPcmEq = io.max.paperplay.player.NativePcmEqStage()
     private var pendingEqBuf: ByteBuffer? = null
+    private var lastTapPtsUs: Long = C.TIME_UNSET
+    private var lastTapPtsConsumedBytes: Int = 0
 
     private fun playerStateDesc(): String {
         val state = PlaybackCore.playerPlaybackState
@@ -613,10 +615,43 @@ class UsbAudioSink(
                 if (eqBuf != null) pendingEqBuf = eqBuf
             }
             val feedBuf = eqBuf ?: buffer
+            val posBefore = feedBuf.position()
             val beforeRem = feedBuf.remaining()
             val done = stateMachine.handleBuffer(feedBuf, presentationTimeUs)
             val afterRem = feedBuf.remaining()
             val consumed = (beforeRem - afterRem).coerceAtLeast(0)
+            if (stateMachine.isDop) {
+                io.max.paperplay.player.AudioTap.markNonPcmStream()
+            } else if (consumed > 0 && io.max.paperplay.player.AudioTap.wanted) {
+                val fmt = lastConfiguredFormat
+                val pcmKind = when (fmt?.pcmEncoding) {
+                    C.ENCODING_PCM_16BIT -> io.max.paperplay.player.PcmTapReader.PCM_16
+                    C.ENCODING_PCM_24BIT -> io.max.paperplay.player.PcmTapReader.PCM_24
+                    C.ENCODING_PCM_32BIT -> io.max.paperplay.player.PcmTapReader.PCM_32
+                    C.ENCODING_PCM_FLOAT -> io.max.paperplay.player.PcmTapReader.PCM_FLOAT
+                    else -> -1
+                }
+                if (fmt != null && pcmKind >= 0 && fmt.sampleRate > 0 && fmt.channelCount > 0) {
+                    val step = when (pcmKind) {
+                        io.max.paperplay.player.PcmTapReader.PCM_16 -> 2
+                        io.max.paperplay.player.PcmTapReader.PCM_24 -> 3
+                        else -> 4
+                    }
+                    val pts = if (presentationTimeUs != C.TIME_UNSET && presentationTimeUs >= 0L) {
+                        if (presentationTimeUs != lastTapPtsUs) {
+                            lastTapPtsUs = presentationTimeUs
+                            lastTapPtsConsumedBytes = 0
+                        }
+                        val frameBytes = step * fmt.channelCount
+                        val baseFrames = if (frameBytes > 0) lastTapPtsConsumedBytes / frameBytes else 0
+                        lastTapPtsConsumedBytes += consumed
+                        presentationTimeUs + (baseFrames.toLong() * 1_000_000L) / fmt.sampleRate
+                    } else -1L
+                    io.max.paperplay.player.PcmTapReader.feedPcmSlice(
+                        feedBuf, posBefore, consumed, fmt.sampleRate, fmt.channelCount, pcmKind, pts, "android-usb-legacy",
+                    )
+                }
+            }
             if (eqBuf != null && consumed > 0) {
                 buffer.position((buffer.position() + consumed).coerceAtMost(buffer.limit()))
             }
@@ -693,6 +728,7 @@ class UsbAudioSink(
                 }
                 UsbRingLog.recordAudio(UsbRingLog.CODE_SINK_GET_POS, pos, if (sourceEnded) 1L else 0L)
             }
+            io.max.paperplay.player.AudioTap.updatePlaybackClock(pos, 1f)
             return pos
         } catch (t: Throwable) {
             val reason = "getCurrentPositionUs failed in USB mode: ${t.message}"
@@ -740,6 +776,7 @@ class UsbAudioSink(
 
     override fun pause() {
         playerIsPlaying = false
+        io.max.paperplay.player.AudioTap.onPause()
         applyPendingDelegateTransitionOnSinkThread()
         if (activeMode == ActiveSinkMode.DELEGATE) {
             super.pause()
@@ -759,6 +796,9 @@ class UsbAudioSink(
     }
 
     override fun flush() {
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         applyPendingDelegateTransitionOnSinkThread()
         if (activeMode == ActiveSinkMode.DELEGATE) {
             if (DelegateSinkDiag.isEnabled) DelegateSinkDiag.onResetOrFlush()
@@ -782,6 +822,9 @@ class UsbAudioSink(
     }
 
     override fun reset() {
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         if (activeMode == ActiveSinkMode.DELEGATE) {
             if (DelegateSinkDiag.isEnabled) DelegateSinkDiag.onResetOrFlush()
             pendingEqBuf = null
@@ -812,6 +855,9 @@ class UsbAudioSink(
         lastConfiguredFormat = null
         lastConfig = null
         pendingEqBuf = null
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         usbPcmEq.release()
         if (activeMode == ActiveSinkMode.USB || stateMachine.isActive) {
             try {
@@ -836,6 +882,9 @@ class UsbAudioSink(
         lastConfiguredFormat = null
         lastConfig = null
         pendingEqBuf = null
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         usbPcmEq.release()
         switchToDelegateFallback("No USB DAC connected")
     }
