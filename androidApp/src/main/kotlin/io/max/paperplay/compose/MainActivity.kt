@@ -94,7 +94,9 @@ class MainActivity : ComponentActivity() {
             intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
         }
         if (device != null) {
-            io.max.paperplay.player.usb.UsbAudioManager.instance?.onDeviceAttachedFromIntent(device)
+            val unified = io.max.paperplay.player.usb.UnifiedUsbDacManager.instance
+            if (unified != null) unified.onDeviceGrantedFromIntent(device)
+            else io.max.paperplay.player.usb.UsbAudioManager.instance?.onDeviceAttachedFromIntent(device)
         }
     }
 
@@ -276,7 +278,7 @@ class MainActivity : ComponentActivity() {
         // No grey scrim behind 3-button navigation; the app draws under both bars.
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         initPlayer(applicationContext)
-        handleUsbDeviceIntent(intent)
+        if (savedInstanceState == null) handleUsbDeviceIntent(intent) // not again when the screen is only rebuilt
         takeShared(intent)
         // Started by the Spotify return link after Android ended the app: keep it until services can finish the login.
         auth.deliver(intent?.data)

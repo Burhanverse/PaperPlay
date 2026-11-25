@@ -238,7 +238,7 @@ internal object AndroidUsbDacBackend : io.max.paperplay.player.usb.UsbDacControl
 
     override fun requestUsbPermission() {
         if (PlaybackCore.useUnifiedBitPerfect) {
-            io.max.paperplay.player.usb.UnifiedUsbDacManager.instance?.scanClassOnly()
+            io.max.paperplay.player.usb.UnifiedUsbDacManager.instance?.askForPermission()
             return
         }
         val usb = io.max.paperplay.player.usb.UsbAudioManager.instance ?: return

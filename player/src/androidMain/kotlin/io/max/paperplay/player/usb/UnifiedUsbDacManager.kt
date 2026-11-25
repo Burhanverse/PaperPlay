@@ -51,7 +51,7 @@ class UnifiedUsbDacManager(private val context: Context) {
         }
     }
 
-    private val askedFor: MutableSet<Int> = java.util.Collections.synchronizedSet(HashSet())
+    private val askOnce = UsbAskOnce()
 
     private val systemOps = object : UsbSystemOps {
         override fun loadNativeLibrary() {
@@ -70,7 +70,7 @@ class UnifiedUsbDacManager(private val context: Context) {
             if (coordinator.mode.value != BitPerfectMode.ON) return
             val dev = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId } ?: return
             // Asked once per plug-in: the answer "no" starts a scan, and that scan would ask again at once, for ever.
-            if (!askedFor.add(deviceId)) return
+            if (!askOnce.mayAsk(deviceId)) return
             val pi = PendingIntent.getBroadcast(
                 appContext,
                 0,
@@ -180,33 +180,19 @@ class UnifiedUsbDacManager(private val context: Context) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> coordinator.onScreenOff()
                 AudioManager.ACTION_AUDIO_BECOMING_NOISY -> coordinator.onRouteChanged(nonUsbRouteActive = true)
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> scanClassOnly()
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    getParcelableDevice(intent)?.let { askOnce.attached(it.deviceId) }
+                    scanClassOnly()
+                }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val dev = getParcelableDevice(intent)
-                    dev?.let { askedFor.remove(it.deviceId); coordinator.onHotUnplug(it.deviceId) }
+                    dev?.let { askOnce.detached(it.deviceId); coordinator.onHotUnplug(it.deviceId) }
                     scanClassOnly()
                 }
                 permissionAction -> {
                     scanClassOnly()
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                    if (granted && coordinator.mode.value == BitPerfectMode.ON) {
-                        UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
-                        val shouldRebuild = BitPerfectRebuildPolicy.shouldRebuildPlayer(
-                            SinkRebuildNeedInput(
-                                isExplicitModeOrChainChange = false,
-                                usbExclusiveMode = PlaybackCore.usbExclusiveMode,
-                                useUnifiedBitPerfect = PlaybackCore.useUnifiedBitPerfect,
-                                devApi34MixerEnabled = PlaybackCore.devApi34MixerEnabled,
-                                hasUnifiedUsbSinkInstance = UnifiedUsbAudioSink.currentInstance != null,
-                                api34ActiveOnCurrentPlayer = Api34BitPerfectMixer.lastVerification is Api34MixerVerification.Verified,
-                            ),
-                        )
-                        if (shouldRebuild) {
-                            PlaybackCore.onRebuildPlayerForBitPerfect?.invoke(false)
-                        } else if (PlaybackCore.userPlayIntent && PlaybackCore.playerIsPlaying) {
-                            PlaybackCore.requestReconfiguration()
-                        }
-                    }
+                    if (granted) useGrantedDevice()
                 }
             }
         }
@@ -277,7 +263,42 @@ class UnifiedUsbDacManager(private val context: Context) {
         coordinator.scanDevices(list)
     }
 
+    /** Android's own question was answered with yes; it tells the activity, not [receiver]. */
+    fun onDeviceGrantedFromIntent(device: UsbDevice) {
+        if (!PlaybackCore.useUnifiedBitPerfect) { UsbAudioManager.instance?.onDeviceAttachedFromIntent(device); return }
+        scanClassOnly()
+        // Only a device that is still there: the activity can be opened again with an old intent.
+        if (usbManager.deviceList.values.any { it.deviceId == device.deviceId } && usbManager.hasPermission(device)) useGrantedDevice()
+    }
+
+    /** The owner tapped "allow". */
+    fun askForPermission() {
+        askOnce.askAgain()
+        scanClassOnly()
+    }
+
+    private fun useGrantedDevice() {
+        if (coordinator.mode.value != BitPerfectMode.ON) return
+        UnifiedUsbAudioSink.currentInstance?.markPendingUsbAttach()
+        val shouldRebuild = BitPerfectRebuildPolicy.shouldRebuildPlayer(
+            SinkRebuildNeedInput(
+                isExplicitModeOrChainChange = false,
+                usbExclusiveMode = PlaybackCore.usbExclusiveMode,
+                useUnifiedBitPerfect = PlaybackCore.useUnifiedBitPerfect,
+                devApi34MixerEnabled = PlaybackCore.devApi34MixerEnabled,
+                hasUnifiedUsbSinkInstance = UnifiedUsbAudioSink.currentInstance != null,
+                api34ActiveOnCurrentPlayer = Api34BitPerfectMixer.lastVerification is Api34MixerVerification.Verified,
+            ),
+        )
+        if (shouldRebuild) {
+            PlaybackCore.onRebuildPlayerForBitPerfect?.invoke(false)
+        } else if (PlaybackCore.userPlayIntent && PlaybackCore.playerIsPlaying) {
+            PlaybackCore.requestReconfiguration()
+        }
+    }
+
     fun onModeChanged(mode: BitPerfectMode) {
+        if (mode == BitPerfectMode.ON) askOnce.askAgain()
         coordinator.onModeChanged(mode)
         updateVolumeReceiverRegistration()
         scanClassOnly()

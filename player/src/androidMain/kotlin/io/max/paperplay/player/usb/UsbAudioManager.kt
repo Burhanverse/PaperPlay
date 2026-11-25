@@ -245,7 +245,8 @@ class UsbAudioManager(private val context: Context) {
             if (activeConnection == null) {
                 openDevice(target)
             }
-        } else if (!requestedPermissionDeviceIds.contains(target.deviceId)) {
+        } else if (!PlaybackCore.useUnifiedBitPerfect && !requestedPermissionDeviceIds.contains(target.deviceId)) {
+            // Otherwise UnifiedUsbDacManager asks; two questions for one device helped nobody.
             requestPermission(target)
         }
     }
