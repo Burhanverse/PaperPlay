@@ -168,6 +168,23 @@ fun bestMatch(songs: Iterable<Song>, title: String, artist: String, durationSec:
 class ImportStore(val repo: LibraryRepo, private val driver: SqlDriver, val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() }) {
     private val lists get() = repo.db.playlistsQueries
 
+    init {
+        // Tracks the owner matched by hand, so a refresh does not list them as missing again.
+        driver.execute(null, "CREATE TABLE IF NOT EXISTS import_accepted (playlist_id INTEGER NOT NULL, track_key TEXT NOT NULL, unique_id TEXT NOT NULL, PRIMARY KEY (playlist_id, track_key))", 0)
+    }
+
+    fun accept(playlistId: Long, trackKey: String, uniqueId: String) {
+        driver.execute(null, "INSERT OR REPLACE INTO import_accepted (playlist_id, track_key, unique_id) VALUES (?, ?, ?)", 3) { bindLong(0, playlistId); bindString(1, trackKey); bindString(2, uniqueId) }
+    }
+
+    /** Keys of tracks matched by hand whose song is still in the playlist. */
+    fun accepted(playlistId: Long): Set<String> = driver.executeQuery(
+        null,
+        "SELECT a.track_key FROM import_accepted a JOIN songs s ON s.unique_id = a.unique_id JOIN playlist_songs p ON p.playlist_id = a.playlist_id " +
+            "AND p.chat_id = s.chat_id AND p.message_id = s.message_id AND p.removed_at IS NULL WHERE a.playlist_id = ?",
+        { c -> val out = HashSet<String>(); while (c.next().value) out += c.getString(0)!!; app.cash.sqldelight.db.QueryResult.Value<Set<String>>(out) }, 1,
+    ) { bindLong(0, playlistId) }.value
+
     fun <T> transaction(block: () -> T): T = repo.db.transactionWithResult { block() }
 
     fun livePlaylists(): List<Playlist> = lists.livePlaylists().executeAsList()
@@ -255,6 +272,7 @@ fun acceptMatch(store: ImportStore, track: MissingTrack, song: Song) {
             track.playlist_id, song.chat_id, song.message_id, store.clock() + track.position, track.source_added_at, keepSource = false,
         )
         store.deleteMissing(track.playlist_id, track.track_key)
+        store.accept(track.playlist_id, track.track_key, song.unique_id)
     }
     store.announceChange()
 }
@@ -297,8 +315,10 @@ suspend fun importPlaylist(
     val playlistId = existing?.id ?: store.createPlaylist(source.name, sourceUrl)
 
     val known = store.missing(playlistId).map { it.track_key }.toMutableSet()
+    val accepted = store.accepted(playlistId)
     store.transaction {
         source.tracks.forEachIndexed { i, t ->
+            if (t.key in accepted) return@forEachIndexed
             // add() is false for a repeat: playlists can list one track twice.
             if (!known.add(t.key)) {
                 if (t.addedAtMs != null) store.setMissingSourceAdded(playlistId, t.key, t.addedAtMs)

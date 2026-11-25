@@ -133,7 +133,11 @@ private fun ReviewList(backend: CoreBackend, store: ImportStore, waiting: List<M
             }
         }
     }
-    val candidates = remember(waiting) { reviewCandidates(store, waiting) }
+    // Reads and compares the whole library, so not while drawing.
+    val found by androidx.compose.runtime.produceState<Map<String, List<io.max.paperplay.core.library.Song>>?>(null, waiting) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { reviewCandidates(store, waiting) }
+    }
+    val candidates = found ?: return
     val withMatches = waiting.filter { candidates[it.track_key].orEmpty().isNotEmpty() }
     if (withMatches.isEmpty()) {
         Text("No close matches in your library to review.", Modifier.padding(horizontal = 36.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
