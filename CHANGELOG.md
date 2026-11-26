@@ -2,6 +2,18 @@
 
 All notable changes to PaperPlay are listed here, newest first. Each stable release adds its section automatically.
 
+## [1.23.0] - 2026-11-26
+
+### Added
+- Rewrite Android Profile page for Default and Modern styles ([`d98120f`](https://github.com/maxcodl/PaperPlay/commit/d98120fd5b2a8093e6841c449ddefb23478b4835))
+- Modern Android UI foundation, tokens, backdrop host, and prefs ([`6f1719e`](https://github.com/maxcodl/PaperPlay/commit/6f1719e1e7bb9403a34a87e134a6782baaddb8e5))
+
+### Other changes
+- Simplify Settings Appearance App style selector ([`267e1e1`](https://github.com/maxcodl/PaperPlay/commit/267e1e15066da242cad55d346d936c2f83d65017))
+- Unify mini-player hide and add Modern swipe-down hide and expand gestures ([`7a389e7`](https://github.com/maxcodl/PaperPlay/commit/7a389e77487d2e6c05e0df3765ca7062d2174ab8))
+
+**Full changes:** [v1.22.0...v1.23.0](https://github.com/maxcodl/PaperPlay/compare/v1.22.0...v1.23.0)
+
 ## [1.22.0] - 2026-11-26
 
 ### Improved
