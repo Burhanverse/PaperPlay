@@ -820,6 +820,7 @@ fun SharedCoverLayer(
     song: SongUi?,
     targetCornerRadiusDp: Dp,
     modifier: Modifier = Modifier,
+    startCircular: Boolean = false,
 ) {
     if (song == null || coverBounds == null || !controller.isCoverFlightActive(coverBounds)) return
     val fullSizePx = coverBounds.fullSizeState
@@ -828,6 +829,7 @@ fun SharedCoverLayer(
     val density = LocalDensity.current
     val targetWidthDp = with(density) { fullSizePx.width.toDp() }
     val targetHeightDp = with(density) { fullSizePx.height.toDp() }
+    val targetRadiusPx = with(density) { targetCornerRadiusDp.toPx() }
 
     Box(modifier.fillMaxSize()) {
         Box(
@@ -847,6 +849,11 @@ fun SharedCoverLayer(
                     translationY = curTop
                     scaleX = (curW / full.width).coerceAtLeast(0.01f)
                     scaleY = (curH / full.height).coerceAtLeast(0.01f)
+                    if (startCircular) {
+                        val circleRadius = minOf(size.width, size.height) / 2f
+                        shape = RoundedCornerShape(lerpFloat(circleRadius, targetRadiusPx, t))
+                        clip = true
+                    }
                     compositingStrategy = CompositingStrategy.Offscreen
                 },
         ) {
@@ -854,7 +861,7 @@ fun SharedCoverLayer(
                 uri = song.coverUri,
                 key = song.id,
                 size = maxOf(targetWidthDp, targetHeightDp),
-                radius = targetCornerRadiusDp,
+                radius = if (startCircular) 0.dp else targetCornerRadiusDp,
             )
         }
     }

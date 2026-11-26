@@ -3,6 +3,8 @@
 package io.max.paperplay.ui.app
 
 import io.max.paperplay.ui.components.AppIcon
+import io.max.paperplay.ui.components.ModernSurfaceTier
+import io.max.paperplay.ui.components.modernSurface
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -171,14 +173,20 @@ private fun SettingsList(prefs: UiPrefs, stack: MutableList<String>) {
         PillField(query, { query = it }, "Search settings")
         Spacer(Modifier.height(12.dp))
         if (q.isEmpty()) {
-            Row(
+            val tokens = io.max.paperplay.ui.theme.LocalModernTokens.current
+            val profileCardMod = if (tokens.enabled) {
+                Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                    .modernSurface(ModernSurfaceTier.Card, appShape(28.dp), LookGroup.Cards)
+            } else {
                 Modifier.fillMaxWidth().padding(bottom = 12.dp).partSurface(LookGroup.Cards, MaterialTheme.colorScheme.surfaceContainerLow, appShape(28.dp))
-                    .clickableRow { stack.add("profile") }.padding(horizontal = 20.dp, vertical = 16.dp),
+            }
+            Row(
+                profileCardMod.clickableRow { stack.add("profile") }.padding(horizontal = 20.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Avatar(prefs.profilePhoto, prefs.profileName, 60.dp)
-                Text(prefs.profileName, Modifier.weight(1f).padding(start = 16.dp), style = MaterialTheme.typography.titleLarge)
-                AppIcon(Icons.Rounded.ChevronRight, null)
+                Text(prefs.profileName, Modifier.weight(1f).padding(start = 16.dp), style = MaterialTheme.typography.titleLarge, color = if (tokens.enabled) tokens.onGlass else androidx.compose.ui.graphics.Color.Unspecified)
+                AppIcon(Icons.Rounded.ChevronRight, null, tint = if (tokens.enabled) tokens.onGlassMuted else MaterialTheme.colorScheme.onSurface)
             }
         }
         val tour = io.max.paperplay.ui.LocalAppEnv.current?.showTour
@@ -231,6 +239,7 @@ internal fun SettingsPage(
     fun pref(k: String) = backend.pref(k)
     when (id) {
         "style" -> {
+            if (isPhone) UiStyleSettings(prefs)
             SectionLabel("Theme")
             ChoiceRow(ThemeMode.entries, prefs.themeMode, { it.label }, prefs::putThemeMode)
             SectionLabel("Icons")
