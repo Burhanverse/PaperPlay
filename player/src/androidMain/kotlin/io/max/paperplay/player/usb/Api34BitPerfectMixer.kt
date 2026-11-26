@@ -11,11 +11,16 @@ import android.os.Build
 import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
+import io.max.paperplay.player.AudioTap
 import io.max.paperplay.player.PlayLog
 import io.max.paperplay.player.PlaybackCore
+import java.nio.ByteBuffer
 import kotlin.math.abs
 
 /**
@@ -125,12 +130,65 @@ internal object Api34BitPerfectMixer {
             }
         }
 
-        return DefaultAudioSink.Builder(appCtx)
+        val tapProcessor = io.max.paperplay.player.TapProcessor(enableDirectPcmEq = true)
+        val sink = DefaultAudioSink.Builder(appCtx)
             .setEnableFloatOutput(false)
             .setEnableAudioTrackPlaybackParams(enableAudioOutputPlaybackParams)
-            .setAudioProcessors(arrayOf(io.max.paperplay.player.TapProcessor(enableDirectPcmEq = true)))
+            .setAudioProcessors(arrayOf(tapProcessor))
             .setAudioTrackProvider(provider)
             .build()
+        return Api34TapClockSink(sink, tapProcessor)
+    }
+
+    private class Api34TapClockSink(
+        sink: AudioSink,
+        private val tapProcessor: io.max.paperplay.player.TapProcessor,
+    ) : ForwardingAudioSink(sink) {
+        private var speed = 1f
+
+        override fun configure(config: AudioSink.AudioSinkConfig) {
+            PlaybackCore.engineSinkHandlesTap = false
+            super.configure(config)
+        }
+
+        override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
+            tapProcessor.pendingPtsUs = presentationTimeUs
+            return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        }
+
+        override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
+            val pos = super.getCurrentPositionUs(sourceEnded)
+            if (pos != AudioSink.CURRENT_POSITION_NOT_SET) {
+                AudioTap.updatePlaybackClock(pos, speed)
+            }
+            return pos
+        }
+
+        override fun setPlaybackParameters(playbackParameters: PlaybackParameters) {
+            speed = playbackParameters.speed
+            AudioTap.setSpeed(speed)
+            super.setPlaybackParameters(playbackParameters)
+        }
+
+        override fun pause() {
+            AudioTap.onPause()
+            super.pause()
+        }
+
+        override fun flush() {
+            AudioTap.reset()
+            super.flush()
+        }
+
+        override fun reset() {
+            AudioTap.reset()
+            super.reset()
+        }
+
+        override fun release() {
+            AudioTap.reset()
+            super.release()
+        }
     }
 
     fun hasOnlyPermittedDirectEq(): Boolean {

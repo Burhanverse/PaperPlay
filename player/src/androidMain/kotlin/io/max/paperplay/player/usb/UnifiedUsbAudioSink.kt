@@ -188,6 +188,8 @@ class UnifiedUsbAudioSink internal constructor(
     private val statsScratch = LongArray(17)
     private val usbPcmEq = io.max.paperplay.player.NativePcmEqStage()
     private var pendingEqBuf: ByteBuffer? = null
+    private var lastTapPtsUs: Long = C.TIME_UNSET
+    private var lastTapPtsConsumedBytes: Int = 0
 
     fun readExtendedStats(outStats: LongArray): Boolean =
         isUsbModeActive && coarseController.readStats(outStats)
@@ -657,6 +659,9 @@ class UnifiedUsbAudioSink internal constructor(
         anchorPositionUs = 0L
         hasAnchorPosition = false
         pendingEqBuf = null
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         if (normalSinkConfigured) super.handleDiscontinuity()
     }
 
@@ -756,10 +761,42 @@ class UnifiedUsbAudioSink internal constructor(
             C.ENCODING_PCM_24BIT -> 24
             else -> 32
         }
+        val posBefore = feedBuf.position()
         val beforeRem = feedBuf.remaining()
         val ok = coarseController.writePcm(feedBuf, srcBits, isFloat)
         val afterRem = feedBuf.remaining()
         val consumed = (beforeRem - afterRem).coerceAtLeast(0)
+        if (isDoP) {
+            io.max.paperplay.player.AudioTap.markNonPcmStream()
+        } else if (consumed > 0 && io.max.paperplay.player.AudioTap.wanted) {
+            val pcmKind = when (activeFmt.pcmEncoding) {
+                C.ENCODING_PCM_16BIT -> io.max.paperplay.player.PcmTapReader.PCM_16
+                C.ENCODING_PCM_24BIT -> io.max.paperplay.player.PcmTapReader.PCM_24
+                C.ENCODING_PCM_32BIT -> io.max.paperplay.player.PcmTapReader.PCM_32
+                C.ENCODING_PCM_FLOAT -> io.max.paperplay.player.PcmTapReader.PCM_FLOAT
+                else -> -1
+            }
+            if (pcmKind >= 0 && activeFmt.sampleRate > 0 && activeFmt.channelCount > 0) {
+                val step = when (pcmKind) {
+                    io.max.paperplay.player.PcmTapReader.PCM_16 -> 2
+                    io.max.paperplay.player.PcmTapReader.PCM_24 -> 3
+                    else -> 4
+                }
+                val pts = if (presentationTimeUs != C.TIME_UNSET && presentationTimeUs >= 0L) {
+                    if (presentationTimeUs != lastTapPtsUs) {
+                        lastTapPtsUs = presentationTimeUs
+                        lastTapPtsConsumedBytes = 0
+                    }
+                    val frameBytes = step * activeFmt.channelCount
+                    val baseFrames = if (frameBytes > 0) lastTapPtsConsumedBytes / frameBytes else 0
+                    lastTapPtsConsumedBytes += consumed
+                    presentationTimeUs + (baseFrames.toLong() * 1_000_000L) / activeFmt.sampleRate
+                } else -1L
+                io.max.paperplay.player.PcmTapReader.feedPcmSlice(
+                    feedBuf, posBefore, consumed, activeFmt.sampleRate, activeFmt.channelCount, pcmKind, pts, "android-usb-unified",
+                )
+            }
+        }
         if (eqBuf != null && consumed > 0) {
             buffer.position((buffer.position() + consumed).coerceAtMost(buffer.limit()))
         }
@@ -795,7 +832,9 @@ class UnifiedUsbAudioSink internal constructor(
         if (coarseController.handle == 0L || rate <= 0) return AudioSink.CURRENT_POSITION_NOT_SET
         if (!coarseController.readStats(statsScratch)) return AudioSink.CURRENT_POSITION_NOT_SET
         val playedFrames = (statsScratch[0] - baseFramesConsumed).coerceAtLeast(0L)
-        return anchorPositionUs + (playedFrames * 1_000_000L) / rate
+        val posUs = anchorPositionUs + (playedFrames * 1_000_000L) / rate
+        io.max.paperplay.player.AudioTap.updatePlaybackClock(posUs, 1f)
+        return posUs
     }
 
     override fun play() {
@@ -834,6 +873,7 @@ class UnifiedUsbAudioSink internal constructor(
 
     override fun pause() {
         sinkPlaying = false
+        io.max.paperplay.player.AudioTap.onPause()
         if (!isUsbModeActive) {
             if (normalSinkConfigured) {
                 runCatching { super.pause() }
@@ -852,6 +892,9 @@ class UnifiedUsbAudioSink internal constructor(
     override fun flush() {
         hasAnchorPosition = false
         pendingEqBuf = null
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         if (!isUsbModeActive) {
             if (normalSinkConfigured) runCatching { super.flush() }
             return
@@ -870,6 +913,9 @@ class UnifiedUsbAudioSink internal constructor(
         hasAnchorPosition = false
         baseFramesConsumed = 0L
         pendingEqBuf = null
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         if (!isUsbModeActive) {
             if (normalSinkConfigured) runCatching { super.reset() }
             normalSinkConfigured = false
@@ -913,6 +959,9 @@ class UnifiedUsbAudioSink internal constructor(
         normalSinkConfigured = false
         isUsbModeActive = false
         pendingEqBuf = null
+        lastTapPtsUs = C.TIME_UNSET
+        lastTapPtsConsumedBytes = 0
+        io.max.paperplay.player.AudioTap.reset()
         usbPcmEq.release()
         val oldHandle = coarseController.handle
         closeCoarseAndNotify()

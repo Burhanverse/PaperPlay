@@ -105,6 +105,12 @@ class AddressBook(
         val now = clock()
         val key = "$host:$port"
         val old = state.value.firstOrNull { it.key == key }
+        if (result == AddressState.Seen && old != null && old.deviceId == deviceId &&
+            (name == null || old.name == name) && old.lastResult == result &&
+            now - old.lastSeen < 10L * 60_000L
+        ) {
+            return
+        }
         val entry = (old ?: KnownAddress(host, port, addedAt = now)).copy(
             deviceId = deviceId, name = name ?: old?.name, lastSeen = now, lastResult = result,
         )

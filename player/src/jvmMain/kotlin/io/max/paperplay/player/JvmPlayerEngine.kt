@@ -60,27 +60,35 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     private val player = factory.mediaPlayers().newMediaPlayer()
     private val http = lazy { StreamHttpServer() }
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-cmd").apply { isDaemon = true } }
+    @Volatile private var closed = false
     private var queue = emptyList<QueueItem>()
+    private val tapFeeder = DesktopAudioTapFeeder("desktop-vlc")
 
     init {
         player.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
             // libvlc has no audio output until playback starts, so a volume set earlier is applied now.
             override fun playing(mp: MediaPlayer) {
                 _state.value = PlayerState.Playing
-                mp.audio().setVolume((volume * 100).toInt()); if (rate != 1f) mp.controls().setRate(rate)
-                val resume = resumeAtMs
-                if (resume > 0) { resumeAtMs = 0; mp.controls().setTime(resume) }
-                // The equalizer needs an audio output too, so it is applied again for each new track.
-                applyEqualizer(mp)
-                publishInfo(mp)
-                val i = _info.value
-                PlayLog.log("vlc", "playing after ${System.currentTimeMillis() - startedAt}ms codec=${i?.codec} rate=${i?.sampleRateHz}Hz ch=${i?.channels} bitrate=${i?.bitrateKbps}kbps device=${i?.device}")
+                cmd {
+                    mp.audio().setVolume((volume * 100).toInt()); if (rate != 1f) mp.controls().setRate(rate)
+                    val resume = resumeAtMs
+                    if (resume > 0) { resumeAtMs = 0; mp.controls().setTime(resume) }
+                    // The equalizer needs an audio output too, so it is applied again for each new track.
+                    applyEqualizer(mp)
+                    publishInfo(mp)
+                    val delayMs = runCatching { mp.audio().delay() / 1000L }.getOrDefault(0L)
+                    tapFeeder.onPlaying(true, _positionMs.value, rate, delayMs)
+                    val i = _info.value
+                    PlayLog.log("vlc", "playing after ${System.currentTimeMillis() - startedAt}ms codec=${i?.codec} rate=${i?.sampleRateHz}Hz ch=${i?.channels} bitrate=${i?.bitrateKbps}kbps device=${i?.device}")
+                }
             }
-            override fun paused(mp: MediaPlayer) { _state.value = PlayerState.Paused }
-            override fun error(mp: MediaPlayer) { _state.value = PlayerState.Error }
+            override fun paused(mp: MediaPlayer) { _state.value = PlayerState.Paused; tapFeeder.onPause() }
+            override fun error(mp: MediaPlayer) { _state.value = PlayerState.Error; tapFeeder.onStop() }
             override fun lengthChanged(mp: MediaPlayer, newLength: Long) { _durationMs.value = newLength }
             override fun timeChanged(mp: MediaPlayer, newTime: Long) {
                 _positionMs.value = newTime
+                val delayMs = runCatching { mp.audio().delay() / 1000L }.getOrDefault(0L)
+                tapFeeder.onPosition(newTime, rate, delayMs)
                 if (!firstTick && startedAt > 0) { firstTick = true; PlayLog.log("vlc", "first position tick ${System.currentTimeMillis() - startedAt}ms after start, at ${newTime}ms") }
             }
             override fun finished(mp: MediaPlayer) = cmd {
@@ -94,12 +102,18 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
                     return@cmd
                 }
                 if (_currentIndex.value + 1 < queue.size) start(_currentIndex.value + 1)
-                else _state.value = PlayerState.Ended
+                else { _state.value = PlayerState.Ended; tapFeeder.onStop() }
             }
         })
     }
 
-    private fun cmd(block: () -> Unit) { io.execute(block) }
+    private fun cmd(block: () -> Unit) {
+        if (closed || io.isShutdown) return
+        try {
+            io.execute(block)
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+        }
+    }
 
     private fun start(index: Int, retry: Boolean = false, startPositionMs: Long = 0L) {
         val item = queue[index]
@@ -110,6 +124,7 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
         _state.value = PlayerState.Loading
         if (!retry) { _positionMs.value = safePos; _durationMs.value = 0 }
         val mrl = item.source?.let { http.value.register(item.uri, it) } ?: item.uri
+        tapFeeder.onTrack(mrl)
         // The stream is a loopback server fed from disk, so libvlc's default one second of network buffering only delays the first sound.
         val fast = arrayOf(":network-caching=150", ":file-caching=150")
         if (normalize) player.media().play(mrl, *fast, ":audio-filter=normvol", ":norm-max-level=1.0") else player.media().play(mrl, *fast)
@@ -130,6 +145,7 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
                 _currentIndex.value = -1
                 _positionMs.value = 0L
                 _state.value = PlayerState.Idle
+                tapFeeder.onStop()
             } else start(startIndex.coerceIn(items.indices), startPositionMs = safePos)
         }
     }
@@ -138,22 +154,23 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
         if (_state.value == PlayerState.Ended) start(_currentIndex.value) else player.controls().play()
     }
 
-    override fun pause() = cmd { player.controls().setPause(true) }
+    override fun pause() = cmd { tapFeeder.onPause(); player.controls().setPause(true) }
 
     override fun next() = cmd { if (_currentIndex.value + 1 < queue.size) start(_currentIndex.value + 1) }
 
     override fun previous() = cmd {
         val i = _currentIndex.value
-        if (i > 0 && _positionMs.value <= RESTART_THRESHOLD_MS) start(i - 1) else if (i >= 0) player.controls().setTime(0)
+        if (i > 0 && _positionMs.value <= RESTART_THRESHOLD_MS) start(i - 1) else if (i >= 0) { player.controls().setTime(0); tapFeeder.onSeek(0) }
     }
 
-    override fun seek(positionMs: Long) = cmd { seekTarget = positionMs; seekAt = System.currentTimeMillis(); player.controls().setTime(positionMs) }
+    override fun seek(positionMs: Long) = cmd { seekTarget = positionMs; seekAt = System.currentTimeMillis(); player.controls().setTime(positionMs); tapFeeder.onSeek(positionMs) }
     @Volatile private var volume = 1f
     @Volatile private var rate = 1f
     @Volatile private var normalize = false
 
     override fun setSpeed(speed: Float) {
         rate = speed.coerceIn(0.5f, 2f)
+        tapFeeder.onSpeed(rate)
         cmd { player.controls().setRate(rate); publishInfo(player) }
     }
 
@@ -216,6 +233,8 @@ class JvmPlayerEngine(vararg vlcArgs: String) : PlayerEngine {
     }
 
     override fun release() {
+        closed = true
+        tapFeeder.release()
         io.shutdown()
         io.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
         player.release()

@@ -35,7 +35,7 @@ val vlcKeep = mapOf(
         "normvol", // Normalise
     ),
     "audio_mixer" to setOf("float_mixer", "integer_mixer"),
-    "audio_output" to setOf("mmdevice", "wasapi", "directsound", "waveout", "adummy"),
+    "audio_output" to setOf("mmdevice", "wasapi", "directsound", "waveout", "adummy", "amem"),
     "codec" to setOf("avcodec", "vorbis", "opus", "faad", "mpg123", "flac", "lpcm", "adpcm", "g711", "araw", "mft"),
     "demux" to setOf("aiff", "asf", "au", "caf", "es", "flacsys", "mkv", "mp4", "mpc", "ogg", "playlist", "rawaud", "tta", "wav"),
     "misc" to setOf("logger", "xml"),

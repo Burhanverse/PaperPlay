@@ -62,8 +62,8 @@ fun backgroundTopColor(prefs: UiPrefs, coverTint: Color, base: Color): Color = w
 @Composable
 private fun CoverWash(coverUri: String?, base: Color, dark: Boolean) {
     val tint = coverScheme(coverUri, dark)?.primaryContainer ?: MaterialTheme.colorScheme.primaryContainer
-    val g0 = animateColorAsState(tint.copy(alpha = 0.85f).compositeOver(base), tween(700))
-    val g1 = animateColorAsState(tint.copy(alpha = 0.32f).compositeOver(base), tween(700))
+    val g0 = animateColorAsState(tint.copy(alpha = 0.85f).compositeOver(base), io.max.paperplay.ui.theme.motionWashSpec())
+    val g1 = animateColorAsState(tint.copy(alpha = 0.32f).compositeOver(base), io.max.paperplay.ui.theme.motionWashSpec())
     // The animated colours are read while drawing, so the 700 ms wash does not recompose.
     Box(Modifier.fillMaxSize().drawBehind { drawRect(Brush.verticalGradient(0f to g0.value, 0.45f to g1.value, 1f to base)) })
 }
@@ -72,7 +72,7 @@ private fun CoverWash(coverUri: String?, base: Color, dark: Boolean) {
 private fun CoverBlurLayer(coverUri: String?, base: Color) {
     val loader = LocalCoverLoader.current
     // A tiny bitmap stretched to the screen is already soft; the GPU blur filter drew wrong colours on some desktop drivers, so there is none.
-    Crossfade(coverUri, Modifier.fillMaxSize(), animationSpec = tween(700), label = "coverBlur") { uri ->
+    Crossfade(coverUri, Modifier.fillMaxSize(), animationSpec = io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Effects.WashMs), label = "coverBlur") { uri ->
         val painter = if (uri != null) loader?.painter(uri, 24) else null
         if (painter != null) {
             Image(
@@ -87,7 +87,7 @@ private fun CoverBlurLayer(coverUri: String?, base: Color) {
 @Composable
 private fun GradientLayer(prefs: UiPrefs, coverUri: String?, base: Color, dark: Boolean) {
     val fromCover = if (prefs.bgGradCover) coverScheme(coverUri, dark)?.primaryContainer else null
-    val c1 = animateColorAsState(fromCover ?: Color(prefs.bgGradC1), tween(700))
+    val c1 = animateColorAsState(fromCover ?: Color(prefs.bgGradC1), io.max.paperplay.ui.theme.motionWashSpec())
     val c2 = Color(prefs.bgGradC2)
     val c3 = prefs.bgGradC3.takeIf { it != 0 }?.let { Color(it) }
     val angle = prefs.bgGradAngle

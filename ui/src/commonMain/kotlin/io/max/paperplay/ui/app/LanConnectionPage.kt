@@ -532,7 +532,12 @@ private fun DeviceGroup(
             }
             AppIcon(if (open) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown, if (open) "Hide addresses" else "Show addresses")
         }
-        androidx.compose.animation.AnimatedVisibility(open) {
+        val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+        androidx.compose.animation.AnimatedVisibility(
+            visible = open,
+            enter = expandSectionEnter(reduce),
+            exit = expandSectionExit(reduce),
+        ) {
             Column {
                 for (k in addresses) {
                     Row(Modifier.padding(start = 56.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {

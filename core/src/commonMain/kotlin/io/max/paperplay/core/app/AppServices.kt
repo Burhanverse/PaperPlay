@@ -55,9 +55,11 @@ class AppServices(
     val db = LibraryDatabase(driver)
     val library = LibraryRepository(LibraryRepo(db, clock), clock, scope)
     val eqRepo = io.max.paperplay.core.eq.EqRepository(db, clock)
-    val autoEqCatalog: io.max.paperplay.core.eq.AutoEqCatalog by lazy {
+    private val autoEqCatalogLazy = lazy {
         io.max.paperplay.core.eq.openAutoEqCatalog(platform.dataDir)
     }
+    val autoEqCatalog: io.max.paperplay.core.eq.AutoEqCatalog
+        get() = autoEqCatalogLazy.value
     val scanner = Scanner(library, scope)
 
     /** Looks for newer releases on GitHub; the person's update choices are kept as settings of this device. */
@@ -366,7 +368,7 @@ class AppServices(
     }
 
     /** The main bot plus extra bots that share uploads. Each extra bot has its own TDLib session. */
-    val botPool: io.max.paperplay.core.telegram.BotPool by lazy {
+    private val botPoolLazy = lazy {
         io.max.paperplay.core.telegram.BotPool(
             scope, platform.secrets, io.max.paperplay.core.dupes.defaultHttpPoster(),
             { platform.secrets.get(Keys.BOT_TOKEN) }, { client },
@@ -389,14 +391,16 @@ class AppServices(
             },
         )
     }
+    val botPool: io.max.paperplay.core.telegram.BotPool get() = botPoolLazy.value
 
     /** The owner's own account (login, chats, copying). The real one replaces the stand-in. */
-    val account: io.max.paperplay.core.account.AccountApi by lazy {
+    private val accountLazy = lazy<io.max.paperplay.core.account.AccountApi> {
         io.max.paperplay.core.account.UserSession(
             scope, { tdRuntime() },
             platform.dataDir, platform.secrets, platform.settings, library::pref, library::setPref, platform.deviceModel, platform.appVersion,
         )
     }
+    val account: io.max.paperplay.core.account.AccountApi get() = accountLazy.value
 
     /** Plays indexed songs without adding them to the library; what was not kept is cleared after a while. */
     val indexPreview: IndexPreview by lazy {
@@ -635,13 +639,14 @@ class AppServices(
     }
 
     /** Network play: listening sessions with other people on the same network. Nothing listens until a session starts. */
-    val netplay: io.max.paperplay.core.sync.netplay.Netplay by lazy {
+    private val netplayLazy = lazy {
         io.max.paperplay.core.sync.netplay.createNetplay(
             io.max.paperplay.core.sync.netplay.NetplayEnv(
                 PlaybackNetplayPlayer({ playback }, library, resolver), scope, { lanSync?.deviceName?.value ?: platform.deviceModel },
             ),
         )
     }
+    val netplay: io.max.paperplay.core.sync.netplay.Netplay get() = netplayLazy.value
 
     /** True once the player has been created. */
     val playbackStarted: Boolean get() = playbackLazy.isInitialized()
@@ -668,7 +673,7 @@ class AppServices(
 
     private val connecting = java.util.concurrent.atomic.AtomicBoolean(false)
     private var connectedBefore = false
-    private var connectJob: Job? = null
+    @Volatile private var connectJob: Job? = null
     private val cachePending = HashMap<String, Pair<Long, Boolean>>()
 
     /** Bytes each song's file grew by since the last report, for the log: what downloads, and why, when nothing seems to play. */
@@ -781,8 +786,25 @@ class AppServices(
             connectedBefore = true
             startOnce()
         }
+        connectJob?.cancel()
         connectJob = scope.launch {
+            // Songs whose names were split badly ("Song - Lofi - Artist", "Song - Artist" read the other way round) get their title and artist
+            // right, and are looked up again. Runs now and after every scan, because new uploads arrive split by the file name alone.
+            launch(kotlinx.coroutines.Dispatchers.IO) {
+                scanner.progress.collect { if (it == null) repairNames() }
+            }
+            launch(kotlinx.coroutines.Dispatchers.IO) {
+                if (library.pref("forum_topics_id_fix_v1") != "done") {
+                    val topics = library.repo.db.miscQueries.topics().executeAsList()
+                    val songs = library.repo.db.songsQueries.allSongs().executeAsList()
+                    val fixed = repairShiftedForumTopics(topics, songs)
+                    for ((chatId, list) in fixed) library.replaceTopics(chatId, list)
+                    library.setPref("forum_topics_id_fix_v1", "done")
+                    if (fixed.isNotEmpty()) activityLog("Library", "Fixed shifted forum topic ids in ${fixed.size} chat(s)")
+                }
+            }
             var mine: TdClient? = null
+            var createdClient: TdClient? = null
             var ready = false
             try {
                 val key = platform.secrets.get(Keys.TD_KEY) ?: (newUuid() + newUuid()).also { platform.secrets.put(Keys.TD_KEY, it) }
@@ -795,6 +817,7 @@ class AppServices(
                         useMessageDatabase = false,
                     ),
                 )
+                createdClient = c
                 client = c
                 mine = c
                 scanner.onPostsGone = ::postsGone
@@ -877,16 +900,27 @@ class AppServices(
                     }
                 }
             } catch (e: CancellationException) {
+                if (createdClient != null && client === createdClient) {
+                    client = null
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { runCatching { createdClient.shutdown() } }
+                }
                 throw e
             } catch (e: TdError) {
                 if (!ready) {
                     // A refused login gives the client up, so corrected details get a new one; the reason stays on screen.
                     kotlin.coroutines.coroutineContext.cancelChildren()
-                    mine?.let { c -> if (client === c) client = null; runCatching { c.shutdown() } }
+                    mine?.let { c ->
+                        if (client === c) client = null
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { runCatching { c.shutdown() } }
+                    }
                     _auth.value = ""
                 }
                 _error.value = e.message
             } catch (e: Throwable) {
+                if (createdClient != null && client === createdClient) {
+                    client = null
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { runCatching { createdClient.shutdown() } }
+                }
                 _error.value = e.message ?: e::class.simpleName
             } finally {
                 if (!ready) connecting.set(false)
@@ -900,6 +934,7 @@ class AppServices(
      */
     fun close() {
         scope.cancel()
+        if (autoEqCatalogLazy.isInitialized()) runCatching { autoEqCatalogLazy.value.close() }
         library.close()
         runCatching { driver.close() }
     }
@@ -916,25 +951,29 @@ class AppServices(
     suspend fun shutdown() {
         isShutDown = true
         try {
-            lanSync?.let { lan ->
-                val on = library.pref("lan_on") // stop() records "off"; the restore keeps this device's own choice
-                lan.stop()
-                if (on != null) library.setPref("lan_on", on)
+            runCatching {
+                lanSync?.let { lan ->
+                    val on = library.pref("lan_on") // stop() records "off"; the restore keeps this device's own choice
+                    lan.stop()
+                    if (on != null) library.setPref("lan_on", on)
+                }
             }
-            netplay.endSession()
-            netplay.leave()
-            netplay.stopDiscovery()
-            if (playbackStarted) kotlinx.coroutines.withTimeoutOrNull(4.seconds) { playback.release() }
-            disconnect()
-            botPool.stopAll()
-            (account as? io.max.paperplay.core.account.UserSession)?.closeForBackup()
-            runtime?.stop()
+            if (netplayLazy.isInitialized()) {
+                runCatching { netplayLazy.value.endSession() }
+                runCatching { netplayLazy.value.leave() }
+                runCatching { netplayLazy.value.stopDiscovery() }
+            }
+            if (playbackStarted) runCatching { kotlinx.coroutines.withTimeoutOrNull(4.seconds) { playback.release() } }
+            runCatching { disconnect() }
+            if (botPoolLazy.isInitialized()) runCatching { botPoolLazy.value.stopAll() }
+            if (accountLazy.isInitialized()) runCatching { (accountLazy.value as? io.max.paperplay.core.account.UserSession)?.closeForBackup() }
         } finally {
             // Work in the middle of a database call ends before the database is closed under it. A caller that is itself part of this scope
             // would wait for itself, so it is not waited for longer than this.
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 scope.cancel()
                 kotlinx.coroutines.withTimeoutOrNull(3.seconds) { scope.coroutineContext[Job]?.join() }
+                runCatching { runtime?.stop() }
             }
             close()
         }
@@ -1080,41 +1119,47 @@ class AppServices(
         val downloaded = local.long("downloaded_size") ?: return
         val completed = (local["is_downloading_completed"] as? JsonPrimitive)?.booleanOrNull == true
         countDownload(uid, downloaded)
-        synchronized(cachePending) { cachePending[uid] = downloaded to completed }
         if (completed) {
             local.str("path")?.takeIf { it.isNotEmpty() }?.let { path ->
                 scope.launch(kotlinx.coroutines.Dispatchers.IO) { embeddedTags.apply(uid, path) }
                 audioFeatures.onDownloaded(uid, path)
             }
         }
-        if (cacheFlushJob?.isActive != true) {
-            cacheFlushJob = scope.launch {
-                delay(3.seconds)
-                flushCache(c)
+        synchronized(cachePending) {
+            cachePending[uid] = downloaded to completed
+            if (cacheFlushJob?.isActive != true) {
+                cacheFlushJob = scope.launch {
+                    delay(3.seconds)
+                    flushCache(c)
+                }
             }
         }
     }
 
     private suspend fun flushCache(c: TdClient) {
-        val batch = synchronized(cachePending) { HashMap(cachePending).also { cachePending.clear() } }
-        if (batch.isEmpty()) return
-        for ((k, entry) in batch) {
-            runCatching { library.setCachedBytes(k, entry.first, notify = entry.second) }
-        }
-        // Looking for songs to evict reads the whole cache, so it runs at most once a minute.
-        val now = clockMs()
-        if (now - lastEvict < 60_000L) return
-        lastEvict = now
-        val limit = storeShare()
-        val rows = library.cachedSongs().filter { !it.pinned }.sortedBy { it.last_played_at ?: 0L }
-        var total = rows.sumOf { it.cached_bytes }
-        val protected = resolver.activeIds() + batch.keys
-        for (s in rows) {
-            if (total <= limit) break
-            if (s.unique_id in protected) continue
-            if (deleteSongFile(c, s)) {
-                library.setCachedBytes(s.unique_id, 0L, notify = true)
-                total -= s.cached_bytes
+        while (true) {
+            val batch = synchronized(cachePending) {
+                if (cachePending.isEmpty()) return
+                HashMap(cachePending).also { cachePending.clear() }
+            }
+            for ((k, entry) in batch) {
+                runCatching { library.setCachedBytes(k, entry.first, notify = entry.second) }
+            }
+            // Looking for songs to evict reads the whole cache, so it runs at most once a minute.
+            val now = clockMs()
+            if (now - lastEvict < 60_000L) continue
+            lastEvict = now
+            val limit = storeShare()
+            val rows = library.cachedSongs().filter { !it.pinned }.sortedBy { it.last_played_at ?: 0L }
+            var total = rows.sumOf { it.cached_bytes }
+            val protected = resolver.activeIds() + batch.keys
+            for (s in rows) {
+                if (total <= limit) break
+                if (s.unique_id in protected) continue
+                if (deleteSongFile(c, s)) {
+                    library.setCachedBytes(s.unique_id, 0L, notify = true)
+                    total -= s.cached_bytes
+                }
             }
         }
     }
@@ -1166,6 +1211,7 @@ class AppServices(
     suspend fun disconnect() {
         // Its loops and collectors belong to this login; the next one starts its own.
         connectJob?.cancel()
+        connectJob = null
         val c = client ?: return
         client = null
         resolver.retain(emptyList())

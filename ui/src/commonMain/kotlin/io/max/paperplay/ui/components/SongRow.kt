@@ -7,7 +7,6 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.draw.clip
@@ -39,7 +38,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -66,7 +67,7 @@ fun SongRow(
     val menuOpen = remember { mutableStateOf(false) }
     // The row's colour eases between states, and a mouse pointer over it lightens it a little (a touch screen never hovers).
     val hover = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    val hovered by hover.collectIsHoveredAsState()
+    val hovered = if (io.max.paperplay.ui.isPhone) false else hover.collectIsHoveredAsState().value
     val rowColor = when {
         selected -> scheme.primaryContainer
         current -> scheme.secondaryContainer.copy(alpha = 0.7f)
@@ -74,14 +75,13 @@ fun SongRow(
     }
     val containerColor by androidx.compose.animation.animateColorAsState(
         if (hovered) androidx.compose.ui.graphics.lerp(rowColor, scheme.onSurface, 0.06f) else rowColor,
-        io.max.paperplay.ui.theme.motionTween(io.max.paperplay.ui.theme.Motion.FAST), label = "row",
+        io.max.paperplay.ui.theme.motionColorSpec(), label = "row",
     )
     val effectiveCoverUri = coverUriOverride ?: song.coverUri
     val coverKey = song.album.ifBlank { song.title.ifBlank { song.id } }
 
-    BoxWithConstraints(modifier.fillMaxWidth()) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = io.max.paperplay.ui.app.appShape(16.dp),
         color = containerColor,
         tonalElevation = if (current) 3.dp else 1.dp,
@@ -90,6 +90,7 @@ fun SongRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
+                .then(if (!io.max.paperplay.ui.isPhone) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
                 .hoverable(hover)
                 // A right click (mouse) opens the same menu as the three dots.
                 .pointerInput(actions != null && !io.max.paperplay.ui.isPhone) {
@@ -195,8 +196,9 @@ fun SongRow(
             if (actions != null) SongMenu(song, actions, openState = menuOpen) else Box(Modifier.size(8.dp))
         }
     }
-    }
 }
+
+private val HI_RES_REGEX = Regex("""(\d+)/([\d.]+)""")
 
 /** Lossless with more than 16 bits or a rate above 48 kHz, read from labels like "FLAC 24/96". */
 /** The one chip a song earns for its format: "Hi-Res", or the first word of its quality label such as FLAC or MP3. */
@@ -205,7 +207,7 @@ internal fun formatChipOf(song: SongUi): String? =
 
 private fun isHiRes(song: SongUi): Boolean {
     if (!song.lossless) return false
-    val m = Regex("""(\d+)/([\d.]+)""").find(song.qualityLabel.orEmpty()) ?: return false
+    val m = HI_RES_REGEX.find(song.qualityLabel.orEmpty()) ?: return false
     return m.groupValues[1].toInt() > 16 || (m.groupValues[2].toDoubleOrNull() ?: 0.0) > 48
 }
 

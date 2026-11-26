@@ -70,7 +70,7 @@ import kotlinx.coroutines.delay
 import org.jetbrains.compose.ui.tooling.preview.Preview
 
 /**
- * Android standby: a near-black screen with a clock, the song and a slow procedural animation.
+ * Android standby: a near-black screen with a clock, the song and a live audio visualizer.
  * Tap or swipe down to leave. Callers show it on phones only.
  */
 @Composable
@@ -91,6 +91,13 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
     val showClock = p.shows(StandbyWidget.Clock)
     // Once a second also when only the drift needs it, so the shift below is smooth.
     LaunchedEffect(showClock, p.pixelShift) { while (true) { clock = clockNow(); delay(if (showClock || p.pixelShift) 1000L else 20_000L) } }
+    LaunchedEffect(p.syncOffsetMs) {
+        io.max.paperplay.player.AudioTap.calibrationOffsetMs = p.syncOffsetMs.toLong()
+    }
+    androidx.compose.runtime.DisposableEffect(p.showDiagnostics) {
+        io.max.paperplay.player.AudioTap.telemetryEnabled = p.showDiagnostics
+        onDispose { io.max.paperplay.player.AudioTap.telemetryEnabled = false }
+    }
     var sheet by remember { mutableStateOf(false) }
     // The first tap only shows the settings button; a second tap within a few seconds leaves standby.
     var armed by remember { mutableStateOf(false) }
@@ -174,7 +181,7 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                 )
             } else if (sideLines.isNotEmpty()) Box(m, contentAlignment = Alignment.Center) {
                 StandbyLyricScroll(sideLines, backend, tone, if (wide) 7 else 5, true, Modifier.fillMaxWidth())
-            } else StandbyVisual(p.style, tone, state.playing, state.volume, song?.id.orEmpty(), m)
+            } else StandbyVisual(p.style, tone, state.playing, backend.volume.collectAsState().value, song?.id.orEmpty(), m)
         }
         Box(Modifier.fillMaxSize().offset(shiftX, shiftY)) {
             if (wide) Row(Modifier.fillMaxSize().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -190,7 +197,10 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
         // Raised by a tap on the rotation button, which shows both again with what the button is set to.
         var shown by remember { mutableStateOf(0) }
         LaunchedEffect(shown) { hint = true; delay(3000); hint = false }
-        val hintAlpha by androidx.compose.animation.core.animateFloatAsState(if (armed) 0.7f else if (hint) 0.35f else 0f, androidx.compose.animation.core.tween(1500))
+        val hintAlpha by androidx.compose.animation.core.animateFloatAsState(
+            if (armed) 0.7f else if (hint) 0.35f else 0f,
+            io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Ambient.StandbyHintMs),
+        )
         Column(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalAlignment = Alignment.End) {
             androidx.compose.foundation.layout.Row {
                 IconButton({ p.putLandscape(!p.landscape); shown++ }) {
@@ -206,8 +216,37 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                 color = tone.copy(alpha = hintAlpha), style = MaterialTheme.typography.bodySmall,
             )
         }
+        if (p.showDiagnostics) {
+            StandbyDiagOverlay(
+                syncOffsetMs = p.syncOffsetMs,
+                tone = tone,
+                modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
+            )
+        }
         if (sheet) StandbyCustomiseSheet(p) { sheet = false }
     }
+}
+
+@Composable
+private fun StandbyDiagOverlay(syncOffsetMs: Int, tone: Color, modifier: Modifier = Modifier) {
+    var text by remember { mutableStateOf("") }
+    LaunchedEffect(syncOffsetMs) {
+        while (true) {
+            val tap = io.max.paperplay.player.AudioTap
+            val src = tap.activeSourceTag.ifBlank { "none" }
+            text = "src=$src rate=${tap.effectiveSampleRateHz}Hz lat=${tap.measuredLatencyMs}ms off=${syncOffsetMs}ms hops=${tap.fftFrameCount} cpu=${tap.analysisMicrosPerHop}us"
+            delay(250)
+        }
+    }
+    Text(
+        text = text,
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.65f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.labelSmall,
+        color = tone.copy(alpha = 0.9f),
+    )
 }
 
 @Composable
@@ -241,14 +280,25 @@ private fun StandbyAlertRow(tone: Color) {
     val charging = rememberCharging()
     val alerts = rememberStandbyAlerts()
     if (!charging && alerts.isEmpty()) return
-    val pulse by androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
-        0.35f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
-    )
+    val hasCall = alerts.any { it.call } && !io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val clock = if (hasCall) {
+        (io.max.paperplay.ui.theme.LocalAmbientClock.current ?: io.max.paperplay.ui.theme.rememberAmbientClock(active = true)).also {
+            it.subscribe(active = true)
+        }
+    } else null
     Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         if (charging) AppIcon(Icons.Rounded.Bolt, "Charging", Modifier.size(22.dp), tint = tone)
         alerts.take(8).forEach { a ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                AlertIcon(a.packageName, Modifier.size(if (a.call) 30.dp else 22.dp), tone.copy(alpha = if (a.call) pulse else 0.8f))
+                AlertIcon(
+                    a.packageName,
+                    Modifier.size(if (a.call) 30.dp else 22.dp).graphicsLayer {
+                        if (a.call && clock != null) {
+                            alpha = 0.35f + 0.65f * clock.pingPong(io.max.paperplay.ui.theme.Motion.Ambient.CallPulsePeriodMs)
+                        }
+                    },
+                    tone.copy(alpha = 0.8f),
+                )
                 if (a.count > 1) Text("${a.count}", color = tone.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -323,7 +373,10 @@ private fun StandbyLyricScroll(lines: List<io.max.paperplay.core.metadata.LrcLin
     ) {
         itemsIndexed(lines) { i, l ->
             val d = kotlin.math.abs(i - current)
-            val a by androidx.compose.animation.core.animateFloatAsState(when (d) { 0 -> 0.95f; 1 -> 0.45f; 2 -> 0.22f; else -> 0.1f }, androidx.compose.animation.core.tween(450))
+            val a by androidx.compose.animation.core.animateFloatAsState(
+                when (d) { 0 -> 0.95f; 1 -> 0.45f; 2 -> 0.22f; else -> 0.1f },
+                io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Effects.LyricsFocusMs),
+            )
             Box(Modifier.fillMaxWidth().height(itemH), contentAlignment = Alignment.Center) {
                 Text(
                     l.text.ifBlank { " " }, color = tone.copy(alpha = a), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,

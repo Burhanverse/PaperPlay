@@ -39,8 +39,16 @@ internal object AppEvents {
             override fun onActivityDestroyed(a: Activity) = e(a, "destroyed" + if (a.isFinishing) " (finishing)" else "")
         })
         app.registerComponentCallbacks(object : ComponentCallbacks2 {
-            override fun onTrimMemory(level: Int) = PlayLog.log("memory", "system asks to trim memory, level $level")
-            override fun onLowMemory() = PlayLog.log("memory", "system is low on memory")
+            override fun onTrimMemory(level: Int) {
+                PlayLog.log("memory", "system asks to trim memory, level $level")
+                if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
+                    io.max.paperplay.ui.app.SharedCovers.loader.clear()
+                }
+            }
+            override fun onLowMemory() {
+                PlayLog.log("memory", "system is low on memory")
+                io.max.paperplay.ui.app.SharedCovers.loader.clear()
+            }
             override fun onConfigurationChanged(c: Configuration) =
                 PlayLog.log("config", "orientation ${c.orientation}, ${c.screenWidthDp}x${c.screenHeightDp} dp, night ${c.uiMode and Configuration.UI_MODE_NIGHT_MASK}, locale ${c.locales.toLanguageTags()}")
         })

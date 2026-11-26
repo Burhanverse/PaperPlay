@@ -1,5 +1,8 @@
 package io.max.paperplay.ui
 
+import io.max.paperplay.ui.app.blockTouchesBehind
+import io.max.paperplay.ui.theme.pressScale
+
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.kyant.backdrop.backdrops.layerBackdrop
 import io.max.paperplay.ui.app.partSurface
@@ -135,7 +138,7 @@ fun Onboarding(
                 val source = remember { MutableInteractionSource() }
                 Button(
                     onClick = { if (last) onFinish(OnboardingChoice.Bot) else scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } },
-                    Modifier.bouncy(source), interactionSource = source, enabled = !blocked, shape = RoundedCornerShape(28.dp),
+                    Modifier.pressScale(source), interactionSource = source, enabled = !blocked, shape = RoundedCornerShape(28.dp),
                 ) { Text(if (last) (if (revisit) "Close" else "Start") else "Next") }
             }
         }
@@ -145,7 +148,7 @@ fun Onboarding(
     val glass = io.max.paperplay.ui.app.LookGroup.entries.any { prefs.look(it) == io.max.paperplay.ui.app.Look.Glass }
     val wash = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
     androidx.compose.runtime.CompositionLocalProvider(LocalGlassBackdrop provides (if (glass) wash else null)) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().blockTouchesBehind()) {
             Box(if (glass) Modifier.fillMaxSize().layerBackdrop(wash) else Modifier.fillMaxSize()) { GradientBackdrop() }
             if (isPhone) {
                 body(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp))

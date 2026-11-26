@@ -109,6 +109,8 @@ interface NetplayPlayer {
     fun seek(positionMs: Long)
     fun next()
     fun previous()
+    /** Releases any streamed host sources registered via [load]. */
+    fun clearExternal() {}
 }
 
 class NetplayEnv(

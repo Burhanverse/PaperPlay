@@ -41,6 +41,8 @@ internal object PlaybackCore {
     @Volatile var usbEqActive: Boolean = false
     /** True while the Rust engine is in the audio path (set by the sink wrapper), so the output info tells the truth. */
     @Volatile var engineActive = false
+    /** True while EngineAudioSink is actively wrapping the normal sink and feeding AudioTap after sink writes. */
+    @Volatile var engineSinkHandlesTap = false
     /** Extra bass in dB for the Rust engine, 0 when the equalizer is off. */
     @Volatile var bassDb = 0f
     /** Engine level mode: true = exact curve (lowered by its peak), false = loud. */

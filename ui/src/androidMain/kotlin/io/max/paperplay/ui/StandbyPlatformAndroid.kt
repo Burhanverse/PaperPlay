@@ -30,11 +30,28 @@ actual fun StandbyWindowEffect(brightness: Float) {
     DisposableEffect(brightness) {
         val activity = generateSequence(ctx) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()
         val windows = listOfNotNull((view.parent as? DialogWindowProvider)?.window, activity?.window)
+        val display = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            view.display ?: activity?.display
+        } else {
+            @Suppress("DEPRECATION")
+            activity?.windowManager?.defaultDisplay
+        }
+        val targetHz = if (android.os.Build.VERSION.SDK_INT >= 23 && display != null) {
+            display.supportedModes
+                .map { it.refreshRate }
+                .filter { it in 59.0f..120.5f }
+                .maxOrNull() ?: 0f
+        } else 0f
+        val dispLatMs = if (display != null) {
+            (display.presentationDeadlineNanos / 1_000_000L).coerceIn(8L, 50L)
+        } else 16L
+        io.max.paperplay.player.AudioTap.displayLatencyMs = dispLatMs
         val level = if (brightness >= 1f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else brightness.coerceIn(0.01f, 1f)
         windows.forEach { w ->
             w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             w.attributes = w.attributes.also {
                 it.screenBrightness = level
+                if (targetHz > 0f && android.os.Build.VERSION.SDK_INT >= 23) it.preferredRefreshRate = targetHz
                 // Full screen: draw under the camera cutout too.
                 if (android.os.Build.VERSION.SDK_INT >= 28) it.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
@@ -48,11 +65,17 @@ actual fun StandbyWindowEffect(brightness: Float) {
         onDispose {
             // The activity's window first, each step on its own: if the dialog window is already gone and one step throws, the screen must still be allowed to turn off.
             // A flag left on the activity window kept the screen awake for the whole app.
+            io.max.paperplay.player.AudioTap.displayLatencyMs = 0L
             val last = activity?.window
             val order = listOfNotNull(last) + windows.filter { it !== last }
             order.forEach { w ->
                 runCatching { w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
-                runCatching { w.attributes = w.attributes.also { it.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE } }
+                runCatching {
+                    w.attributes = w.attributes.also {
+                        it.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                        if (android.os.Build.VERSION.SDK_INT >= 23) it.preferredRefreshRate = 0f
+                    }
+                }
                 runCatching { androidx.core.view.WindowCompat.getInsetsController(w, w.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
             }
         }

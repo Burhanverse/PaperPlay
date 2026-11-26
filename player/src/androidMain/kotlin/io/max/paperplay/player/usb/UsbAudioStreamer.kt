@@ -102,6 +102,11 @@ class UsbAudioStreamer(
                 _nativeConfirmedRate = current._nativeConfirmedRate
                 _nativeConfirmedAlt = current._nativeConfirmedAlt
                 isPrepared = true
+                // Transfer ownership of nativeHandle so current.stopAndRelease() cannot double-free it.
+                current.nativeHandle = 0L
+                current.isPrepared = false
+                current._isRunning = false
+                current._isPaused = false
                 currentPreparedStreamer = this
                 return true
             } else {
@@ -316,10 +321,13 @@ class UsbAudioStreamer(
                 }
             }
             // In-place reconfigure failed or readback mismatched: fall back to full recreate
+            val oldHandle = nativeHandle
             if (isRunning) {
-                engineBridge.stop(nativeHandle)
+                engineBridge.stop(oldHandle)
             }
-            engineBridge.destroy(nativeHandle)
+            engineBridge.destroy(oldHandle)
+            UsbStreamingWakeLock.release("legacy:$oldHandle")
+            UsbSilentAudioKeepAlive.setActive(false)
             nativeHandle = 0L
             isPrepared = false
         }
@@ -418,10 +426,13 @@ class UsbAudioStreamer(
                 }
             }
             if (!reusedInPlace) {
+                val oldHandle = nativeHandle
                 if (isRunning) {
-                    engineBridge.stop(nativeHandle)
+                    engineBridge.stop(oldHandle)
                 }
-                engineBridge.destroy(nativeHandle)
+                engineBridge.destroy(oldHandle)
+                UsbStreamingWakeLock.release("legacy:$oldHandle")
+                UsbSilentAudioKeepAlive.setActive(false)
                 nativeHandle = 0L
                 isPrepared = false
             }

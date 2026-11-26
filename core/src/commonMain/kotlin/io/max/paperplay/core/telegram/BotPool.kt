@@ -5,12 +5,14 @@ import io.max.paperplay.core.backup.SecretKeys
 import io.max.paperplay.core.dupes.HttpPoster
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -21,6 +23,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlin.concurrent.Volatile
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 
@@ -66,7 +69,7 @@ class BotPool(
     val bots: StateFlow<List<PoolBot>> = _bots
     private val _mainWait = MutableStateFlow(PoolBot(0, state = "working", isMain = true))
     val mainBot: StateFlow<PoolBot> = _mainWait
-    private val clients = HashMap<Long, TdClient>()
+    @Volatile private var clients: Map<Long, TdClient> = emptyMap()
     private val lock = Mutex()
     private var turn = 0
     private var loaded = false
@@ -117,12 +120,12 @@ class BotPool(
         val keep = readTokens().filter { botId(it) != id }
         writeTokens(keep)
         _bots.update { l -> l.filter { it.id != id } }
-        lock.withLock { clients.remove(id) }?.let { runCatching { it.shutdown() } }
+        lock.withLock { clients[id]?.also { clients = clients - id } }?.let { runCatching { it.shutdown() } }
     }
 
     /** Shuts every extra bot's session down without forgetting its token. */
     suspend fun stopAll() {
-        val all = lock.withLock { clients.values.toList().also { clients.clear() } }
+        val all = lock.withLock { clients.values.toList().also { clients = emptyMap() } }
         for (c in all) c.shutdown()
     }
 
@@ -136,19 +139,40 @@ class BotPool(
     }
 
     private suspend fun start(id: Long, token: String) {
+        var created: TdClient? = null
         try {
             val c = open(id, token) ?: run {
                 setBot(id) { it.copy(state = "error", error = "Enter the API id and hash first.") }
                 return
             }
-            lock.withLock { clients[id] = c }
+            val removed = lock.withLock {
+                if (_bots.value.none { it.id == id }) {
+                    true
+                } else {
+                    clients = clients + (id to c)
+                    created = c
+                    false
+                }
+            }
+            if (removed) {
+                runCatching { c.shutdown() }
+                return
+            }
             c.start()
             c.ready(45.seconds)
             val who = profileOf(c)
             setBot(id) { it.copy(state = "working", error = null, username = who.username ?: it.username, name = who.name ?: it.name, photoPath = who.photoPath ?: it.photoPath) }
         } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                lock.withLock { if (clients[id] === created) clients = clients - id }
+                runCatching { created?.shutdown() }
+            }
             throw e
         } catch (e: Throwable) {
+            withContext(NonCancellable) {
+                lock.withLock { if (clients[id] === created) clients = clients - id }
+                runCatching { created?.shutdown() }
+            }
             setBot(id) { it.copy(state = "error", error = e.message ?: "It did not start.") }
         }
     }

@@ -2,8 +2,10 @@ package io.max.paperplay.ui.app
 
 import androidx.compose.material3.ColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
@@ -24,64 +26,103 @@ import kotlin.math.abs
  */
 object CoverSeeds {
     private const val MAX_ENTRIES = 500
-    private val ready = mutableStateMapOf<String, Int>()
-    private val palettes = mutableStateMapOf<String, List<Int>>()
-    private val lruOrder = LinkedHashMap<String, Unit>(64, 0.75f, true)
+    private val lock = Any()
+    private val entries = LinkedHashMap<String, MutableState<List<Int>?>>(64, 0.75f, true)
     private val pending = HashSet<String>()
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    private fun recordAccess(uri: String) {
-        synchronized(lruOrder) {
-            lruOrder[uri] = Unit
-            while (lruOrder.size > MAX_ENTRIES) {
-                val oldest = lruOrder.keys.firstOrNull() ?: break
-                lruOrder.remove(oldest)
-                ready.remove(oldest)
-                palettes.remove(oldest)
-                pending.remove(oldest)
-            }
+    private fun entryFor(uri: String): MutableState<List<Int>?> = synchronized(lock) {
+        val state = entries.getOrPut(uri) { mutableStateOf(null) }
+        while (entries.size > MAX_ENTRIES) {
+            val oldest = entries.keys.firstOrNull() ?: break
+            if (oldest == uri) break
+            entries.remove(oldest)
+            pending.remove(oldest)
+        }
+        state
+    }
+
+    private fun publishIfEmpty(state: MutableState<List<Int>?>, palette: List<Int>) {
+        Snapshot.withMutableSnapshot {
+            if (state.value == null) state.value = palette
         }
     }
 
-    /** Populates the seed and palette from an already-decoded cover bitmap without a second file decode. */
-    fun setFromBitmap(uri: String, bitmap: ImageBitmap) {
-        if (ready.containsKey(uri)) {
-            recordAccess(uri)
-            return
-        }
+    /** Populates the seed and palette from an already-decoded cover bitmap off the main thread. */
+    fun setFromBitmapOffMain(uri: String, bitmap: ImageBitmap) {
+        val state = entryFor(uri)
+        if (state.value != null) return
         val p = paletteOf(bitmap, 3)
-        palettes[uri] = p
-        ready[uri] = p.firstOrNull() ?: 0
-        recordAccess(uri)
+        publishIfEmpty(state, p)
+        synchronized(lock) { pending.remove(uri) }
+    }
+
+    /** Populates the seed and palette from an already-decoded cover bitmap without blocking the caller's thread. */
+    fun setFromBitmap(uri: String, bitmap: ImageBitmap) {
+        val state = entryFor(uri)
+        if (state.value != null) return
+        if (synchronized(lock) { pending.add(uri) }) {
+            scope.launch {
+                try {
+                    if (state.value == null) publishIfEmpty(state, paletteOf(bitmap, 3))
+                } finally {
+                    synchronized(lock) { pending.remove(uri) }
+                }
+            }
+        }
     }
 
     /** The seed for [uri] as ARGB if known; null while unknown, missing or colourless. */
     fun seed(uri: String?): Int? {
         if (uri == null) return null
-        val known = ready[uri]
-        if (known != null) {
-            recordAccess(uri)
-            return known.takeIf { it != 0 }
-        }
-        if (pending.add(uri)) scope.launch {
-            if (ready.containsKey(uri)) {
-                recordAccess(uri)
-                return@launch
+        val state = entryFor(uri)
+        val known = state.value
+        if (known != null) return known.firstOrNull()?.takeIf { it != 0 }
+        if (synchronized(lock) { pending.add(uri) }) {
+            scope.launch {
+                try {
+                    if (state.value == null) {
+                        val p = decodeImageFile(uri, 96)?.let { paletteOf(it, 3) }.orEmpty()
+                        publishIfEmpty(state, p)
+                    }
+                } finally {
+                    synchronized(lock) { pending.remove(uri) }
+                }
             }
-            val p = decodeImageFile(uri, 96)?.let { paletteOf(it, 3) }.orEmpty()
-            palettes[uri] = p
-            ready[uri] = p.firstOrNull() ?: 0
-            recordAccess(uri)
         }
         return null
     }
-
 
     /** Up to three distinct main colours of the cover, most present first; empty while unknown. */
     fun palette(uri: String?): List<Int> {
         if (uri == null) return emptyList()
         seed(uri)
-        return palettes[uri].orEmpty()
+        return entryFor(uri).value.orEmpty()
+    }
+
+    private val schemeCache = LinkedHashMap<Long, androidx.compose.material3.ColorScheme>(32, 0.75f, true)
+
+    internal fun cachedScheme(seed: Int, dark: Boolean): androidx.compose.material3.ColorScheme {
+        val key = (seed.toLong() shl 1) or (if (dark) 1L else 0L)
+        synchronized(lock) {
+            schemeCache[key]?.let { return it }
+        }
+        val built = schemeFromSeed(seed, dark)
+        synchronized(lock) {
+            schemeCache[key] = built
+            if (schemeCache.size > 64) {
+                val oldest = schemeCache.keys.firstOrNull()
+                if (oldest != null && oldest != key) schemeCache.remove(oldest)
+            }
+        }
+        return built
+    }
+
+    /** Prewarms the cover palette and derived [ColorScheme] on song change so opening the player never computes it on frame 1. */
+    fun prewarmScheme(uri: String?, dark: Boolean = true) {
+        if (uri == null) return
+        val s = seed(uri) ?: return
+        cachedScheme(s, dark)
     }
 }
 
@@ -89,7 +130,7 @@ object CoverSeeds {
 @Composable
 fun coverScheme(uri: String?, dark: Boolean = true): ColorScheme? {
     val seed = CoverSeeds.seed(uri) ?: return null
-    return remember(seed, dark) { schemeFromSeed(seed, dark) }
+    return remember(seed, dark) { CoverSeeds.cachedScheme(seed, dark) }
 }
 
 /**

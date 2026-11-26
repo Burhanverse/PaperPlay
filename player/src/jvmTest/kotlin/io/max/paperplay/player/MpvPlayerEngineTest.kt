@@ -388,4 +388,70 @@ class MpvPlayerEngineTest {
         assertFalse(nonExclusive.outputInfo.bitPerfect)
         assertTrue(nonExclusive.status is BitPerfectStatus.Off)
     }
+
+    private class FakeMpvLib(private val initRc: Int = 0) : MpvLib {
+        val props = java.util.concurrent.ConcurrentHashMap<String, String>()
+        val waitTimeouts = java.util.concurrent.CopyOnWriteArrayList<Double>()
+        var destroyed = 0
+        private val wakeupLatch = java.util.concurrent.CountDownLatch(1)
+        private val shutdownEv = com.sun.jna.Memory(32).apply { clear(); setInt(0, MpvC.EVENT_SHUTDOWN) }
+
+        override fun mpv_create(): com.sun.jna.Pointer = com.sun.jna.Pointer(0x1234L)
+        override fun mpv_initialize(ctx: com.sun.jna.Pointer): Int = initRc
+        override fun mpv_terminate_destroy(ctx: com.sun.jna.Pointer) { destroyed++ }
+        override fun mpv_set_option_string(ctx: com.sun.jna.Pointer, name: String, value: String): Int = 0
+        override fun mpv_set_property_string(ctx: com.sun.jna.Pointer, name: String, value: String): Int {
+            props[name] = value
+            return 0
+        }
+        override fun mpv_get_property_string(ctx: com.sun.jna.Pointer, name: String): com.sun.jna.Pointer? = null
+        override fun mpv_free(data: com.sun.jna.Pointer?) {}
+        override fun mpv_command(ctx: com.sun.jna.Pointer, args: Array<String?>): Int = 0
+        override fun mpv_observe_property(ctx: com.sun.jna.Pointer, replyUserdata: Long, name: String, format: Int): Int = 0
+        override fun mpv_wait_event(ctx: com.sun.jna.Pointer, timeout: Double): com.sun.jna.Pointer {
+            waitTimeouts.add(timeout)
+            wakeupLatch.await()
+            return shutdownEv
+        }
+        override fun mpv_request_log_messages(ctx: com.sun.jna.Pointer, minLevel: String): Int = 0
+        override fun mpv_wakeup(ctx: com.sun.jna.Pointer) { wakeupLatch.countDown() }
+        override fun mpv_error_string(error: Int): String = "err($error)"
+    }
+
+    @Test
+    fun `exclusive mode clears af, init failure destroys ctx, wait_event uses -1, and post-release cmd is safe`() {
+        val failing = FakeMpvLib(initRc = -1)
+        var threw = false
+        try {
+            MpvPlayerEngine(failing)
+        } catch (_: IllegalStateException) {
+            threw = true
+        }
+        assertTrue(threw)
+        assertEquals(1, failing.destroyed, "mpv_terminate_destroy must run when mpv_initialize fails")
+
+        val fake = FakeMpvLib(initRc = 0)
+        val e = MpvPlayerEngine(fake)
+        try {
+            e.setParametricEq(
+                enabled = true,
+                profile = ParametricEqProfile(
+                    id = "p",
+                    name = "p",
+                    bands = listOf(ParametricBand(1, true, PeqFilterType.PK, PeqChannel.STEREO, 1000f, 6f, 1.4f)),
+                ),
+            )
+            waitFor(what = "af set") { !fake.props["af"].isNullOrEmpty() }
+
+            e.setExclusiveOutput(true)
+            waitFor(what = "af cleared in exclusive") { fake.props["af"] == "" && fake.props["audio-exclusive"] == "yes" }
+            assertTrue(fake.waitTimeouts.all { it == -1.0 }, "eventLoop must block with -1.0 instead of 4 Hz polling: ${fake.waitTimeouts}")
+        } finally {
+            e.release()
+        }
+        assertEquals(1, fake.destroyed)
+        // Post-release commands must be ignored without RejectedExecutionException.
+        e.pause()
+        e.seek(1000L)
+    }
 }

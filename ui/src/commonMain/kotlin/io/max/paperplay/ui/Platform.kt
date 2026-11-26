@@ -5,10 +5,23 @@ import androidx.compose.ui.graphics.ImageBitmap
 
 /**
  * Runs [onBack] on the system back gesture or key while [enabled]. While a swipe is under way [onProgress] gets how far
- * it has gone, 0 to 1, and 0 again if it is cancelled. Desktop has no back gesture, so it does nothing there.
+ * it has gone, 0 to 1, and [onCancel] runs if the gesture is cancelled. Desktop has no back gesture, so it does nothing there.
  */
 @Composable
-expect fun PlatformBackHandler(enabled: Boolean, onProgress: (Float) -> Unit = {}, onBack: () -> Unit)
+expect fun PlatformBackHandler(
+    enabled: Boolean,
+    onProgress: (Float) -> Unit = {},
+    onCancel: () -> Unit = {},
+    onBack: () -> Unit,
+)
+
+/** Updates status and navigation bar icon contrast (`true` = dark icons for light backgrounds). No-op on desktop. */
+@Composable
+expect fun SystemBarAppearanceEffect(darkIcons: Boolean)
+
+/** True when the OS requests reduced motion (e.g., Android `ANIMATOR_DURATION_SCALE == 0`). */
+@Composable
+expect fun rememberSystemReduceMotion(): Boolean
 
 /** False while the app is in the background, so animations that run every frame can stop. Always true on desktop. */
 @Composable

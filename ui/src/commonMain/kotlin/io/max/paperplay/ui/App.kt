@@ -174,8 +174,13 @@ private fun Main(env: AppEnv, firstRun: Boolean, onTourDone: () -> Unit, onResto
     // The desktop has no wallpaper colour, so "dynamic" there follows the cover art of the playing song.
     val coverAccent = prefs.accent == "cover" || (prefs.accent == "dynamic" && !isPhone)
     val seed = if (coverAccent) io.max.paperplay.ui.app.CoverSeeds.seed(coverUri) else prefs.seed
+    val reduceMotion = prefs.reduceMotion || rememberSystemReduceMotion()
     PaperPlayTheme(dark = dark, seed = seed, dynamic = prefs.accent == "dynamic", amoled = prefs.amoled) {
-        androidx.compose.runtime.CompositionLocalProvider(io.max.paperplay.ui.app.LocalUiPrefs provides prefs, io.max.paperplay.ui.theme.LocalReduceMotion provides prefs.reduceMotion) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            io.max.paperplay.ui.app.LocalUiPrefs provides prefs,
+            io.max.paperplay.ui.theme.LocalReduceMotion provides reduceMotion,
+            io.max.paperplay.ui.theme.LocalMotionTuning provides io.max.paperplay.ui.theme.MotionTuningState.current,
+        ) {
             if (firstRun) {
                 io.max.paperplay.ui.app.WindowTint(MaterialTheme.colorScheme.background)
                 Onboarding(prefs, revisit = false, backend = backend, setPref = backend::setPref) { choice ->

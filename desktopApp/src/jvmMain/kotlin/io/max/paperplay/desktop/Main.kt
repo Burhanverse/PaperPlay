@@ -71,8 +71,17 @@ private fun scanFolder(dir: File): io.max.paperplay.ui.app.FolderScan {
     return io.max.paperplay.ui.app.FolderScan(top, subs) { chosen, ready -> ready(chosen.map { it.id }, false) }
 }
 
+private const val DEFAULT_DARK_SURFACE_ARGB = 0xFF111318.toInt()
+
 /** Lets files and folders be dropped on the window; they go to the uploads page. */
 private fun installFileDrop(window: java.awt.Window) {
+    fun dragCount(e: java.awt.dnd.DropTargetDragEvent): Int = runCatching {
+        if (e.transferable.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor)) {
+            @Suppress("UNCHECKED_CAST")
+            (e.transferable.getTransferData(java.awt.datatransfer.DataFlavor.javaFileListFlavor) as? List<File>)?.size ?: 1
+        } else 1
+    }.getOrDefault(1)
+
     val target = java.awt.dnd.DropTarget(window, java.awt.dnd.DnDConstants.ACTION_COPY, object : java.awt.dnd.DropTargetAdapter() {
         override fun drop(e: java.awt.dnd.DropTargetDropEvent) {
             try {
@@ -85,10 +94,27 @@ private fun installFileDrop(window: java.awt.Window) {
                 e.dropComplete(true)
             } catch (_: Exception) {
                 e.dropComplete(false)
+            } finally {
+                io.max.paperplay.ui.app.IncomingDrops.dragging.value = false
+                io.max.paperplay.ui.app.IncomingDrops.dragCount.value = 0
             }
         }
-        override fun dragEnter(e: java.awt.dnd.DropTargetDragEvent) = e.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY)
-        override fun dragOver(e: java.awt.dnd.DropTargetDragEvent) = e.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY)
+        override fun dragEnter(e: java.awt.dnd.DropTargetDragEvent) {
+            e.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY)
+            io.max.paperplay.ui.app.IncomingDrops.dragCount.value = dragCount(e)
+            io.max.paperplay.ui.app.IncomingDrops.dragging.value = true
+        }
+        override fun dragOver(e: java.awt.dnd.DropTargetDragEvent) {
+            e.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY)
+            if (!io.max.paperplay.ui.app.IncomingDrops.dragging.value) {
+                io.max.paperplay.ui.app.IncomingDrops.dragCount.value = dragCount(e)
+                io.max.paperplay.ui.app.IncomingDrops.dragging.value = true
+            }
+        }
+        override fun dragExit(dte: java.awt.dnd.DropTargetEvent) {
+            io.max.paperplay.ui.app.IncomingDrops.dragging.value = false
+            io.max.paperplay.ui.app.IncomingDrops.dragCount.value = 0
+        }
     })
     // Compose's own canvas may hold a drop target of its own; put ours on every component so it is never skipped.
     fun apply(c: java.awt.Component) {
@@ -140,7 +166,11 @@ private fun shutdownServices() {
     }
 }
 
-fun main() {
+fun main(args: Array<String>) {
+    if (System.getProperty("paperplay.motion.bench") == "true" || "--motion-bench" in args) {
+        DesktopMotionBench.run(args)
+        return
+    }
     // GitHub's asset host rotates addresses and one of them can be unreachable here; Java uses the first and caches it, so a retry hit the same dead one.
     java.security.Security.setProperty("networkaddress.cache.ttl", "0")
     if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) &&
@@ -241,10 +271,10 @@ fun main() {
                 Thread {
                     val log = io.max.paperplay.player.PlayLog
                     try {
-                        val dir = NativeDialogs.pickFolder("Choose a music folder")
-                        if (dir == null) { log.log("upload", "folder picker closed with no folder"); return@Thread }
-                        val scan = scanFolder(dir)
-                        log.log("upload", "folder ${dir.path}: ${scan.top.size} songs in it, ${scan.subfolders.size} subfolders with songs")
+                        val pickedDir = NativeDialogs.pickFolder("Choose a music folder")
+                        if (pickedDir == null) { log.log("upload", "folder picker closed with no folder"); return@Thread }
+                        val scan = scanFolder(pickedDir)
+                        log.log("upload", "folder ${pickedDir.path}: ${scan.top.size} songs in it, ${scan.subfolders.size} subfolders with songs")
                         // Back on the window's own thread, where its state is changed.
                         javax.swing.SwingUtilities.invokeLater { onPicked(scan) }
                     } catch (e: Throwable) {
@@ -252,10 +282,10 @@ fun main() {
                         // An empty answer makes the page say that nothing was found, instead of staying silent.
                         javax.swing.SwingUtilities.invokeLater { onPicked(io.max.paperplay.ui.app.FolderScan(emptyList(), emptyMap()) { _, ready -> ready(emptyList(), false) }) }
                     }
-                }.start()
+                }.apply { isDaemon = true; start() }
             },
             pickFolderPath = { onPicked ->
-                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { javax.swing.SwingUtilities.invokeLater { onPicked(it.path) } } }.start()
+                Thread { NativeDialogs.pickFolder("Choose a music folder")?.let { javax.swing.SwingUtilities.invokeLater { onPicked(it.path) } } }.apply { isDaemon = true; start() }
             },
             authRedirect = LoopbackAuth(),
             authRedirectUri = SPOTIFY_REDIRECT,
@@ -332,6 +362,7 @@ fun main() {
                     },
                 ) {
                     androidx.compose.runtime.LaunchedEffect(Unit) {
+                        WindowsTitleBar.applySurfaceColor(window, DEFAULT_DARK_SURFACE_ARGB)
                         // Closes when the user clicks anywhere else.
                         window.addWindowFocusListener(object : java.awt.event.WindowAdapter() {
                             override fun windowLostFocus(e: java.awt.event.WindowEvent?) { trayMenuAt = null }
@@ -368,16 +399,35 @@ fun main() {
             },
         ) {
             titleBar[0] = window
+            androidx.compose.runtime.LaunchedEffect(window) {
+                WindowsTitleBar.applySurfaceColor(window, DEFAULT_DARK_SURFACE_ARGB)
+                WindowsTitleBar.reapply(window)
+            }
             // Taskbar preview buttons (previous, play or pause, next); a switch in Settings turns them off, from the next start.
             androidx.compose.runtime.LaunchedEffect(window) {
                 kotlinx.coroutines.delay(1_500)
-                if (liveServices?.platform?.settings?.get("taskbar_buttons") != "off") TaskbarButtons.install(window, ::handleMediaKey)
-                try {
-                    while (true) {
-                        kotlinx.coroutines.delay(400)
-                        liveServices?.let { TaskbarButtons.setPlaying(it.playback.nowPlayingStatic.value.isPlaying) }
+                val sv = liveServices ?: run {
+                    var waited = 0
+                    while (liveServices == null && waited < 30) {
+                        kotlinx.coroutines.delay(500)
+                        waited++
                     }
-                } finally { TaskbarButtons.release() }
+                    liveServices
+                } ?: return@LaunchedEffect
+                if (sv.platform.settings.get("taskbar_buttons") == "off") return@LaunchedEffect
+                TaskbarButtons.install(window, ::handleMediaKey)
+                try {
+                    var lastPlaying: Boolean? = null
+                    sv.playback.nowPlayingStatic.collect { np ->
+                        if (lastPlaying != np.isPlaying) {
+                            lastPlaying = np.isPlaying
+                            TaskbarButtons.setPlaying(np.isPlaying)
+                        }
+                    }
+                } finally {
+                    TaskbarButtons.release()
+                    if (titleBar[0] === window) titleBar[0] = null
+                }
             }
             androidx.compose.runtime.DisposableEffect(window, mainVisible, mainState.isMinimized) {
                 fun update() {
@@ -435,9 +485,20 @@ fun main() {
 @androidx.compose.runtime.Composable
 private fun androidx.compose.ui.window.ApplicationScope.MiniWindow() {
     // The mini window is as wide as its song text needs (see rememberMiniWidth).
-    val miniWidth = io.max.paperplay.ui.app.rememberMiniWidth()
-    val miniState = rememberWindowState(width = miniWidth, height = 110.dp)
-    androidx.compose.runtime.LaunchedEffect(miniWidth) { miniState.size = androidx.compose.ui.unit.DpSize(miniWidth, 110.dp) }
+    val targetWidth = io.max.paperplay.ui.app.rememberMiniWidth()
+    val animatedWidth by androidx.compose.animation.core.animateDpAsState(
+        targetValue = targetWidth,
+        animationSpec = io.max.paperplay.ui.theme.desktopMiniResizeSpring(),
+        label = "miniWidth",
+    )
+    val miniState = rememberWindowState(width = targetWidth, height = 110.dp)
+    androidx.compose.runtime.LaunchedEffect(animatedWidth) {
+        miniState.size = androidx.compose.ui.unit.DpSize(animatedWidth.value.toInt().dp, 110.dp)
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        io.max.paperplay.ui.AppForegroundState.isMiniVisible = true
+        onDispose { io.max.paperplay.ui.AppForegroundState.isMiniVisible = false }
+    }
     Window(
         onCloseRequest = { io.max.paperplay.ui.app.DesktopMini.visible.value = false },
         title = "Paper Play mini", state = miniState,
@@ -445,7 +506,10 @@ private fun androidx.compose.ui.window.ApplicationScope.MiniWindow() {
         alwaysOnTop = true, resizable = false, icon = androidx.compose.ui.res.painterResource("icon.png"),
     ) {
         // No title bar: the whole card drags the window, and the close button sits on the card. Windows rounds the corners.
-        androidx.compose.runtime.LaunchedEffect(Unit) { WindowsTitleBar.roundCorners(window) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            WindowsTitleBar.applySurfaceColor(window, DEFAULT_DARK_SURFACE_ARGB)
+            WindowsTitleBar.roundCorners(window)
+        }
         WindowDraggableArea {
             io.max.paperplay.ui.app.DesktopMiniContent(onClose = { io.max.paperplay.ui.app.DesktopMini.visible.value = false })
         }

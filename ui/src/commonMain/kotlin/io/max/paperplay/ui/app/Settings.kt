@@ -159,7 +159,7 @@ internal val LocalPageBottomPadding = androidx.compose.runtime.compositionLocalO
 internal val subTitles = mapOf(
     "channels" to "Channels and chats", "bots" to "Bots", "account" to "Your account", "log" to "Activity log",
     "repair" to "Scan library", "recover" to "Recover songs", "folders" to "Music folders", "exports" to "Saved export lists", "cache" to "Cache manager", "sort" to "Sort General", "dupes" to "Find duplicates", "missing" to "Song info left", "uploadhub" to "Upload songs", "mixlearn" to "Mixes and learning", "weather" to "Weather",
-    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB DAC", "usb_probe" to "USB probe", "changelog" to "Change log",
+    "permissions" to "Permissions", "conn" to "Connection", "netplay" to "Network play", "index" to "Chats and channels", "eq" to "Equalizer", "listenbrainz" to "ListenBrainz", "stats" to "Listening statistics", "credentials" to "Bots", "profile" to "Profile", "usb_audio" to "USB DAC", "usb_probe" to "USB probe", "motion_lab" to "Motion Lab", "changelog" to "Change log",
 )
 
 @Composable
@@ -521,11 +521,14 @@ internal fun SettingsPage(
             var restore by remember { mutableStateOf(backend.sessionRestore) }
             SwitchRow("Restore last session", restore, { restore = it; backend.setSessionRestore(it) }, Icons.Rounded.Sync,
                 "Opens with the last queue and position, paused")
+            if (devUnlocked) {
+                SectionLabel("Developer")
+                NavRow("Motion Lab", "Live-tune motion tokens and inspect frame timings", Icons.Rounded.Animation) { stack.add("motion_lab") }
+            }
             if (isPhone && devUnlocked) {
                 val chain by backend.sinkChain.collectAsState()
                 val devApi34 by backend.devApi34Mixer.collectAsState()
                 val devUnified by backend.devUseUnifiedBitPerfect.collectAsState()
-                SectionLabel("Developer")
                 SwitchRow(
                     "Unified Bit-perfect engine",
                     devUnified,
@@ -570,6 +573,7 @@ internal fun SettingsPage(
         "eq" -> EqualizerPage(backend)
         "usb_audio" -> UsbAudioPage(backend, stack)
         "usb_probe" -> UsbProbePage(backend)
+        "motion_lab" -> MotionLabPage()
         "devices" -> {
             if (isPhone) {
                 var keep by remember { mutableStateOf(pref("keep_running") == "true") }
@@ -695,7 +699,12 @@ private fun SettingsGroup(title: String, subtitle: String, icon: androidx.compos
     SettingsRow(title, icon = icon, subtitle = subtitle, onClick = { open = !open }) {
         AppIcon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (open) "Close" else "Open")
     }
-    androidx.compose.animation.AnimatedVisibility(open) { Column { content() } }
+    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    androidx.compose.animation.AnimatedVisibility(
+        visible = open,
+        enter = expandSectionEnter(reduce),
+        exit = expandSectionExit(reduce),
+    ) { Column { content() } }
 }
 
 @Composable

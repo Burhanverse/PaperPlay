@@ -39,28 +39,16 @@ fun AnimatedBackdrop(
     modifier: Modifier = Modifier,
     playing: Boolean = true,
 ) {
-    val foreground = rememberAppForeground()
-    val time = remember { mutableFloatStateOf(0f) }
+    val active = playing && !io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val clock = io.max.paperplay.ui.theme.LocalAmbientClock.current
+        ?: io.max.paperplay.ui.theme.rememberAmbientClock(active = active)
+    clock.subscribe(active = active)
     // x, y, size, phase of every particle, in 0..1; made once.
     val seeds = remember { Random(7).let { r -> FloatArray(MAX_PARTS * 4) { r.nextFloat() } } }
     val path = remember { Path() }
-    LaunchedEffect(foreground, speed, playing) {
-        if (!foreground || !playing) return@LaunchedEffect
-        var last = 0L
-        while (isActive) {
-            androidx.compose.runtime.withFrameNanos { now ->
-                if (last == 0L) last = now
-                val dt = now - last
-                if (dt >= FRAME_NANOS) {
-                    time.floatValue = (time.floatValue + dt / 1_000_000_000f * speed) % 100_000f
-                    last = now
-                }
-            }
-        }
-    }
     Canvas(modifier.fillMaxSize()) {
         drawRect(bg)
-        val t = time.floatValue
+        val t = clock.seconds * speed
         when (anim) {
             BgAnim.Stars -> drawStars(seeds, t, particle, density)
             BgAnim.Snow -> drawSnow(seeds, t, particle, density)

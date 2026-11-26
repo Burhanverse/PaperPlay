@@ -93,8 +93,7 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                     launch {
                         val decoded = decoder.async { decodeImageFile(uri, maxSide) }.await() ?: return@launch
                         keep(key, decoded)
-                        // The colour seed needs the main thread, which is busy while the first screen is drawn; waiting for it made this wait run to its limit.
-                        ahead.launch { CoverSeeds.setFromBitmap(uri, decoded) }
+                        CoverSeeds.setFromBitmap(uri, decoded)
                     }
                 }
             }
@@ -131,9 +130,11 @@ class FileCoverLoader(private val budgetBytes: Long = 48L * 1024 * 1024) : Cover
                 val decoded = job.deferred.await()
                 if (decoded != null) {
                     keep(key, decoded)
-                    CoverSeeds.setFromBitmap(uri, decoded)
                 }
                 value = decoded
+                if (decoded != null) {
+                    CoverSeeds.setFromBitmap(uri, decoded)
+                }
             } finally {
                 synchronized(inFlight) {
                     job.refCount--

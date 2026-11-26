@@ -13,7 +13,18 @@ import java.net.HttpURLConnection
 import java.net.URI
 
 @Composable
-actual fun PlatformBackHandler(enabled: Boolean, onProgress: (Float) -> Unit, onBack: () -> Unit) = Unit
+actual fun PlatformBackHandler(
+    enabled: Boolean,
+    onProgress: (Float) -> Unit,
+    onCancel: () -> Unit,
+    onBack: () -> Unit,
+) = Unit
+
+@Composable
+actual fun SystemBarAppearanceEffect(darkIcons: Boolean) = Unit
+
+@Composable
+actual fun rememberSystemReduceMotion(): Boolean = false
 
 @Composable
 actual fun rememberAppForeground(): Boolean {
@@ -50,12 +61,13 @@ private fun shrink(img: org.jetbrains.skia.Image, maxSide: Int): org.jetbrains.s
     if (big <= maxSide) return img
     val k = maxSide.toFloat() / big
     val w = maxOf(1, (img.width * k).toInt()); val h = maxOf(1, (img.height * k).toInt())
-    val surface = org.jetbrains.skia.Surface.makeRasterN32Premul(w, h)
-    surface.canvas.drawImageRect(
-        img, org.jetbrains.skia.Rect.makeWH(img.width.toFloat(), img.height.toFloat()), org.jetbrains.skia.Rect.makeWH(w.toFloat(), h.toFloat()),
-        org.jetbrains.skia.FilterMipmap(org.jetbrains.skia.FilterMode.LINEAR, org.jetbrains.skia.MipmapMode.LINEAR), null, true,
-    )
-    return surface.makeImageSnapshot()
+    return org.jetbrains.skia.Surface.makeRasterN32Premul(w, h).use { surface ->
+        surface.canvas.drawImageRect(
+            img, org.jetbrains.skia.Rect.makeWH(img.width.toFloat(), img.height.toFloat()), org.jetbrains.skia.Rect.makeWH(w.toFloat(), h.toFloat()),
+            org.jetbrains.skia.FilterMipmap(org.jetbrains.skia.FilterMode.LINEAR, org.jetbrains.skia.MipmapMode.LINEAR), null, true,
+        )
+        surface.makeImageSnapshot()
+    }
 }
 
 /**
@@ -67,11 +79,10 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
     val thumb = if (remote) null else thumbFile(path, maxSide)
     if (thumb != null && thumb.length() > 0) {
         runCatching {
-            val thumbData = org.jetbrains.skia.Data.makeFromFileName(thumb.absolutePath)
-            org.jetbrains.skia.Image.makeFromEncoded(thumbData.bytes).toComposeImageBitmap()
+            org.jetbrains.skia.Image.makeFromEncoded(thumb.readBytes()).use { it.toComposeImageBitmap() }
         }.getOrNull()?.let { return@runCatching it }
     }
-    val data = if (remote) {
+    val bytes = if (remote) {
         val conn = (URI.create(path).toURL().openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 10_000
@@ -80,17 +91,16 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
         }
         try {
             if (conn.responseCode !in 200..299) return@runCatching null
-            val bytes = conn.inputStream.use { it.readBytes() }
-            org.jetbrains.skia.Data.makeFromBytes(bytes)
+            conn.inputStream.use { it.readBytes() }
         } finally {
             conn.disconnect()
         }
     } else {
         val local = File(path.removePrefix("file://"))
         if (!local.isFile) return@runCatching null
-        org.jetbrains.skia.Data.makeFromFileName(local.absolutePath)
+        local.readBytes()
     }
-    val rawImg = org.jetbrains.skia.Image.makeFromEncoded(data.bytes)
+    val rawImg = org.jetbrains.skia.Image.makeFromEncoded(bytes)
     var small = rawImg
     try {
         small = shrink(rawImg, maxSide)
@@ -99,27 +109,38 @@ actual fun decodeImageFile(path: String, maxSide: Int): ImageBitmap? = runCatchi
             rawImg.close()
         }
     }
-    if (thumb != null) runCatching {
-        val png = thumb.extension == "png"
-        small.encodeToData(if (png) org.jetbrains.skia.EncodedImageFormat.PNG else org.jetbrains.skia.EncodedImageFormat.JPEG, 90)?.bytes?.let {
-            val tmp = File(thumb.path + ".tmp")
-            tmp.writeBytes(it)
-            tmp.renameTo(thumb)
+    try {
+        if (thumb != null) runCatching {
+            val png = thumb.extension == "png"
+            small.encodeToData(if (png) org.jetbrains.skia.EncodedImageFormat.PNG else org.jetbrains.skia.EncodedImageFormat.JPEG, 90)?.use { encoded ->
+                val tmp = File(thumb.path + ".tmp")
+                tmp.writeBytes(encoded.bytes)
+                tmp.renameTo(thumb)
+            }
         }
+        small.toComposeImageBitmap()
+    } finally {
+        small.close()
     }
-    small.toComposeImageBitmap()
 }.getOrNull()
 
 actual fun shrinkImageBytes(bytes: ByteArray, maxSide: Int): ByteArray? = runCatching {
     val img = org.jetbrains.skia.Image.makeFromEncoded(bytes)
     if (maxOf(img.width, img.height) <= maxSide) { img.close(); return@runCatching null }
     val small = shrink(img, maxSide)
-    try { small.encodeToData(org.jetbrains.skia.EncodedImageFormat.JPEG, 90)?.bytes } finally { if (small !== img) small.close(); img.close() }
+    try {
+        small.encodeToData(org.jetbrains.skia.EncodedImageFormat.JPEG, 90)?.use { it.bytes }
+    } finally {
+        if (small !== img) small.close()
+        img.close()
+    }
 }.getOrNull()
+
+private val LOCAL_TIME_FMT = java.time.format.DateTimeFormatter.ofPattern("dd/MM HH:mm:ss")
 
 actual fun localTimeLabel(epochMs: Long): String =
     java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault())
-        .format(java.time.format.DateTimeFormatter.ofPattern("dd/MM HH:mm:ss"))
+        .format(LOCAL_TIME_FMT)
 
 actual fun currentHour(): Int = java.time.LocalTime.now().hour
 

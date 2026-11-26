@@ -35,9 +35,19 @@ pub extern "system" fn JNI_OnLoad(vm: *mut std::ffi::c_void, _reserved: *mut std
         let _ = catch_unwind(|| {
             if let Ok(jvm) = unsafe { JavaVM::from_raw(vm as *mut jni::sys::JavaVM) } {
                 if let Ok(mut env) = jvm.get_env() {
-                    if let Ok(cls) = env.find_class("io/max/paperplay/player/usb/UsbThreadHelper") {
-                        if let Ok(gref) = env.new_global_ref(cls) {
-                            let _ = THREAD_HELPER_CLASS.set(gref);
+                    match env.find_class("io/max/paperplay/player/usb/UsbThreadHelper") {
+                        Ok(cls) => {
+                            match env.new_global_ref(cls) {
+                                Ok(gref) => {
+                                    let _ = THREAD_HELPER_CLASS.set(gref);
+                                }
+                                Err(_) => {
+                                    let _ = env.exception_clear();
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            let _ = env.exception_clear();
                         }
                     }
                 }

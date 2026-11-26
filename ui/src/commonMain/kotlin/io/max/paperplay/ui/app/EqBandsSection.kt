@@ -192,8 +192,8 @@ internal fun EqBandsSection(
 
                 AnimatedVisibility(
                     visible = isExpanded,
-                    enter = if (reduceMotion) EnterTransition.None else androidx.compose.animation.expandVertically(),
-                    exit = if (reduceMotion) ExitTransition.None else androidx.compose.animation.shrinkVertically(),
+                    enter = expandSectionEnter(reduceMotion),
+                    exit = expandSectionExit(reduceMotion),
                 ) {
                     Column {
                         RowDivider()

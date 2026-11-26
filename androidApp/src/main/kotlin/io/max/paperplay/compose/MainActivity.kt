@@ -1,6 +1,7 @@
 package io.max.paperplay.compose
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private val auth = BrowserAuth { startActivity(it) }
 
     private val recordAudioLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private val recordAudioPermissionCallback: () -> Unit = { requestRecordAudioPermission() }
 
     fun requestRecordAudioPermission() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -106,80 +108,6 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra(OPEN_EXTRA)?.let { open.value = it }
         takeShared(intent)
         auth.deliver(intent.data)
-    }
-
-    /**
-     * Shows what the app is doing in the background (library scan, song info, covers, uploads) as a notification with a progress bar.
-     * With "keep running" on it is the foreground service's notification; otherwise it is an ordinary one that goes away when the work ends.
-     */
-    @OptIn(FlowPreview::class)
-    private fun watchActivity(s: AppServices) {
-        fun allowed() = s.library.pref("keep_running") == "true"
-        if (allowed()) KeepAliveService.start(applicationContext)
-        // Updates are dropped while the service is off, so the collector can run either way.
-        s.scope.launch {
-            var idleSince = 0L
-            combine(
-                combine(s.scanner.progress, s.ready, s.error, s.activity) { scan, ready, error, activity -> arrayOf(scan, ready, error, activity) },
-                combine(s.enricher.progress, s.uploader.jobs, s.covers.progress, s.deleteQueue.jobs) { enrich, uploads, covers, deletes -> arrayOf(enrich, uploads, covers, deletes) },
-            ) { v, w -> v to w }
-                .sample(1000)
-                .collect { (v, w) ->
-                    val scan = v[0] as io.max.paperplay.core.app.ScanProgress?
-                    val ready = v[1] as Boolean
-                    val error = v[2] as String?
-                    val activity = v[3] as String?
-                    @Suppress("UNCHECKED_CAST")
-                    val enrich = w[0] as io.max.paperplay.core.app.EnrichProgress?
-                    @Suppress("UNCHECKED_CAST")
-                    val uploads = w[1] as List<io.max.paperplay.core.app.UploadJob>
-                    @Suppress("UNCHECKED_CAST")
-                    val covers = w[2] as io.max.paperplay.core.app.CoverProgress?
-                    @Suppress("UNCHECKED_CAST")
-                    val deletes = w[3] as List<io.max.paperplay.core.dupes.DeleteJob>
-                    val deleting = deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Queued || it.status == io.max.paperplay.core.dupes.DeleteStatus.Deleting }
-                    val open = uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Queued || it.status == io.max.paperplay.core.app.UploadStatus.Uploading }
-                    val busy = scan != null || activity != null || enrich != null || open > 0 || deleting > 0 || covers != null || !ready
-                    val now = System.currentTimeMillis()
-                    if (busy) {
-                        idleSince = 0L
-                        // Work began again: bring the service back if the pref allows it.
-                        if (allowed()) KeepAliveService.start(applicationContext)
-                    } else {
-                        if (idleSince == 0L) idleSince = now
-                        if (now - idleSince >= 20_000L) KeepAliveService.stop(applicationContext)
-                    }
-                    // Each running task is its own notification with its own bar; the service's own notification says nothing about them.
-                    val jobs = buildList {
-                        scan?.let { add(KeepAliveJob(1, "Library scan", it.text, it.fraction?.let { f -> (f * 1000).toInt() }, it.fraction?.let { 1000 })) }
-                        enrich?.let { add(KeepAliveJob(2, "Looking up song info", "${it.done} of ${it.total}" + if (it.current.isNotBlank()) " - ${it.current}" else "", if (it.total > 0) it.done else null, if (it.total > 0) it.total else null)) }
-                        if (open > 0) {
-                            val done = uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done }
-                            add(KeepAliveJob(3, "Uploading songs", "$done of ${uploads.size}", done, uploads.size))
-                        }
-                        if (deleting > 0) {
-                            val finished = deletes.count { it.status != io.max.paperplay.core.dupes.DeleteStatus.Queued && it.status != io.max.paperplay.core.dupes.DeleteStatus.Deleting }
-                            add(KeepAliveJob(4, "Deleting songs", "${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Done }} of ${deletes.size}, ${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Skipped }} kept", finished, deletes.size))
-                        }
-                        covers?.let {
-                            val total = it.total + it.lowTotal
-                            add(KeepAliveJob(5, "Loading covers", listOfNotNull(
-                                if (it.total > 0) "Missing: ${it.total - it.done} left of ${it.total}" else null,
-                                if (it.lowTotal > 0) "Low quality: ${it.lowTotal - it.lowDone} left of ${it.lowTotal}" else null,
-                            ).joinToString("\n"), if (total > 0) it.done + it.lowDone else null, if (total > 0) total else null))
-                        }
-                        // The activity line often repeats the scan or another task; it is shown only when it says something they do not.
-                        activity?.let { line -> if (none { j -> j.text.contains(line) || line.contains(j.text) }) add(KeepAliveJob(6, "Paper Play", line, null, null)) }
-                    }
-                    KeepAliveService.updateJobs(applicationContext, jobs)
-                    when {
-                        error != null -> KeepAliveService.update(applicationContext, "Paper Play is running", error, null, null, false)
-                        jobs.isNotEmpty() -> Unit // the first task is the service's own notification (updateJobs)
-                        !ready -> KeepAliveService.update(applicationContext, "Paper Play is running", "Connecting to Telegram", null, null, true)
-                        else -> KeepAliveService.update(applicationContext, "Paper Play is running", "Everything is up to date", null, null, false)
-                    }
-                }
-        }
     }
 
     private val audioPermission get() = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
@@ -271,9 +199,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         currentInstance = this
-        io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission = {
-            requestRecordAudioPermission()
-        }
+        io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission = recordAudioPermissionCallback
         enableEdgeToEdge()
         // No grey scrim behind 3-button navigation; the app draws under both bars.
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
@@ -435,7 +361,7 @@ class MainActivity : ComponentActivity() {
                         } else AppServices(AndroidPlatform(applicationContext)).also {
                             shared = it
                             services = it
-                            watchActivity(it)
+                            watchActivity(applicationContext, it)
                             auth.onLateReturn { q -> it.scope.launch { runCatching { it.spotify.resume(q) } } }
                         }
                     },
@@ -502,7 +428,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         if (currentInstance === this) currentInstance = null
-        if (io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission != null) {
+        if (io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission === recordAudioPermissionCallback) {
             io.max.paperplay.player.usb.UsbAudioManager.onRequestRecordAudioPermission = null
         }
         super.onDestroy()
@@ -543,6 +469,80 @@ class MainActivity : ComponentActivity() {
         @Volatile
         var currentInstance: MainActivity? = null
             private set
+
+        /**
+         * Shows what the app is doing in the background (library scan, song info, covers, uploads) as a notification with a progress bar.
+         * Uses applicationContext so the process-scoped coroutine never retains a destroyed MainActivity.
+         */
+        @OptIn(FlowPreview::class)
+        private fun watchActivity(appContext: Context, s: AppServices) {
+            fun allowed() = s.library.pref("keep_running") == "true"
+            if (allowed()) KeepAliveService.start(appContext)
+            // Updates are dropped while the service is off, so the collector can run either way.
+            s.scope.launch {
+                var idleSince = 0L
+                combine(
+                    combine(s.scanner.progress, s.ready, s.error, s.activity) { scan, ready, error, activity -> arrayOf(scan, ready, error, activity) },
+                    combine(s.enricher.progress, s.uploader.jobs, s.covers.progress, s.deleteQueue.jobs) { enrich, uploads, covers, deletes -> arrayOf(enrich, uploads, covers, deletes) },
+                ) { v, w -> v to w }
+                    .sample(1000)
+                    .collect { (v, w) ->
+                        val scan = v[0] as io.max.paperplay.core.app.ScanProgress?
+                        val ready = v[1] as Boolean
+                        val error = v[2] as String?
+                        val activity = v[3] as String?
+                        @Suppress("UNCHECKED_CAST")
+                        val enrich = w[0] as io.max.paperplay.core.app.EnrichProgress?
+                        @Suppress("UNCHECKED_CAST")
+                        val uploads = w[1] as List<io.max.paperplay.core.app.UploadJob>
+                        @Suppress("UNCHECKED_CAST")
+                        val covers = w[2] as io.max.paperplay.core.app.CoverProgress?
+                        @Suppress("UNCHECKED_CAST")
+                        val deletes = w[3] as List<io.max.paperplay.core.dupes.DeleteJob>
+                        val deleting = deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Queued || it.status == io.max.paperplay.core.dupes.DeleteStatus.Deleting }
+                        val open = uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Queued || it.status == io.max.paperplay.core.app.UploadStatus.Uploading }
+                        val busy = scan != null || activity != null || enrich != null || open > 0 || deleting > 0 || covers != null || !ready
+                        val now = System.currentTimeMillis()
+                        if (busy) {
+                            idleSince = 0L
+                            // Work began again: bring the service back if the pref allows it.
+                            if (allowed()) KeepAliveService.start(appContext)
+                        } else {
+                            if (idleSince == 0L) idleSince = now
+                            if (now - idleSince >= 20_000L) KeepAliveService.stop(appContext)
+                        }
+                        // Each running task is its own notification with its own bar; the service's own notification says nothing about them.
+                        val jobs = buildList {
+                            scan?.let { add(KeepAliveJob(1, "Library scan", it.text, it.fraction?.let { f -> (f * 1000).toInt() }, it.fraction?.let { 1000 })) }
+                            enrich?.let { add(KeepAliveJob(2, "Looking up song info", "${it.done} of ${it.total}" + if (it.current.isNotBlank()) " - ${it.current}" else "", if (it.total > 0) it.done else null, if (it.total > 0) it.total else null)) }
+                            if (open > 0) {
+                                val done = uploads.count { it.status == io.max.paperplay.core.app.UploadStatus.Done }
+                                add(KeepAliveJob(3, "Uploading songs", "$done of ${uploads.size}", done, uploads.size))
+                            }
+                            if (deleting > 0) {
+                                val finished = deletes.count { it.status != io.max.paperplay.core.dupes.DeleteStatus.Queued && it.status != io.max.paperplay.core.dupes.DeleteStatus.Deleting }
+                                add(KeepAliveJob(4, "Deleting songs", "${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Done }} of ${deletes.size}, ${deletes.count { it.status == io.max.paperplay.core.dupes.DeleteStatus.Skipped }} kept", finished, deletes.size))
+                            }
+                            covers?.let {
+                                val total = it.total + it.lowTotal
+                                add(KeepAliveJob(5, "Loading covers", listOfNotNull(
+                                    if (it.total > 0) "Missing: ${it.total - it.done} left of ${it.total}" else null,
+                                    if (it.lowTotal > 0) "Low quality: ${it.lowTotal - it.lowDone} left of ${it.lowTotal}" else null,
+                                ).joinToString("\n"), if (total > 0) it.done + it.lowDone else null, if (total > 0) total else null))
+                            }
+                            // The activity line often repeats the scan or another task; it is shown only when it says something they do not.
+                            activity?.let { line -> if (none { j -> j.text.contains(line) || line.contains(j.text) }) add(KeepAliveJob(6, "Paper Play", line, null, null)) }
+                        }
+                        KeepAliveService.updateJobs(appContext, jobs)
+                        when {
+                            error != null -> KeepAliveService.update(appContext, "Paper Play is running", error, null, null, false)
+                            jobs.isNotEmpty() -> Unit // the first task is the service's own notification (updateJobs)
+                            !ready -> KeepAliveService.update(appContext, "Paper Play is running", "Connecting to Telegram", null, null, true)
+                            else -> KeepAliveService.update(appContext, "Paper Play is running", "Everything is up to date", null, null, false)
+                        }
+                    }
+            }
+        }
     }
 
     override fun onStart() {

@@ -703,6 +703,7 @@ internal class JavaNetplay(private val env: NetplayEnv) : Netplay {
         r.jobs.forEach { it.cancel() }
         runCatching { r.socket.close() }
         for (w in r.waiting.values) w.completeExceptionally(IOException("closed"))
+        runCatching { env.player.clearExternal() }
         if (reason != null) _notice.value = reason
     }
 

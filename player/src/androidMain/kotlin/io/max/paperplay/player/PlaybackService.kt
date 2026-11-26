@@ -123,7 +123,7 @@ class PlaybackService : MediaSessionService() {
         applyEqualizer(exo.audioSessionId)
         applyNormalize(exo.audioSessionId)
 
-        val forwardingPlayer = io.max.paperplay.player.usb.UsbVolumeForwardingPlayer(exo, this)
+        val forwardingPlayer = io.max.paperplay.player.usb.UsbVolumeForwardingPlayer(exo, applicationContext)
         io.max.paperplay.player.usb.UsbAudioManager.instance?.forwardingPlayer = forwardingPlayer
         PlaybackCore.onRebuildPlayerForBitPerfect = { explicit ->
             scheduleRebuildForBitPerfect(explicit)
@@ -188,13 +188,17 @@ class PlaybackService : MediaSessionService() {
         player?.removeListener(playerListener)
         loggingListener?.let { player?.removeListener(it) }
         loggingListener = null
+        if (PlaybackCore.activePlayer === player) PlaybackCore.activePlayer = null
         player?.release()
         player = null
         super.onDestroy()
     }
 
     @OptIn(UnstableApi::class)
-    private fun wrapExoAdapter(exo: ExoPlayer): io.max.paperplay.player.usb.RebuildPlayerAdapter<androidx.media3.common.MediaItem, androidx.media3.common.PlaybackParameters> =
+    private fun wrapExoAdapter(
+        exo: ExoPlayer,
+        attachedLogListener: Player.Listener?,
+    ): io.max.paperplay.player.usb.RebuildPlayerAdapter<androidx.media3.common.MediaItem, androidx.media3.common.PlaybackParameters> =
         object : io.max.paperplay.player.usb.RebuildPlayerAdapter<androidx.media3.common.MediaItem, androidx.media3.common.PlaybackParameters> {
             override val itemCount: Int get() = exo.mediaItemCount
             override val currentIndex: Int get() = exo.currentMediaItemIndex
@@ -220,7 +224,7 @@ class PlaybackService : MediaSessionService() {
             override fun prepare() { exo.prepare() }
             override fun detachListeners() {
                 exo.removeListener(playerListener)
-                loggingListener?.let { exo.removeListener(it) }
+                attachedLogListener?.let { exo.removeListener(it) }
             }
             override fun release() { exo.release() }
         }
@@ -251,7 +255,7 @@ class PlaybackService : MediaSessionService() {
         val createdExos = mutableListOf<ExoPlayer>()
         var newForwarding: io.max.paperplay.player.usb.UsbVolumeForwardingPlayer? = null
         val (_, plan) = io.max.paperplay.player.usb.PlaybackRebuildTransaction.execute(
-            old = wrapExoAdapter(old),
+            old = wrapExoAdapter(old, loggingListener),
             userPlayIntent = PlaybackCore.userPlayIntent,
             createNext = {
                 val next = PlaybackCore.createPlayer(this)
@@ -260,11 +264,11 @@ class PlaybackService : MediaSessionService() {
                 loggingListener = logListener
                 next.addListener(logListener)
                 createdExos.add(next)
-                wrapExoAdapter(next)
+                wrapExoAdapter(next, logListener)
             },
             wrapForwarding = {
                 val nextExo = createdExos.last()
-                io.max.paperplay.player.usb.UsbVolumeForwardingPlayer(nextExo, this).also { newForwarding = it }
+                io.max.paperplay.player.usb.UsbVolumeForwardingPlayer(nextExo, applicationContext).also { newForwarding = it }
             },
             session = object : io.max.paperplay.player.usb.SessionSwapAdapter<io.max.paperplay.player.usb.UsbVolumeForwardingPlayer> {
                 override fun swapSessionPlayer(newPlayer: io.max.paperplay.player.usb.UsbVolumeForwardingPlayer) {
@@ -281,7 +285,7 @@ class PlaybackService : MediaSessionService() {
                 PlaybackCore.playIntentTracker.reset(p.targetPlayWhenReady)
                 PlaybackCore.playerPlayWhenReady = p.targetPlayWhenReady
                 PlaybackCore.playerPlaybackState = nextExo.playbackState
-                PlaybackCore.playerIsPlaying = false
+                PlaybackCore.playerIsPlaying = nextExo.isPlaying
                 newForwarding?.notifyDeviceInfoChanged()
             },
         )

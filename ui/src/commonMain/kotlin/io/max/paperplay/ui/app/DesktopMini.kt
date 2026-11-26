@@ -71,8 +71,10 @@ fun PublishMiniState(showFormat: Boolean = true) {
 @Composable
 fun MiniPlayerToggle(modifier: Modifier = Modifier) {
     val on by DesktopMini.visible.collectAsState()
-    IconButton(DesktopMini::toggle, modifier) {
-        AppIcon(Icons.Rounded.PictureInPictureAlt, if (on) "Close mini player" else "Open mini player", Modifier.size(22.dp), tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+    DesktopTooltip(if (on) "Close mini player" else "Open mini player") {
+        IconButton(DesktopMini::toggle, modifier.desktopInteractive(CircleShape)) {
+            AppIcon(Icons.Rounded.PictureInPictureAlt, if (on) "Close mini player" else "Open mini player", Modifier.size(22.dp), tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -107,17 +109,39 @@ fun DesktopMiniContent(onClose: (() -> Unit)? = null) {
 }
 
 @Composable
+fun DesktopMiniBodyForBench(state: PlaybackUiState, controls: PlayerControls?) {
+    MiniBody(state, controls, onClose = null, showFormat = true)
+}
+
+@Composable
 internal fun MiniBody(state: PlaybackUiState, controls: PlayerControls?, onClose: (() -> Unit)? = null, showFormat: Boolean = true) {
     val song = state.current
+    val reduce = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val appear = remember { androidx.compose.animation.core.Animatable(0f) }
+    val enterSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Desktop.MiniEnterMs)
+    LaunchedEffect(Unit) { appear.animateTo(1f, enterSpec) }
     CoverTinted(song?.coverUri) {
         val ink = MaterialTheme.colorScheme.onPrimaryContainer
         // Frameless: rounded card, cover running the full height on the left, a small close button on the right.
         val shape = androidx.compose.ui.graphics.RectangleShape // Windows rounds the window
         // graphicsLayer clipping keeps the corners anti-aliased against the transparent window; a plain clip left dark fringes.
-        Box(Modifier.fillMaxSize().clip(shape).background(MaterialTheme.colorScheme.primaryContainer)) {
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer {
+                    val p = appear.value
+                    alpha = p
+                    if (!reduce) {
+                        val s = 0.96f + 0.04f * p
+                        scaleX = s
+                        scaleY = s
+                    }
+                }
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+        ) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 if (song != null) {
-                    val coverScale by androidx.compose.animation.core.animateFloatAsState(if (state.playing) 1f else 0.86f, androidx.compose.animation.core.spring(0.6f, 280f), label = "miniCover")
+                    val coverScale by androidx.compose.animation.core.animateFloatAsState(if (state.playing) 1f else 0.86f, io.max.paperplay.ui.theme.motionPlayMorphSpec(), label = "miniCover")
                     Box(Modifier.size(110.dp), contentAlignment = Alignment.Center) {
                         CoverImage(song.coverUri, song.id, Modifier.graphicsLayer { scaleX = coverScale; scaleY = coverScale }, size = 110.dp, radius = 14.dp)
                     }
@@ -125,42 +149,80 @@ internal fun MiniBody(state: PlaybackUiState, controls: PlayerControls?, onClose
                 Column(Modifier.weight(1f).padding(start = 14.dp, end = 12.dp)) {
                     Text(song?.title ?: "Nothing is playing", Modifier.padding(end = 22.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, color = ink)
                     if (song != null) Text(song.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = ink.copy(alpha = 0.7f))
-                    val posNow = controls?.position?.collectAsState()?.value
                     Row(Modifier.padding(top = 6.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        IconButton({ controls?.previous() }, Modifier.size(36.dp), enabled = song != null) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(26.dp), tint = ink) }
-                        IconButton({ controls?.togglePlay() }, Modifier.size(44.dp), enabled = song != null) {
+                        IconButton({ controls?.previous() }, Modifier.size(36.dp).desktopInteractive(CircleShape, enabled = song != null), enabled = song != null) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(26.dp), tint = ink) }
+                        IconButton({ controls?.togglePlay() }, Modifier.size(44.dp).desktopInteractive(CircleShape, enabled = song != null), enabled = song != null) {
+                            val enterFade = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs)
+                            val exitFade = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs)
                             androidx.compose.animation.AnimatedContent(
                                 state.playing, label = "miniPlayPause",
                                 transitionSpec = {
-                                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)) + androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(160), initialScale = 0.5f))
-                                        .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(110)) + androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(110), targetScale = 0.5f))
+                                    if (reduce) {
+                                        androidx.compose.animation.fadeIn(enterFade) togetherWith androidx.compose.animation.fadeOut(exitFade)
+                                    } else {
+                                        (androidx.compose.animation.fadeIn(enterFade) + androidx.compose.animation.scaleIn(enterFade, initialScale = 0.5f))
+                                            .togetherWith(androidx.compose.animation.fadeOut(exitFade) + androidx.compose.animation.scaleOut(exitFade, targetScale = 0.5f))
+                                    }
                                 },
                             ) { playing -> AppIcon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Play", Modifier.size(34.dp), tint = ink) }
                         }
-                        IconButton({ controls?.next() }, Modifier.size(36.dp), enabled = song != null) { AppIcon(Icons.Rounded.FastForward, "Next", Modifier.size(26.dp), tint = ink) }
+                        IconButton({ controls?.next() }, Modifier.size(36.dp).desktopInteractive(CircleShape, enabled = song != null), enabled = song != null) { AppIcon(Icons.Rounded.FastForward, "Next", Modifier.size(26.dp), tint = ink) }
                         if (showFormat && song != null) io.max.paperplay.ui.components.AudioBadge(song, Modifier.padding(start = 6.dp), color = ink.copy(alpha = 0.75f), compact = true)
-                        // Time on the right, so the card has no dead space beside the controls.
-                        if (song != null) Text(
-                            io.max.paperplay.ui.logic.formatDuration((posNow?.positionMs ?: 0) / 1000) + " / " + io.max.paperplay.ui.logic.formatDuration(((if (state.durationMs > 0) state.durationMs else song.durationSec * 1000L)) / 1000),
-                            Modifier.weight(1f).padding(end = 4.dp), style = MaterialTheme.typography.labelSmall, color = ink.copy(alpha = 0.7f), textAlign = androidx.compose.ui.text.style.TextAlign.End, maxLines = 1,
+                        // Time on the right, scoped to its own leaf composable so position ticks do not recompose MiniBody.
+                        if (song != null) MiniTimeReadout(
+                            controls = controls,
+                            durationMs = if (state.durationMs > 0) state.durationMs else song.durationSec * 1000L,
+                            color = ink.copy(alpha = 0.7f),
+                            modifier = Modifier.weight(1f).padding(end = 4.dp),
                         )
                     }
                 }
             }
-            if (onClose != null) IconButton(onClose, Modifier.align(Alignment.TopEnd).padding(2.dp).size(26.dp)) {
+            if (onClose != null) IconButton(onClose, Modifier.align(Alignment.TopEnd).padding(2.dp).size(26.dp).desktopInteractive(CircleShape)) {
                 AppIcon(Icons.Rounded.Close, "Close mini player", Modifier.size(16.dp), tint = ink.copy(alpha = 0.7f))
             }
-            val pos = controls?.position?.collectAsState()
-            val fill = ink
-            val progress by androidx.compose.animation.core.animateFloatAsState(
-                pos?.value?.progress(state.durationMs) ?: 0f, androidx.compose.animation.core.tween(300, easing = androidx.compose.animation.core.LinearEasing), label = "miniProgress",
-            )
-            Box(
-                Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp)
-                    .drawBehind { drawRect(fill, size = Size(size.width * progress, size.height)) },
+            MiniProgressTrack(
+                controls = controls,
+                durationMs = state.durationMs,
+                fill = ink,
+                modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp),
             )
         }
     }
+}
+
+@Composable
+private fun MiniTimeReadout(
+    controls: PlayerControls?,
+    durationMs: Long,
+    color: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    val posNow = controls?.position?.collectAsState()?.value
+    Text(
+        io.max.paperplay.ui.logic.formatDuration((posNow?.positionMs ?: 0) / 1000) + " / " + io.max.paperplay.ui.logic.formatDuration(durationMs / 1000),
+        modifier = modifier,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+        maxLines = 1,
+    )
+}
+
+@Composable
+private fun MiniProgressTrack(
+    controls: PlayerControls?,
+    durationMs: Long,
+    fill: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    val pos = controls?.position?.collectAsState()
+    val progress by androidx.compose.animation.core.animateFloatAsState(
+        pos?.value?.progress(durationMs) ?: 0f,
+        io.max.paperplay.ui.theme.motionLinearTween(io.max.paperplay.ui.theme.Motion.Effects.CoverCrossfadeMs),
+        label = "miniProgress",
+    )
+    Box(modifier.drawBehind { drawRect(fill, size = Size(size.width * progress, size.height)) })
 }
 
 @Preview(name = "Mini player", widthDp = 360, heightDp = 100)

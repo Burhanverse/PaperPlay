@@ -4,6 +4,11 @@ import androidx.compose.material.icons.rounded.Campaign
 import io.max.paperplay.ui.components.AppIcon
 import io.max.paperplay.ui.components.toggleOnColor
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -12,7 +17,11 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
@@ -171,6 +180,8 @@ fun Sidebar(
     val look = prefs?.selectionLook ?: SelectionLook.Fill
     val itemShape = RoundedCornerShape(((prefs?.selectionRadius ?: 40f) / 100f * 22f).dp)
     val barShape = RoundedCornerShape(((prefs?.barRadius ?: 60f) / 100f * 28f).dp)
+    val sidebarScroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
     @Composable
     fun item(id: String, label: String, icon: @Composable () -> Unit, selected: Boolean, trailing: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
         val selectedFill = when {
@@ -180,33 +191,29 @@ fun Sidebar(
             look == SelectionLook.Ring || look == SelectionLook.Dot || look == SelectionLook.Text -> Color.Transparent
             else -> scheme.surfaceContainerHighest
         }
-        // The selection colour eases in and out, and the pointer over an item lights it softly.
-        val hover = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-        val hovered by hover.collectIsHoveredAsState()
-        val fill by androidx.compose.animation.animateColorAsState(
-            if (hovered && selectedFill == Color.Transparent) scheme.onSurface.copy(alpha = 0.07f) else selectedFill,
-            io.max.paperplay.ui.theme.motionTween(io.max.paperplay.ui.theme.Motion.FAST), label = "sidebar item",
-        )
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).clip(itemShape)
-                .background(fill)
-                .then(if (selected && look == SelectionLook.Ring) Modifier.border(1.5.dp, scheme.primary, itemShape) else Modifier)
-                .hoverable(hover)
-                .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center,
-        ) {
-            icon()
-            if (expanded) {
-                Text(
-                    label, Modifier.padding(start = 12.dp).weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (selected) FontWeight.Bold else null,
-                    // The Text look marks the open page by colouring its name.
-                    color = if (selected && look == SelectionLook.Text) scheme.primary else Color.Unspecified,
-                )
-                // The Dot look marks it with a small dot.
-                if (selected && look == SelectionLook.Dot) Box(Modifier.padding(end = 4.dp).size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(scheme.primary))
-                trailing?.invoke()
+        val fill by animateColorAsState(selectedFill, io.max.paperplay.ui.theme.motionColorSpec(), label = "sidebar item")
+        DesktopTooltip(label, enabled = !expanded) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).clip(itemShape)
+                    .background(fill)
+                    .then(if (selected && look == SelectionLook.Ring) Modifier.border(1.5.dp, scheme.primary, itemShape) else Modifier)
+                    .desktopInteractive(itemShape)
+                    .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center,
+            ) {
+                icon()
+                if (expanded) {
+                    Text(
+                        label, Modifier.padding(start = 12.dp).weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (selected) FontWeight.Bold else null,
+                        // The Text look marks the open page by colouring its name.
+                        color = if (selected && look == SelectionLook.Text) scheme.primary else Color.Unspecified,
+                    )
+                    // The Dot look marks it with a small dot.
+                    if (selected && look == SelectionLook.Dot) Box(Modifier.padding(end = 4.dp).size(7.dp).clip(CircleShape).background(scheme.primary))
+                    trailing?.invoke()
+                }
             }
         }
     }
@@ -221,48 +228,89 @@ fun Sidebar(
             Spacer(Modifier.height(16.dp))
         }
     }
-    LazyColumn(modifier.partSurface(LookGroup.Nav, scheme.surfaceContainerLow, barShape).padding(vertical = 8.dp)) {
-        item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = if (expanded) Arrangement.End else Arrangement.Center) {
-                IconButton(onToggle) { AppIcon(Icons.Rounded.Menu, "Toggle Sidebar") }
-            }
-        }
-        items(mainPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
-        item { label("Your library") }
-        items(libraryPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
-        // Tools is a row like the others: a toolbox icon, and an arrow that folds the list away.
-        item {
-            item("tools", "Tools", { AppIcon(Icons.Rounded.Build, null, Modifier.size(22.dp)) }, false, {
-                AppIcon(if (toolsOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (toolsOpen) "Hide tools" else "Show tools", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
-            }) { toolsOpen = !toolsOpen }
-        }
-        if (toolsOpen) items(toolPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
-        item { androidx.compose.material3.HorizontalDivider(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = scheme.onSurface.copy(alpha = 0.08f)) }
-        item { item("settings", "Settings", { AppIcon(Icons.Rounded.Settings, null, Modifier.size(22.dp)) }, page == "settings" && playlistId == null) { onPage("settings") } }
-        // Playlists and Telegram fold like Tools: an icon row with a fold arrow, which still works when the sidebar is narrow.
-        item {
-            item("playlists_group", "Playlists", { AppIcon(Icons.Rounded.QueueMusic, null, Modifier.size(22.dp)) }, false, {
-                IconButton(onNewPlaylist, Modifier.size(32.dp)) { AppIcon(Icons.Rounded.Add, "New playlist", Modifier.size(20.dp)) }
-                AppIcon(if (playlistsOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (playlistsOpen) "Hide playlists" else "Show playlists", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
-            }) { playlistsOpen = !playlistsOpen }
-        }
-        if (playlistsOpen) items(playlists, key = { it.id }) { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
-        // The main chat's topics (and starred channels) sit apart from the playlists you made.
-        if (telegram.isNotEmpty() || indexed.isNotEmpty()) {
+    @Composable
+    fun foldChevron(open: Boolean, contentDescription: String) {
+        val rotation by animateFloatAsState(
+            targetValue = if (open) 180f else 0f,
+            animationSpec = io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Micro.IconTurnMs),
+            label = "foldChevron",
+        )
+        AppIcon(
+            Icons.Rounded.ExpandMore,
+            contentDescription,
+            Modifier.size(20.dp).graphicsLayer { rotationZ = rotation },
+            tint = scheme.onSurfaceVariant,
+        )
+    }
+    DesktopScrollHost(
+        sidebarScroll,
+        modifier.partSurface(LookGroup.Nav, scheme.surfaceContainerLow, barShape),
+    ) { scrollMod ->
+        LazyColumn(scrollMod.padding(vertical = 8.dp), state = sidebarScroll) {
             item {
-                item("telegram_group", "From Telegram", { AppIcon(Icons.Rounded.Forum, null, Modifier.size(22.dp)) }, false, {
-                    AppIcon(if (telegramOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (telegramOpen) "Hide Telegram" else "Show Telegram", Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
-                }) { telegramOpen = !telegramOpen }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = if (expanded) Arrangement.End else Arrangement.Center) {
+                    DesktopTooltip(if (expanded) "Collapse sidebar" else "Expand sidebar") {
+                        IconButton(onToggle, Modifier.desktopInteractive(CircleShape)) { AppIcon(Icons.Rounded.Menu, "Toggle Sidebar") }
+                    }
+                }
             }
-            if (telegramOpen) items(telegram, key = { it.key }) { t ->
-                item(t.key, t.name, { CoverGrid(t.songs.mapNotNull { it.coverUri }.distinct().take(4), t.key, 28.dp, 6.dp) }, false) { onTelegram(t) }
+            items(mainPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
+            item { label("Your library") }
+            items(libraryPages, key = { it.id }) { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
+            // Tools is a row like the others: a toolbox icon, and an arrow that folds the list away.
+            item {
+                item("tools", "Tools", { AppIcon(Icons.Rounded.Build, null, Modifier.size(22.dp)) }, false, {
+                    foldChevron(toolsOpen, if (toolsOpen) "Hide tools" else "Show tools")
+                }) { toolsOpen = !toolsOpen }
             }
-            // Indexed chats: browsed a page at a time, their songs join the library only when added.
-            if (telegramOpen) items(indexed, key = { "idx${it.id}" }) { c ->
-                item("idx${c.id}", c.title, { AppIcon(if (c.isChannel) Icons.Rounded.Campaign else Icons.Rounded.Forum, null, Modifier.size(22.dp)) }, false) { indexedSource?.open?.invoke(c) }
+            item(key = "tools_body") {
+                AnimatedVisibility(toolsOpen, enter = expandSectionEnter(reduceMotion), exit = expandSectionExit(reduceMotion)) {
+                    Column {
+                        toolPages.forEach { p -> item(p.id, p.label, { AppIcon(p.icon, null, Modifier.size(22.dp)) }, page == p.id && playlistId == null) { onPage(p.id) } }
+                    }
+                }
             }
+            item { androidx.compose.material3.HorizontalDivider(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = scheme.onSurface.copy(alpha = 0.08f)) }
+            item { item("settings", "Settings", { AppIcon(Icons.Rounded.Settings, null, Modifier.size(22.dp)) }, page == "settings" && playlistId == null) { onPage("settings") } }
+            // Playlists and Telegram fold like Tools: an icon row with a fold arrow, which still works when the sidebar is narrow.
+            item {
+                item("playlists_group", "Playlists", { AppIcon(Icons.Rounded.QueueMusic, null, Modifier.size(22.dp)) }, false, {
+                    DesktopTooltip("New playlist") {
+                        IconButton(onNewPlaylist, Modifier.size(32.dp).desktopInteractive(CircleShape)) { AppIcon(Icons.Rounded.Add, "New playlist", Modifier.size(20.dp)) }
+                    }
+                    foldChevron(playlistsOpen, if (playlistsOpen) "Hide playlists" else "Show playlists")
+                }) { playlistsOpen = !playlistsOpen }
+            }
+            item(key = "playlists_body") {
+                AnimatedVisibility(playlistsOpen, enter = expandSectionEnter(reduceMotion), exit = expandSectionExit(reduceMotion)) {
+                    Column {
+                        playlists.forEach { g -> item(g.id, g.name, { CoverGrid(g.coverUris, g.id, 28.dp, 6.dp) }, playlistId == g.id) { onPlaylist(g) } }
+                    }
+                }
+            }
+            // The main chat's topics (and starred channels) sit apart from the playlists you made.
+            if (telegram.isNotEmpty() || indexed.isNotEmpty()) {
+                item {
+                    item("telegram_group", "From Telegram", { AppIcon(Icons.Rounded.Forum, null, Modifier.size(22.dp)) }, false, {
+                        foldChevron(telegramOpen, if (telegramOpen) "Hide Telegram" else "Show Telegram")
+                    }) { telegramOpen = !telegramOpen }
+                }
+                item(key = "telegram_body") {
+                    AnimatedVisibility(telegramOpen, enter = expandSectionEnter(reduceMotion), exit = expandSectionExit(reduceMotion)) {
+                        Column {
+                            telegram.forEach { t ->
+                                item(t.key, t.name, { CoverGrid(t.songs.mapNotNull { it.coverUri }.distinct().take(4), t.key, 28.dp, 6.dp) }, false) { onTelegram(t) }
+                            }
+                            // Indexed chats: browsed a page at a time, their songs join the library only when added.
+                            indexed.forEach { c ->
+                                item("idx${c.id}", c.title, { AppIcon(if (c.isChannel) Icons.Rounded.Campaign else Icons.Rounded.Forum, null, Modifier.size(22.dp)) }, false) { indexedSource?.open?.invoke(c) }
+                            }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(8.dp)) }
         }
-        item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
@@ -330,13 +378,23 @@ fun PlayerBar(
             }
         } else Column(Modifier.width(centre), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                IconButton({ backend?.toggleShuffle() }) { AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) toggleOnColor() else scheme.onSurface) }
+                DesktopTooltip("Shuffle (S)") {
+                    IconButton({ backend?.toggleShuffle() }, Modifier.desktopInteractive(CircleShape)) { AppIcon(Icons.Rounded.Shuffle, "Shuffle", tint = if (state.shuffle) toggleOnColor() else scheme.onSurface) }
+                }
                 // The same rewind, play and fast-forward glyphs as the phone player, with the play button drawn bare.
-                IconButton({ backend?.previous() }) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(28.dp)) }
-                IconButton({ backend?.togglePlay() }, Modifier.size(48.dp)) { AppIcon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(38.dp)) }
-                IconButton({ backend?.next() }) { AppIcon(Icons.Rounded.FastForward, "Next", Modifier.size(28.dp)) }
-                IconButton({ backend?.cycleRepeat() }) {
-                    AppIcon(if (state.repeat == RepeatUi.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat", tint = if (state.repeat != RepeatUi.Off) toggleOnColor() else scheme.onSurface)
+                DesktopTooltip("Previous (Ctrl+Left)") {
+                    IconButton({ backend?.previous() }, Modifier.desktopInteractive(CircleShape)) { AppIcon(Icons.Rounded.FastRewind, "Previous", Modifier.size(28.dp)) }
+                }
+                DesktopTooltip(if (state.playing) "Pause (Space)" else "Play (Space)") {
+                    IconButton({ backend?.togglePlay() }, Modifier.size(48.dp).desktopInteractive(CircleShape)) { AppIcon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(38.dp)) }
+                }
+                DesktopTooltip("Next (Ctrl+Right)") {
+                    IconButton({ backend?.next() }, Modifier.desktopInteractive(CircleShape)) { AppIcon(Icons.Rounded.FastForward, "Next", Modifier.size(28.dp)) }
+                }
+                DesktopTooltip("Repeat (R)") {
+                    IconButton({ backend?.cycleRepeat() }, Modifier.desktopInteractive(CircleShape)) {
+                        AppIcon(if (state.repeat == RepeatUi.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat", tint = if (state.repeat != RepeatUi.Off) toggleOnColor() else scheme.onSurface)
+                    }
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -345,7 +403,9 @@ fun PlayerBar(
             }
         }
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            if (shown("queue")) IconButton(onNowPlaying ?: onOpen) { AppIcon(Icons.Rounded.QueueMusic, "Queue", sz, tint = off) }
+            if (shown("queue")) DesktopTooltip("Now playing & queue") {
+                IconButton(onNowPlaying ?: onOpen, Modifier.desktopInteractive(CircleShape)) { AppIcon(Icons.Rounded.QueueMusic, "Queue", sz, tint = off) }
+            }
             if (!wide) tools()
             if (shown("devices")) extras()
             var showEq by remember { mutableStateOf(false) }
@@ -356,15 +416,21 @@ fun PlayerBar(
             }
             if (backend != null) {
                 val eqOn by backend.eqOn.collectAsState()
-                IconButton({ showEq = true }) { AppIcon(io.max.paperplay.ui.components.EqualizerBoardIcon, "Equalizer", sz, tint = if (eqOn) toggleOnColor() else off) }
+                DesktopTooltip("Equalizer") {
+                    IconButton({ showEq = true }, Modifier.desktopInteractive(CircleShape)) { AppIcon(io.max.paperplay.ui.components.EqualizerBoardIcon, "Equalizer", sz, tint = if (eqOn) toggleOnColor() else off) }
+                }
                 if (showEq) EqualizerDialog(backend) { showEq = false }
             }
             Spacer(Modifier.width(8.dp))
             var lastVolume by remember { mutableStateOf(1f) }
-            IconButton({ if (volume > 0f) { lastVolume = volume; backend?.setVolume(0f) } else backend?.setVolume(lastVolume) }) { AppIcon(if (volume > 0f) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff, "Mute", sz, tint = off) }
-            VolumeBar(volume, { backend?.setVolume(it) }, scheme.onSurface, Modifier.width(100.dp))
+            DesktopTooltip("Mute (M)") {
+                IconButton({ if (volume > 0f) { lastVolume = volume; backend?.setVolume(0f) } else backend?.setVolume(lastVolume) }, Modifier.desktopInteractive(CircleShape)) { AppIcon(if (volume > 0f) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff, "Mute", sz, tint = off) }
+            }
+            VolumeBar(volume, { backend?.setVolume(it) }, scheme.onSurface, Modifier.width(100.dp).pointerHoverIcon(PointerIcon.Hand))
             Spacer(Modifier.width(4.dp))
-            if (shown("fullscreen")) IconButton(onOpen) { AppIcon(Icons.Rounded.Fullscreen, "Full screen player", Modifier.size(26.dp), tint = off) }
+            if (shown("fullscreen")) DesktopTooltip("Full screen player") {
+                IconButton(onOpen, Modifier.desktopInteractive(CircleShape)) { AppIcon(Icons.Rounded.Fullscreen, "Full screen player", Modifier.size(26.dp), tint = off) }
+            }
         }
     }
     }
@@ -384,11 +450,20 @@ private fun ElapsedSeek(backend: PlayerControls?, durationMs: Long, style: andro
 @Composable
 fun ThinSeek(progress: () -> Float, onSeek: (Float) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, colors: List<Color>? = null) {
     var dragging by remember { mutableStateOf<Float?>(null) }
+    val hoverSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val hovered by hoverSource.collectIsHoveredAsState()
+    val trackHeight by animateDpAsState(
+        targetValue = if ((hovered || dragging != null) && enabled) 6.dp else 4.dp,
+        animationSpec = io.max.paperplay.ui.theme.desktopHoverSpec(),
+        label = "seekHeight",
+    )
     val scheme = MaterialTheme.colorScheme
     BoxWithConstraints(modifier.height(20.dp)) {
         val w = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         Box(
             Modifier.fillMaxSize()
+                .then(if (enabled) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
+                .hoverable(hoverSource, enabled = enabled)
                 .pointerInput(w, enabled) { if (enabled) detectTapGestures { onSeek((it.x / w).coerceIn(0f, 1f)) } }
                 .pointerInput(w, enabled) {
                     if (enabled) detectHorizontalDragGestures(
@@ -397,10 +472,10 @@ fun ThinSeek(progress: () -> Float, onSeek: (Float) -> Unit, modifier: Modifier 
                 },
             contentAlignment = Alignment.CenterStart,
         ) {
-            Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(scheme.onSurface.copy(alpha = 0.2f)))
+            Box(Modifier.fillMaxWidth().height(trackHeight).clip(CircleShape).background(scheme.onSurface.copy(alpha = 0.2f)))
             val fill = scheme.onSurface
-            Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).drawBehind {
-                val played = androidx.compose.ui.geometry.Size(size.width * (dragging ?: progress()).coerceIn(0f, 1f), size.height)
+            Box(Modifier.fillMaxWidth().height(trackHeight).clip(CircleShape).drawBehind {
+                val played = Size(size.width * (dragging ?: progress()).coerceIn(0f, 1f), size.height)
                 if (colors != null && colors.size >= 2) drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(colors, 0f, size.width), size = played)
                 else drawRect(fill, size = played)
             })
@@ -433,43 +508,56 @@ fun DesktopSettings(
     val scheme = MaterialTheme.colorScheme
     val page = stack.lastOrNull()
     val root = stack.firstOrNull()
+    val catListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val reduceMotion = io.max.paperplay.ui.theme.LocalReduceMotion.current
+    val shiftPx = with(LocalDensity.current) { io.max.paperplay.ui.theme.Motion.Desktop.PageShiftDp.dp.roundToPx() }
+    val sideShiftPx = with(LocalDensity.current) { io.max.paperplay.ui.theme.Motion.Desktop.PageSideShiftDp.dp.roundToPx() }
     Row(modifier) {
         Column(Modifier.width(300.dp).fillMaxHeight()) {
             Row(Modifier.padding(start = 4.dp, end = 8.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton({ if (stack.size > 1) stack.removeAt(stack.lastIndex) else onExit() }) { AppIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+                DesktopTooltip("Back") {
+                    IconButton({ if (stack.size > 1) stack.removeAt(stack.lastIndex) else onExit() }, Modifier.desktopInteractive(CircleShape)) { AppIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+                }
                 Text("Settings", Modifier.padding(start = 4.dp), style = MaterialTheme.typography.headlineMedium)
             }
-            LazyColumn(Modifier.fillMaxSize()) {
-                item {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).clip(RoundedCornerShape(10.dp))
-                            .background(if (root == "profile") scheme.surfaceContainerHighest else Color.Transparent)
-                            .clickable { stack.clear(); stack.add("profile") }.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Avatar(prefs.profilePhoto, prefs.profileName, 32.dp)
-                        Text(prefs.profileName, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.titleSmall)
-                    }
-                }
-                categories.filter { !it.phoneOnly }.groupBy { it.group }.forEach { (group, list) ->
-                item(key = "group-${group.name}") {
-                    Text(group.label, Modifier.padding(start = 20.dp, top = 12.dp, bottom = 2.dp), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
-                }
-                items(list, key = { it.id }) { c ->
-                    val on = root == c.id
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).clip(RoundedCornerShape(10.dp))
-                            .background(if (on) scheme.surfaceContainerHighest else Color.Transparent)
-                            .clickable { stack.clear(); stack.add(c.id) }.padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        AppIcon(c.icon, null, Modifier.size(22.dp))
-                        Column(Modifier.padding(start = 12.dp)) {
-                            Text(c.title, style = MaterialTheme.typography.bodyLarge, fontWeight = if (on) FontWeight.Bold else null)
-                            Text(c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            DesktopScrollHost(catListState, Modifier.fillMaxSize()) { scrollMod ->
+                LazyColumn(scrollMod, state = catListState) {
+                    item {
+                        val profileOn = root == "profile"
+                        val profileFill by animateColorAsState(if (profileOn) scheme.surfaceContainerHighest else Color.Transparent, io.max.paperplay.ui.theme.motionColorSpec(), label = "setProf")
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).clip(RoundedCornerShape(10.dp))
+                                .background(profileFill)
+                                .desktopInteractive(RoundedCornerShape(10.dp))
+                                .clickable { stack.clear(); stack.add("profile") }.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Avatar(prefs.profilePhoto, prefs.profileName, 32.dp)
+                            Text(prefs.profileName, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.titleSmall)
                         }
                     }
-                }
+                    categories.filter { !it.phoneOnly }.groupBy { it.group }.forEach { (group, list) ->
+                    item(key = "group-${group.name}") {
+                        Text(group.label, Modifier.padding(start = 20.dp, top = 12.dp, bottom = 2.dp), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                    }
+                    items(list, key = { it.id }) { c ->
+                        val on = root == c.id
+                        val rowFill by animateColorAsState(if (on) scheme.surfaceContainerHighest else Color.Transparent, io.max.paperplay.ui.theme.motionColorSpec(), label = "setCat")
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).clip(RoundedCornerShape(10.dp))
+                                .background(rowFill)
+                                .desktopInteractive(RoundedCornerShape(10.dp))
+                                .clickable { stack.clear(); stack.add(c.id) }.padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AppIcon(c.icon, null, Modifier.size(22.dp))
+                            Column(Modifier.padding(start = 12.dp)) {
+                                Text(c.title, style = MaterialTheme.typography.bodyLarge, fontWeight = if (on) FontWeight.Bold else null)
+                                Text(c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    }
                 }
             }
         }
@@ -489,14 +577,28 @@ fun DesktopSettings(
                 if (page == "eq") EqualizerTopBarActions(backend)
             }
 
-            val isLazy = page == "missing" || page == "dupes" || page == "index" || page == "log" || page == "changelog" || page == "eq" || page?.startsWith("index:") == true
-            Column(
-                // Sliders and rows stop at a readable width instead of stretching across a wide window.
-                Modifier.fillMaxSize().widthIn(max = 880.dp)
-                    .then(if (isLazy) Modifier else Modifier.verticalScroll(rememberScrollState()))
-                    .padding(bottom = 24.dp)
-            ) {
-                if (page != null) SettingsPage(page, stack, prefs, conn, songCount, backend, onRestore)
+            AnimatedContent(
+                targetState = page,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                transitionSpec = { desktopPageTransition(NavMove.Switch, reduceMotion, shiftPx, sideShiftPx) },
+                label = "settingsPage",
+            ) { targetPage ->
+                val isLazy = targetPage == "missing" || targetPage == "dupes" || targetPage == "index" || targetPage == "log" || targetPage == "changelog" || targetPage == "eq" || targetPage?.startsWith("index:") == true
+                if (isLazy) {
+                    Column(Modifier.fillMaxSize().widthIn(max = 880.dp).padding(bottom = 24.dp)) {
+                        if (targetPage != null) SettingsPage(targetPage, stack, prefs, conn, songCount, backend, onRestore)
+                    }
+                } else {
+                    val contentScroll = rememberScrollState()
+                    DesktopScrollHost(contentScroll, Modifier.fillMaxSize()) { scrollMod ->
+                        Column(
+                            // Sliders and rows stop at a readable width instead of stretching across a wide window.
+                            scrollMod.widthIn(max = 880.dp).verticalScroll(contentScroll).padding(bottom = 24.dp)
+                        ) {
+                            if (targetPage != null) SettingsPage(targetPage, stack, prefs, conn, songCount, backend, onRestore)
+                        }
+                    }
+                }
             }
         }
     }

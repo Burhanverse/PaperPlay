@@ -3,6 +3,7 @@ package io.max.paperplay.player
 import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
@@ -40,9 +41,35 @@ internal class EngineAudioSink(
     private var pending: ByteBuffer? = null
     private var out: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
     private var calls = 0
+    private var playbackSpeed = 1f
+    private var lastPtsUs = C.TIME_UNSET
+    private var lastPtsConsumedBytes = 0
+
+    private fun pcmKindFor(encoding: Int): Int = when (encoding) {
+        C.ENCODING_PCM_16BIT -> PcmTapReader.PCM_16
+        C.ENCODING_PCM_24BIT -> PcmTapReader.PCM_24
+        C.ENCODING_PCM_32BIT -> PcmTapReader.PCM_32
+        C.ENCODING_PCM_FLOAT -> PcmTapReader.PCM_FLOAT
+        else -> -1
+    }
+
+    private fun slicePtsUs(presentationTimeUs: Long, stepBytes: Int, consumedNow: Int): Long {
+        if (presentationTimeUs == C.TIME_UNSET || presentationTimeUs < 0L || rate <= 0 || channels <= 0) return -1L
+        if (presentationTimeUs != lastPtsUs) {
+            lastPtsUs = presentationTimeUs
+            lastPtsConsumedBytes = 0
+        }
+        val frameBytes = stepBytes * channels
+        val baseFrames = if (frameBytes > 0) lastPtsConsumedBytes / frameBytes else 0
+        lastPtsConsumedBytes += consumedNow
+        return presentationTimeUs + (baseFrames.toLong() * 1_000_000L) / rate
+    }
 
     override fun configure(config: AudioSink.AudioSinkConfig) {
         freeEngine()
+        PlaybackCore.engineSinkHandlesTap = true
+        lastPtsUs = C.TIME_UNSET
+        lastPtsConsumedBytes = 0
         val f = config.format
         val e = f.pcmEncoding
         val disabledByDevOption = forceInactive || PlaybackCore.sinkChainMode.isNoDsp
@@ -80,27 +107,32 @@ internal class EngineAudioSink(
 
     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
         if (!active || PlaybackCore.usbActive) {
-            // With the engine off (no DSP, bit-perfect) the visualizer still gets the audio; free unless one is on screen.
-            if (enc == C.ENCODING_PCM_16BIT || enc == C.ENCODING_PCM_24BIT || enc == C.ENCODING_PCM_32BIT || enc == C.ENCODING_PCM_FLOAT) {
-                val step = when (enc) { C.ENCODING_PCM_16BIT -> 2; C.ENCODING_PCM_24BIT -> 3; else -> 4 }
-                tap(buffer, buffer.remaining() / step)
+            val posBefore = buffer.position()
+            val before = buffer.remaining()
+            val ok = super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+            val accepted = (buffer.position() - posBefore).coerceAtLeast(0)
+            // With the engine off (no DSP, bit-perfect) tap only the bytes actually accepted by the sink.
+            if (accepted > 0 && !PlaybackCore.usbActive && AudioTap.wanted) {
+                val kind = pcmKindFor(enc)
+                if (kind >= 0) {
+                    val step = when (kind) { PcmTapReader.PCM_16 -> 2; PcmTapReader.PCM_24 -> 3; else -> 4 }
+                    val pts = slicePtsUs(presentationTimeUs, step, accepted)
+                    PcmTapReader.feedPcmSlice(buffer, posBefore, accepted, rate, channels.coerceAtLeast(1), kind, pts, "android-passthrough")
+                }
             }
             if (!PlaybackCore.usbActive && DelegateSinkDiag.isEnabled) {
-                val before = buffer.remaining()
-                val ok = super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
                 DelegateSinkDiag.recordAudioTrackWrite(before, (before - buffer.remaining()).coerceAtLeast(0), ok)
-                return ok
             }
-            return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+            return ok
         }
         var p = pending
         if (p == null) {
             if (DelegateSinkDiag.isEnabled) {
                 val t0 = System.nanoTime()
-                p = convert(buffer)
+                p = convert(buffer, presentationTimeUs)
                 DelegateSinkDiag.recordDspTime(System.nanoTime() - t0)
             } else {
-                p = convert(buffer)
+                p = convert(buffer, presentationTimeUs)
             }
             if (p == null) return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
             pending = p
@@ -118,7 +150,7 @@ internal class EngineAudioSink(
     }
 
     /** Takes all of [src] (moves it to its limit) and returns it as float, equalized. */
-    private fun convert(src: ByteBuffer): ByteBuffer? {
+    private fun convert(src: ByteBuffer, presentationTimeUs: Long): ByteBuffer? {
         val step = when (enc) { C.ENCODING_PCM_16BIT -> 2; C.ENCODING_PCM_24BIT -> 3; else -> 4 }
         val samples = src.remaining() / step
         if (samples == 0) return null
@@ -157,7 +189,6 @@ internal class EngineAudioSink(
             appliedPeq = peq
             appliedPeqOn = peqOn
         }
-        tap(src, samples)
         val kind = when (enc) { C.ENCODING_PCM_16BIT -> 0; C.ENCODING_PCM_24BIT -> 1; C.ENCODING_PCM_FLOAT -> 3; else -> 2 }
         // Decoder buffers are direct, so Rust reads them in place; anything else is converted here first.
         if (!src.isDirect || EngineNative.processPcm(handle, src, src.position(), kind, samples, out) != samples) {
@@ -179,32 +210,57 @@ internal class EngineAudioSink(
             PlaybackCore.engineStats = st.copyOf()
         }
         out.limit(bytes).position(0)
+        if (!PlaybackCore.usbActive && AudioTap.wanted) {
+            val pts = if (presentationTimeUs != C.TIME_UNSET && presentationTimeUs >= 0L) presentationTimeUs else -1L
+            PcmTapReader.feedPcmSlice(out, 0, bytes, rate, channels.coerceAtLeast(1), PcmTapReader.PCM_FLOAT, pts, "android-engine")
+        }
         return out
     }
 
-    /**
-     * Feeds a mono mix of [samples] samples of [src] to [AudioTap], for the standby visualizer. The wrapped sink gets float, and
-     * Media3 skips its processors for float, so the tap in [TapProcessor] never sees the audio while the engine is on.
-     */
-    private fun tap(src: ByteBuffer, samples: Int) {
-        if (!AudioTap.wanted) return
-        val ch = channels.coerceAtLeast(1)
-        val s = src.duplicate().order(ByteOrder.nativeOrder())
-        repeat(samples / ch) {
-            var sum = 0f
-            for (c in 0 until ch) sum += when (enc) {
-                C.ENCODING_PCM_FLOAT -> s.getFloat()
-                C.ENCODING_PCM_16BIT -> s.getShort() / 32768f
-                C.ENCODING_PCM_24BIT -> (((s.get().toInt() and 0xff) or ((s.get().toInt() and 0xff) shl 8) or (s.get().toInt() shl 16)) / 8388608f)
-                else -> s.getInt() / 2147483648f
-            }
-            AudioTap.push(rate, sum / ch)
+    override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
+        val pos = super.getCurrentPositionUs(sourceEnded)
+        if (pos != AudioSink.CURRENT_POSITION_NOT_SET && !PlaybackCore.usbActive) {
+            AudioTap.updatePlaybackClock(pos, playbackSpeed)
         }
+        return pos
     }
 
-    override fun flush() { pending = null; if (handle != 0L) EngineNative.reset(handle); AudioTap.reset(); super.flush() }
-    override fun reset() { freeEngine(); AudioTap.reset(); super.reset() }
-    override fun release() { freeEngine(); AudioTap.reset(); super.release() }
+    override fun setPlaybackParameters(playbackParameters: PlaybackParameters) {
+        playbackSpeed = playbackParameters.speed
+        AudioTap.setSpeed(playbackSpeed)
+        super.setPlaybackParameters(playbackParameters)
+    }
+
+    override fun pause() {
+        AudioTap.onPause()
+        super.pause()
+    }
+
+    override fun flush() {
+        pending = null
+        lastPtsUs = C.TIME_UNSET
+        lastPtsConsumedBytes = 0
+        if (handle != 0L) EngineNative.reset(handle)
+        AudioTap.reset()
+        super.flush()
+    }
+
+    override fun reset() {
+        freeEngine()
+        lastPtsUs = C.TIME_UNSET
+        lastPtsConsumedBytes = 0
+        AudioTap.reset()
+        super.reset()
+    }
+
+    override fun release() {
+        freeEngine()
+        lastPtsUs = C.TIME_UNSET
+        lastPtsConsumedBytes = 0
+        PlaybackCore.engineSinkHandlesTap = false
+        AudioTap.reset()
+        super.release()
+    }
     private fun freeEngine() { pending = null; if (handle != 0L) EngineNative.destroy(handle); handle = 0; active = false; PlaybackCore.engineActive = false }
 }
 
@@ -320,10 +376,11 @@ internal class NativePcmEqStage(
 
     fun configure(sampleRate: Int, channelCount: Int, pcmEncoding: Int) {
         val changed = sampleRate != rate || channelCount != channels || pcmEncoding != encoding
+        if (!changed) return
         rate = sampleRate
         channels = channelCount
         encoding = pcmEncoding
-        if (handle != 0L && changed && sampleRate > 0 && channelCount > 0) {
+        if (handle != 0L && sampleRate > 0 && channelCount > 0) {
             nativeApi.reconfigure(handle, sampleRate, channelCount)
         }
         appliedPeq = null
@@ -473,6 +530,7 @@ internal class TapProcessor(
     private val enableDirectPcmEq: Boolean = false,
 ) : BaseAudioProcessor() {
     private val directEq: NativePcmEqStage? = if (enableDirectPcmEq) NativePcmEqStage() else null
+    @Volatile var pendingPtsUs: Long = C.TIME_UNSET
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
         val supported = inputAudioFormat.encoding in setOf(
@@ -493,21 +551,19 @@ internal class TapProcessor(
         out.put(inputBuffer)
         out.flip()
         directEq?.processInPlaceIfActive(out, isDoP = false)
-        val src = out.duplicate().order(ByteOrder.nativeOrder())
+        if (!enableDirectPcmEq && PlaybackCore.engineSinkHandlesTap) return
+        if (!AudioTap.wanted) return
         val ch = inputAudioFormat.channelCount.coerceAtLeast(1)
         val rate = inputAudioFormat.sampleRate
-        val enc = inputAudioFormat.encoding
-        val step = when (enc) { C.ENCODING_PCM_16BIT -> 2; C.ENCODING_PCM_24BIT -> 3; else -> 4 }
-        if (AudioTap.wanted) while (src.remaining() >= step * ch) {
-            var sum = 0f
-            for (c in 0 until ch) sum += when (enc) {
-                C.ENCODING_PCM_FLOAT -> src.getFloat()
-                C.ENCODING_PCM_16BIT -> src.getShort() / 32768f
-                C.ENCODING_PCM_24BIT -> (((src.get().toInt() and 0xff) or ((src.get().toInt() and 0xff) shl 8) or (src.get().toInt() shl 16)) / 8388608f)
-                else -> src.getInt() / 2147483648f
-            }
-            AudioTap.push(rate, sum / ch)
+        val pcmKind = when (inputAudioFormat.encoding) {
+            C.ENCODING_PCM_16BIT -> PcmTapReader.PCM_16
+            C.ENCODING_PCM_24BIT -> PcmTapReader.PCM_24
+            C.ENCODING_PCM_32BIT -> PcmTapReader.PCM_32
+            C.ENCODING_PCM_FLOAT -> PcmTapReader.PCM_FLOAT
+            else -> return
         }
+        val pts = pendingPtsUs.takeIf { it != C.TIME_UNSET && it >= 0L } ?: -1L
+        PcmTapReader.feedPcmSlice(out, 0, out.remaining(), rate, ch, pcmKind, pts, "android-api34")
     }
 
     override fun onFlush() {

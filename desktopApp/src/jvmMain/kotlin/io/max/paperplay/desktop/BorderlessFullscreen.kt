@@ -72,6 +72,7 @@ internal object BorderlessFullscreen {
             api.SetWindowLongW(hwnd, GWL_STYLE, savedStyle)
             api.SetWindowPos(hwnd, null, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER or SWP_NOACTIVATE or SWP_FRAMECHANGED)
             saved = null
+            WindowsTitleBar.reapply(window)
         }
         return true
     }

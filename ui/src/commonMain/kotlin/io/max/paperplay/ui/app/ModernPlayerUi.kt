@@ -2,11 +2,12 @@ package io.max.paperplay.ui.app
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +66,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,8 +80,10 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -110,8 +114,7 @@ import io.max.paperplay.ui.state.RepeatUi
 import io.max.paperplay.ui.state.SongUi
 import io.max.paperplay.ui.theme.Motion
 import io.max.paperplay.ui.theme.motionTween
-import io.max.paperplay.ui.theme.sheetSpring
-import kotlinx.coroutines.launch
+import io.max.paperplay.ui.theme.playerEffectFadeSpec
 import org.jetbrains.compose.ui.tooling.preview.Preview
 
 /**
@@ -143,6 +146,10 @@ internal fun ModernFullPlayer(
     modifier: Modifier = Modifier,
 ) {
     val song = state.current ?: return
+    val controller = LocalPlayerTransition.current
+    val stage = controller.contentStage
+    val interactive = stage >= PlayerContentStage.Interactive
+    val settledGlass = stage == PlayerContentStage.SettledEffects
     val backdrop = rememberLayerBackdrop()
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -150,12 +157,12 @@ internal fun ModernFullPlayer(
 
     MaterialTheme(colorScheme = scheme) {
         Box(modifier.fillMaxSize()) {
-            // Backdrop recorded for real glass blur by GlassPillButton & GlassSplitPill.
-            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                ModernPlayerBackdrop(song.coverUri, scheme, state.playing)
+            // Backdrop recorded for real glass blur by GlassPillButton & GlassSplitPill once the sheet settles.
+            Box(if (settledGlass) Modifier.fillMaxSize().layerBackdrop(backdrop) else Modifier.fillMaxSize()) {
+                ModernPlayerBackdrop(song.coverUri, scheme, state.playing, settled = settledGlass)
             }
 
-            CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            CompositionLocalProvider(LocalGlassBackdrop provides (if (settledGlass) backdrop else null)) {
                 BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
@@ -199,6 +206,8 @@ internal fun ModernFullPlayer(
                                     onOpenLyrics = { onSetShowLyrics(true) },
                                     onOpenEq = onOpenEq,
                                     onOpenOutputInfo = onOpenOutputInfo,
+                                    interactive = interactive,
+                                    animateWave = settledGlass,
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
                                 )
                             }
@@ -284,6 +293,8 @@ internal fun ModernFullPlayer(
                                         onOpenLyrics = onOpenLyrics,
                                         onOpenEq = onOpenEq,
                                         onOpenOutputInfo = onOpenOutputInfo,
+                                        interactive = interactive,
+                                        animateWave = settledGlass,
                                         modifier = Modifier.weight(1f).fillMaxWidth(),
                                     )
                                 }
@@ -407,8 +418,16 @@ private fun ModernPhoneBody(
     onOpenLyrics: (() -> Unit)?,
     onOpenEq: (() -> Unit)?,
     onOpenOutputInfo: () -> Unit,
+    interactive: Boolean = true,
+    animateWave: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    val controller = LocalPlayerTransition.current
+    val stage1Alpha by animateFloatAsState(
+        targetValue = if (interactive) 1f else 0f,
+        animationSpec = if (controller.standalone || controller.reduceMotion) snap() else playerEffectFadeSpec(),
+        label = "modernStage1",
+    )
     val outputInfo by backend.outputInfo.collectAsState()
     val badges = remember(song.qualityLabel, song.lossless, outputInfo) {
         resolveQualityBadges(song, outputInfo)
@@ -479,51 +498,72 @@ private fun ModernPhoneBody(
                                     color = Color.White.copy(alpha = 0.92f),
                                 )
                             }
-                            QualityBadgesRow(badges = badges, onClick = onOpenOutputInfo)
+                            if (interactive) {
+                                QualityBadgesRow(
+                                    badges = badges,
+                                    onClick = onOpenOutputInfo,
+                                    modifier = Modifier.graphicsLayer { alpha = stage1Alpha },
+                                )
+                            }
                         }
                     }
 
-                    GlassSplitPill(
-                        leftDescription = "Lyrics",
-                        rightDescription = if (song.favorite) "Remove from favorites" else "Add to favorites",
-                        rightStateDesc = if (song.favorite) "On" else "Off",
-                        onLeftClick = { onOpenLyrics?.invoke() },
-                        onRightClick = { actions.setFavorite(song, !song.favorite) },
-                        leftContent = {
-                            AppIcon(
-                                Icons.Outlined.Lyrics,
-                                null,
-                                Modifier.size(20.dp),
-                                tint = if (onOpenLyrics != null) Color.White else Color.White.copy(alpha = 0.4f),
+                    if (interactive) {
+                        Box(Modifier.graphicsLayer { alpha = stage1Alpha }) {
+                            GlassSplitPill(
+                                leftDescription = "Lyrics",
+                                rightDescription = if (song.favorite) "Remove from favorites" else "Add to favorites",
+                                rightStateDesc = if (song.favorite) "On" else "Off",
+                                onLeftClick = { onOpenLyrics?.invoke() },
+                                onRightClick = { actions.setFavorite(song, !song.favorite) },
+                                leftContent = {
+                                    AppIcon(
+                                        Icons.Outlined.Lyrics,
+                                        null,
+                                        Modifier.size(20.dp),
+                                        tint = if (onOpenLyrics != null) Color.White else Color.White.copy(alpha = 0.4f),
+                                    )
+                                },
+                                rightContent = {
+                                    if (song.favorite) {
+                                        // Render Material's filled heart directly so Tabler icon pack does not swap it to an outline.
+                                        androidx.compose.material3.Icon(
+                                            imageVector = Icons.Rounded.Favorite,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    } else {
+                                        AppIcon(
+                                            Icons.Rounded.FavoriteBorder,
+                                            null,
+                                            Modifier.size(20.dp),
+                                            tint = Color.White,
+                                        )
+                                    }
+                                },
                             )
-                        },
-                        rightContent = {
-                            if (song.favorite) {
-                                // Render Material's filled heart directly so Tabler icon pack does not swap it to an outline.
-                                androidx.compose.material3.Icon(
-                                    imageVector = Icons.Rounded.Favorite,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            } else {
-                                AppIcon(
-                                    Icons.Rounded.FavoriteBorder,
-                                    null,
-                                    Modifier.size(20.dp),
-                                    tint = Color.White,
-                                )
-                            }
-                        },
-                    )
+                        }
+                    } else {
+                        Spacer(Modifier.size(width = 99.dp, height = 48.dp))
+                    }
                 }
 
-                ModernProgress(song = song, state = state, backend = backend)
+                if (interactive) {
+                    Box(Modifier.graphicsLayer { alpha = stage1Alpha }) {
+                        ModernProgress(song = song, state = state, backend = backend, animateWave = animateWave)
+                    }
+                } else {
+                    // Stage 0 placeholder reserves exact height (52dp seek + 4dp gap + 22dp chips) so Stage 1 never jumps layout.
+                    Box(Modifier.fillMaxWidth().height(78.dp), contentAlignment = Alignment.CenterStart) {
+                        Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.25f)))
+                    }
+                }
 
                 // Transport row: Previous | Play/Pause | Next
                 val playShapeRadius by animateDpAsState(
                     targetValue = if (state.playing) 24.dp else 32.dp,
-                    animationSpec = motionTween(Motion.STANDARD),
+                    animationSpec = io.max.paperplay.ui.theme.motionPlayMorphSpec(),
                     label = "playMorph",
                 )
                 Row(
@@ -572,8 +612,9 @@ private fun ModernPhoneBody(
                 }
 
                 // Bottom utility row: Shuffle | Repeat, Center EQ, Queue | Add to playlist
+                if (interactive) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).graphicsLayer { alpha = stage1Alpha },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -632,6 +673,9 @@ private fun ModernPhoneBody(
                         },
                     )
                 }
+                } else {
+                    Spacer(Modifier.fillMaxWidth().height(56.dp))
+                }
             }
         }
 
@@ -666,53 +710,41 @@ private fun ModernArtwork(
     backend: PlayerControls,
     modifier: Modifier = Modifier,
 ) {
-    val sheet = LocalPlayerSheet.current
-    val sheetPx = with(androidx.compose.ui.platform.LocalDensity.current) { 640.dp.toPx() }
-    val sheetSpec = rememberUpdatedState(sheetSpring<Float>())
-    val dragScope = rememberCoroutineScope()
+    val controller = LocalPlayerTransition.current
+    val coverBounds = LocalCoverBounds.current
     val coverShape = appShape(24.dp, CornerArea.Covers)
 
     Column(
-        modifier = modifier.pointerInput(sheet, sheetPx) {
-            var dx = 0f
-            var dy = 0f
-            var pulling = false
-            val tracker = VelocityTracker()
-            detectDragGestures(
-                onDragStart = { dx = 0f; dy = 0f; pulling = false; tracker.resetTracking() },
-                onDragEnd = {
-                    when {
-                        pulling -> dragScope.launch { if (sheet.release(tracker.calculateVelocity().y, sheetPx, sheetSpec.value)) onClose() }
-                        dy < -80f && dy < -kotlin.math.abs(dx) -> onQueue()
-                        dx < -80f -> backend.next()
-                        dx > 80f -> backend.previous()
-                    }
-                },
-                onDragCancel = { sheet.pull(0f) },
-            ) { change, drag ->
-                change.consume()
-                dx += drag.x
-                dy += drag.y
-                if (!pulling && dy > 0f && dy > kotlin.math.abs(dx)) pulling = true
-                tracker.addPosition(change.uptimeMillis, Offset(0f, dy))
-                if (pulling) sheet.pull(dy)
-            }
-        },
+        modifier = modifier.playerSheetDrag(
+            controller = controller,
+            onQueue = onQueue,
+            onNext = backend::next,
+            onPrevious = backend::previous,
+        ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (grabber) {
             Box(
                 Modifier
-                    .padding(bottom = 8.dp)
-                    .size(40.dp, 5.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color.White.copy(alpha = 0.32f))
-                    .clickable(onClick = onClose),
-            )
+                    .padding(bottom = 4.dp)
+                    .size(width = 72.dp, height = 28.dp)
+                    .semantics { contentDescription = "Close player" }
+                    .clickable(onClickLabel = "Close player", role = Role.Button, onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(40.dp, 5.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color.White.copy(alpha = 0.32f)),
+                )
+            }
         }
         Box(
             Modifier
                 .size(size)
+                .registerFullCoverBounds(coverBounds)
+                .graphicsLayer { alpha = if (controller.isCoverFlightActive(coverBounds)) 0f else 1f }
                 .shadow(24.dp, coverShape, ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(coverShape),
         ) {
@@ -738,7 +770,7 @@ private fun ModernArtwork(
 }
 
 @Composable
-private fun ModernProgress(song: SongUi, state: PlaybackUiState, backend: PlayerControls) {
+private fun ModernProgress(song: SongUi, state: PlaybackUiState, backend: PlayerControls, animateWave: Boolean = true) {
     val total = if (state.durationMs > 0) state.durationMs else song.durationSec * 1000L
     val pos by backend.position.collectAsState()
     val style = LocalUiPrefs.current?.progressBarStyle ?: ProgressBarStyle.SQUIGGLY_WAVE
@@ -755,6 +787,7 @@ private fun ModernProgress(song: SongUi, state: PlaybackUiState, backend: Player
                 modifier = Modifier.fillMaxWidth(),
                 label = label,
                 longPressLabel = longPressLabel,
+                animateWave = animateWave,
             )
             ProgressBarStyle.AURORA_WAVE -> AuroraSeek(
                 progress = { pos.progress(state.durationMs) },
@@ -765,6 +798,7 @@ private fun ModernProgress(song: SongUi, state: PlaybackUiState, backend: Player
                 modifier = Modifier.fillMaxWidth(),
                 label = label,
                 longPressLabel = longPressLabel,
+                animateWave = animateWave,
             )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

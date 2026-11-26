@@ -131,20 +131,22 @@ class UsbAudioManager(private val context: Context) {
             PlayLog.log("usb", "Failed to register VOLUME_CHANGED_ACTION receiver: ${e.message}")
         }
 
-        try {
-            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                override fun onChange(selfChange: Boolean) {
-                    onSystemVolumeChanged(isUser = true)
+        if (volumeReceiverRegistered && volumeContentObserver == null) {
+            try {
+                val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean) {
+                        onSystemVolumeChanged(isUser = true)
+                    }
                 }
+                context.contentResolver.registerContentObserver(
+                    Settings.System.CONTENT_URI,
+                    true,
+                    observer
+                )
+                volumeContentObserver = observer
+            } catch (e: Exception) {
+                PlayLog.log("usb", "Failed to register Settings.System volume ContentObserver: ${e.message}")
             }
-            context.contentResolver.registerContentObserver(
-                Settings.System.CONTENT_URI,
-                true,
-                observer
-            )
-            volumeContentObserver = observer
-        } catch (e: Exception) {
-            PlayLog.log("usb", "Failed to register Settings.System volume ContentObserver: ${e.message}")
         }
     }
 
@@ -721,8 +723,8 @@ class UsbAudioManager(private val context: Context) {
         val ratio = if (max > 0) cur.toFloat() / max.toFloat() else 1.0f
         if (kotlin.math.abs(hw.currentVolume - ratio) > 0.005f || (cur <= 0 && !hw.isMuted) || (cur > 0 && hw.isMuted)) {
             hw.setVolumeFromSystem(am, cur, max, isUser = isUser)
+            forwardingPlayer?.notifyVolumeChanged()
         }
-        forwardingPlayer?.notifyVolumeChanged()
     }
 
     val hasHardwareVolume: Boolean

@@ -56,6 +56,7 @@ fun WavySeek(
     modifier: Modifier = Modifier,
     label: String? = null,
     longPressLabel: ((Float) -> String)? = null,
+    animateWave: Boolean = true,
 ) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     var longPressText by remember { mutableStateOf<String?>(null) }
@@ -75,7 +76,7 @@ fun WavySeek(
 
     val foreground = rememberAppForeground()
     val reduceMotion = LocalReduceMotion.current
-    val waving = playing && dragging == null && foreground && !reduceMotion
+    val waving = playing && animateWave && dragging == null && foreground && !reduceMotion
 
     // Keep wave offset moving briefly while Material 3's 500 ms flatten animation finishes so pause does not snap phase.
     var waveMoving by remember { mutableStateOf(waving) }

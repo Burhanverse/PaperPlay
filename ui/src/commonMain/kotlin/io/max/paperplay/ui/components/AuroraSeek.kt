@@ -214,6 +214,7 @@ fun AuroraSeek(
     label: String? = null,
     longPressLabel: ((Float) -> String)? = null,
     compact: Boolean = false,
+    animateWave: Boolean = true,
 ) {
     val interaction = remember { AuroraSeekInteractionState() }
     LaunchedEffect(interaction.longPressToken) {
@@ -230,16 +231,16 @@ fun AuroraSeek(
 
     val foreground = rememberAppForeground()
     val reduceMotion = LocalReduceMotion.current
-    val waving = playing && dragging == null && foreground && !reduceMotion
+    val waving = playing && animateWave && dragging == null && foreground && !reduceMotion
 
     val waveAmp by animateFloatAsState(
         targetValue = if (waving) 1f else 0f,
-        animationSpec = tween(if (reduceMotion) 0 else 450),
+        animationSpec = io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Spatial.StaggerEnterMs),
         label = "auroraAmp",
     )
     val thumbScale by animateFloatAsState(
         targetValue = if (dragging != null) 1.18f else 1f,
-        animationSpec = tween(if (reduceMotion) 0 else 150),
+        animationSpec = io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Effects.FadeFastMs),
         label = "auroraThumbScale",
     )
 
@@ -249,7 +250,7 @@ fun AuroraSeek(
     val target1 = colors.getOrElse(1) { scheme.tertiary }
     val target2 = colors.getOrElse(2) { scheme.secondary }
     val target3 = colors.getOrElse(3) { Color.White }
-    val colorAnimSpec = tween<Color>(if (reduceMotion) 0 else 500)
+    val colorAnimSpec = io.max.paperplay.ui.theme.motionWashSpec()
     val c0 by animateColorAsState(target0, colorAnimSpec, label = "auroraC0")
     val c1 by animateColorAsState(target1, colorAnimSpec, label = "auroraC1")
     val c2 by animateColorAsState(target2, colorAnimSpec, label = "auroraC2")

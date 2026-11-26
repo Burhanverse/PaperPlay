@@ -189,7 +189,7 @@ internal fun ListeningSection(stats: ProfileStats?, recents: List<SongUi>, prefs
 
 @Composable
 private fun TimeHero(s: ProfileStats) {
-    val shown by animateFloatAsState(s.totalMs.toFloat(), tween(900), label = "total")
+    val shown by animateFloatAsState(s.totalMs.toFloat(), io.max.paperplay.ui.theme.motionEffectTween(io.max.paperplay.ui.theme.Motion.Effects.WashMs, easing = io.max.paperplay.ui.theme.Motion.Emphasized), label = "total")
     Column {
         Text(fmtTime(shown.toLong()), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
         Text("listened in total", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -52,6 +52,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.max.paperplay.ui.theme.motionSpatialSpring
+import io.max.paperplay.ui.theme.pressScale
 import io.max.paperplay.ui.app.ChoiceRow
 import io.max.paperplay.ui.app.Look
 import io.max.paperplay.ui.app.LookGroup
@@ -114,7 +116,7 @@ internal fun ProfilePage(prefs: UiPrefs) = OnboardingPage("About you", "Shown on
 private fun ChoiceCard(icon: ImageVector, title: String, text: String, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     Surface(
-        onClick, Modifier.fillMaxWidth().bouncy(source), interactionSource = source,
+        onClick, Modifier.fillMaxWidth().pressScale(source), interactionSource = source,
         shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
         Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -157,7 +159,7 @@ internal fun ChatPage(chats: List<String>, connected: Boolean, onAdd: () -> Unit
         }
         if (chats.isEmpty()) Text("No chat added yet. You can also add one later in Settings.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         val source = remember { MutableInteractionSource() }
-        Button(onAdd, Modifier.fillMaxWidth().bouncy(source), interactionSource = source, enabled = connected, shape = RoundedCornerShape(28.dp)) {
+        Button(onAdd, Modifier.fillMaxWidth().pressScale(source), interactionSource = source, enabled = connected, shape = RoundedCornerShape(28.dp)) {
             Icon(Icons.Rounded.Add, null, Modifier.padding(end = 8.dp))
             Text(if (chats.isEmpty()) "Add a chat" else "Add another chat")
         }
@@ -186,7 +188,7 @@ internal fun AccountStepPage(login: @Composable () -> Unit) = OnboardingPage(
     "Your account", "Optional. The bot alone is enough to start.", Icons.Rounded.Person,
 ) {
     var more by remember { mutableStateOf(false) }
-    Column(Modifier.animateContentSize(spring(stiffness = Spring.StiffnessMediumLow)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.animateContentSize(motionSpatialSpring()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Point("Read chats the bot cannot", "Your account can read any chat you are in, even where you cannot add a bot.")
         Point("Find songs other bots posted", "A bot never sees what another bot posted in a group. Your account does.")
         Point("Copy them into one library", "Copy songs into your main chat in one tap, without a forwarded label.")

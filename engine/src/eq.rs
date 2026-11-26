@@ -18,7 +18,7 @@ pub const OPT_DE_ESSER: u32 = 2;
 pub const OPT_CROSSFEED: u32 = 4;
 
 pub const BANDS_HZ: [f64; 10] = [32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
-const N: usize = BANDS_HZ.len();
+pub(crate) const N: usize = BANDS_HZ.len();
 const Q: f64 = 1.41; // one octave wide
 pub(crate) const MAX_CH: usize = 8;
 const MAX_FIT_DB: f64 = 18.0;
@@ -593,7 +593,10 @@ pub struct Eq {
     fade: usize,
     fade_len: usize,
     bands_on: bool,
+    gains_db: [f32; N],
     bass_db: f64,
+    corr_spec: [(u8, f64, f64, f64); MAX_CORR],
+    corr_spec_n: usize,
     peak_db: f64,
     exact: bool,
     opts: u32,
@@ -665,7 +668,10 @@ impl Eq {
             fade: 0,
             fade_len: frames(FADE_MS) as usize,
             bands_on: false,
+            gains_db: [0.0; N],
             bass_db: 0.0,
+            corr_spec: [(0, 0.0, 0.0, 0.0); MAX_CORR],
+            corr_spec_n: 0,
             peak_db: 0.0,
             exact: false,
             opts: 0,
@@ -820,20 +826,71 @@ impl Eq {
         }
     }
 
+    fn build_bass_coefs(rate: f64, bass_db: f64) -> [Coef; BASS_F] {
+        [
+            low_shelf(rate, 100.0, bass_db),
+            peaking(rate, 45.0, 0.4 * bass_db),
+            high_pass(rate, 22.0),
+            peaking_q(rate, 125.0, -0.35 * bass_db, 1.2),
+        ]
+    }
+
+    fn build_corr_coefs(rate: f64, filters: &[(u8, f64, f64, f64)]) -> ([Coef; MAX_CORR], usize) {
+        let mut coefs = [Coef::default(); MAX_CORR];
+        let mut n = 0usize;
+        for &(kind, hz, q, db) in filters.iter().take(MAX_CORR) {
+            if !(hz.is_finite() && q.is_finite() && db.is_finite()) { continue; }
+            if !(hz > 10.0 && hz < rate * 0.45 && q > 0.05 && q < 20.0 && db.abs() <= 24.0) { continue; }
+            coefs[n] = match kind {
+                CORR_LSC => low_shelf_q(rate, hz, db, q),
+                CORR_HSC => high_shelf_q(rate, hz, db, q),
+                _ => peaking_q(rate, hz, db, q),
+            };
+            n += 1;
+        }
+        (coefs, n)
+    }
+
+    fn fit_band_coefs(rate: f64, target_db: &[f32; N]) -> ([Coef; N], [bool; N]) {
+        let t: [f64; N] = std::array::from_fn(|i| target_db[i] as f64);
+        let usable: [bool; N] = std::array::from_fn(|i| BANDS_HZ[i] < rate * 0.45);
+        let mut m = [[0f64; N]; N];
+        for j in 0..N {
+            let k = peaking(rate, BANDS_HZ[j], 6.0);
+            for i in 0..N { m[i][j] = if usable[j] { mag_db(&k, rate, BANDS_HZ[i]) / 6.0 } else { 0.0 }; }
+            if !usable[j] { m[j][j] = 1.0; }
+        }
+        let mut g = solve(m, t).unwrap_or(t);
+        for v in g.iter_mut() { *v = v.clamp(-MAX_FIT_DB, MAX_FIT_DB); }
+        for _ in 0..2 {
+            let coefs: [Coef; N] = std::array::from_fn(|i| peaking(rate, BANDS_HZ[i], g[i]));
+            let err: [f64; N] = std::array::from_fn(|i| {
+                let got: f64 = (0..N).filter(|&j| usable[j] && g[j].abs() >= 0.05).map(|j| mag_db(&coefs[j], rate, BANDS_HZ[i])).sum();
+                t[i] - got
+            });
+            if let Some(d) = solve(m, err) {
+                for i in 0..N { g[i] = (g[i] + d[i]).clamp(-MAX_FIT_DB, MAX_FIT_DB); }
+            }
+        }
+        let mut out_coefs = [Coef::default(); N];
+        let mut active = [false; N];
+        for i in 0..N {
+            let on = usable[i] && g[i].abs() >= 0.05;
+            if on { out_coefs[i] = peaking(rate, BANDS_HZ[i], g[i]); }
+            active[i] = on;
+        }
+        (out_coefs, active)
+    }
+
     /// Extra low-end boost on top of the bands, 0 to 12 dB: a shelf below 100 Hz plus a lift around 45 Hz, with a high-pass
     /// at 22 Hz so the inaudible range below it is not boosted, and a wide cut around 125 Hz so the rumble and kick
     /// (25 to 60 Hz) keep their full lift while the boom above them, which muddies the mids, is pulled back.
     pub fn set_bass(&mut self, db: f32) {
         self.begin_fade();
-        self.bass_db = (db as f64).clamp(0.0, 12.0);
+        self.bass_db = if db.is_finite() { (db as f64).clamp(0.0, 12.0) } else { 0.0 };
         let on = self.bass_db >= 0.05;
         if on {
-            self.chain.bass = [
-                low_shelf(self.rate, 100.0, self.bass_db),
-                peaking(self.rate, 45.0, 0.4 * self.bass_db),
-                high_pass(self.rate, 22.0),
-                peaking_q(self.rate, 125.0, -0.35 * self.bass_db, 1.2),
-            ];
+            self.chain.bass = Self::build_bass_coefs(self.rate, self.bass_db);
         } else {
             self.chain.bass_state = [[State::default(); BASS_F]; MAX_CH];
         }
@@ -845,16 +902,13 @@ impl Eq {
     /// `MAX_CORR`; empty turns it off. Filters above 0.45 x the rate or with a bad Q are skipped. Its boosts count in the headroom.
     pub fn set_correction(&mut self, filters: &[(u8, f64, f64, f64)]) {
         self.begin_fade();
-        let mut n = 0;
-        for &(kind, hz, q, db) in filters.iter().take(MAX_CORR) {
-            if !(hz > 10.0 && hz < self.rate * 0.45 && q > 0.05 && q < 20.0 && db.abs() <= 24.0) { continue; }
-            self.chain.corr[n] = match kind {
-                CORR_LSC => low_shelf_q(self.rate, hz, db, q),
-                CORR_HSC => high_shelf_q(self.rate, hz, db, q),
-                _ => peaking_q(self.rate, hz, db, q),
-            };
-            n += 1;
+        let spec_n = filters.len().min(MAX_CORR);
+        self.corr_spec_n = spec_n;
+        for i in 0..spec_n {
+            self.corr_spec[i] = filters[i];
         }
+        let (coefs, n) = Self::build_corr_coefs(self.rate, &self.corr_spec[..spec_n]);
+        self.chain.corr = coefs;
         if n != self.chain.corr_n { self.chain.corr_state = [[State::default(); MAX_CORR]; MAX_CH]; }
         self.chain.corr_n = n;
         self.refresh();
@@ -869,7 +923,7 @@ impl Eq {
     /// Stereo width of everything above 180 Hz, 0.5 to 1.6 (1 = as recorded). Wider spreads instruments apart; the bass
     /// below the split stays as it is, so it keeps its weight and centre. Stereo only.
     pub fn set_width(&mut self, w: f32) {
-        self.width = (w as f64).clamp(0.5, 1.6);
+        self.width = if w.is_finite() { (w as f64).clamp(0.5, 1.6) } else { 1.0 };
         self.refresh();
     }
 
@@ -920,47 +974,36 @@ impl Eq {
 
     /// One target gain in dB per band; any other length (or all near zero) turns the equalizer off.
     pub fn set_gains(&mut self, target_db: &[f32]) {
-        if target_db.len() != N || target_db.iter().all(|g| g.abs() < 0.05) {
+        if target_db.len() != N {
             self.begin_fade();
+            self.gains_db = [0.0; N];
             self.bands_on = false;
             self.chain.active = [false; N];
             self.chain.state = [[State::default(); N]; MAX_CH];
             self.refresh();
             return;
         }
-        let t: [f64; N] = std::array::from_fn(|i| target_db[i] as f64);
-        let usable: [bool; N] = std::array::from_fn(|i| BANDS_HZ[i] < self.rate * 0.45);
-
-        // Influence of each filter (at +6 dB) on every band centre, per dB.
-        let mut m = [[0f64; N]; N];
-        for j in 0..N {
-            let k = peaking(self.rate, BANDS_HZ[j], 6.0);
-            for i in 0..N { m[i][j] = if usable[j] { mag_db(&k, self.rate, BANDS_HZ[i]) / 6.0 } else { 0.0 }; }
-            if !usable[j] { m[j][j] = 1.0; }
+        let sanitized: [f32; N] = std::array::from_fn(|i| if target_db[i].is_finite() { target_db[i] } else { 0.0 });
+        if sanitized.iter().all(|g| g.abs() < 0.05) {
+            self.begin_fade();
+            self.gains_db = [0.0; N];
+            self.bands_on = false;
+            self.chain.active = [false; N];
+            self.chain.state = [[State::default(); N]; MAX_CH];
+            self.refresh();
+            return;
         }
-        // Fit: solve for filter gains, then correct twice for the error left by the nonlinearity.
-        let mut g = solve(m, t).unwrap_or(t);
-        for v in g.iter_mut() { *v = v.clamp(-MAX_FIT_DB, MAX_FIT_DB); }
-        for _ in 0..2 {
-            let coefs: [Coef; N] = std::array::from_fn(|i| peaking(self.rate, BANDS_HZ[i], g[i]));
-            let err: [f64; N] = std::array::from_fn(|i| {
-                let got: f64 = (0..N).filter(|&j| usable[j] && g[j].abs() >= 0.05).map(|j| mag_db(&coefs[j], self.rate, BANDS_HZ[i])).sum();
-                t[i] - got
-            });
-            if let Some(d) = solve(m, err) {
-                for i in 0..N { g[i] = (g[i] + d[i]).clamp(-MAX_FIT_DB, MAX_FIT_DB); }
-            }
-        }
+        self.gains_db = sanitized;
+        let (coefs, active) = Self::fit_band_coefs(self.rate, &sanitized);
         self.begin_fade();
         for i in 0..N {
-            let on = usable[i] && g[i].abs() >= 0.05;
-            if on {
-                self.chain.coefs[i] = peaking(self.rate, BANDS_HZ[i], g[i]);
+            if active[i] {
+                self.chain.coefs[i] = coefs[i];
             } else {
                 // A band switched off forgets its state, so it starts clean when it comes back.
                 for c in 0..MAX_CH { self.chain.state[c][i] = State::default(); }
             }
-            self.chain.active[i] = on;
+            self.chain.active[i] = active[i];
         }
         self.bands_on = true;
         self.refresh();
@@ -1006,6 +1049,25 @@ impl Eq {
         self.lim_high = Limiter::new(new_rate, CEILING, 5.0, 120.0, false);
         self.lim_out = Limiter::new(new_rate, CEILING, 35.0, 200.0, true);
         self.lim_peq = Limiter::new(new_rate, PEQ_LIM_CEILING, 2.0, 50.0, false);
+        let dry_len = self.lim_low.latency() + self.lim_out.latency() + 1;
+        self.dry_delay.resize(dry_len * MAX_CH, 0.0);
+        self.dry_len = dry_len;
+        self.dry_pos = 0;
+
+        // Recompute legacy 10-band, bass, and earphone correction filters for the new sample rate.
+        if self.bands_on {
+            let (coefs, active) = Self::fit_band_coefs(self.rate, &self.gains_db);
+            self.chain.coefs = coefs;
+            self.chain.active = active;
+        }
+        if self.chain.bass_on {
+            self.chain.bass = Self::build_bass_coefs(self.rate, self.bass_db);
+        }
+        if self.corr_spec_n > 0 {
+            let (coefs, n) = Self::build_corr_coefs(self.rate, &self.corr_spec[..self.corr_spec_n]);
+            self.chain.corr = coefs;
+            self.chain.corr_n = n;
+        }
 
         // Recompute parametric EQ coefficients & auto-preamp for the new sample rate.
         let count = self.peq_band_count;
@@ -1987,5 +2049,24 @@ mod tests {
         let out_rms = rms(&buf[frames..]);
         let delta_db = db(out_rms / in_rms);
         assert!(delta_db >= 8.5, "expected >= +8.5 dB net PEQ gain with bass=3.0, got {delta_db:.3} dB");
+    }
+
+    #[test]
+    fn nan_inputs_are_sanitized_and_reconfigure_updates_legacy_filters() {
+        let mut e = Eq::new(44100, 2);
+        e.set_bass(f32::NAN);
+        e.set_width(f32::NAN);
+        e.set_gains(&[f32::NAN; N]);
+        assert!(!e.is_active(), "NaN inputs must not poison or activate Eq");
+
+        let mut g = [0.0f32; N];
+        g[9] = 6.0; // 16 kHz band
+        e.set_gains(&g);
+        e.set_bass(6.0);
+        let old_coef = e.chain.coefs[9].b0;
+        let old_bass = e.chain.bass[0].b0;
+        e.reconfigure(192000, 2);
+        assert_ne!(e.chain.coefs[9].b0, old_coef, "10-band coefs must update on reconfigure");
+        assert_ne!(e.chain.bass[0].b0, old_bass, "bass coefs must update on reconfigure");
     }
 }

@@ -221,7 +221,8 @@ internal fun EqualizerContent(on: Boolean, gains: List<Float>, onToggle: (Boolea
 @Composable
 private fun EqualizerGraph(gains: List<Float>, on: Boolean, modifier: Modifier, onDrag: (List<Float>) -> Unit, onDone: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    val shown = gains.map { androidx.compose.animation.core.animateFloatAsState(it, androidx.compose.animation.core.tween(380), label = "eq").value }
+    val eqSpec = io.max.paperplay.ui.theme.motionEffectTween<Float>(io.max.paperplay.ui.theme.Motion.Micro.IconTurnMs, easing = io.max.paperplay.ui.theme.Motion.Emphasized)
+    val shown = gains.map { androidx.compose.animation.core.animateFloatAsState(it, eqSpec, label = "eq").value }
     val line = if (on) scheme.primary else scheme.outline
     Column(modifier) {
         androidx.compose.foundation.Canvas(
