@@ -286,6 +286,9 @@ class AppServices(
         scope.launch {
             lan.messages.collect { m ->
                 if (m.type != "control") return@collect
+                // The device that drives this one is not also driven from here: this screen had followed it while paused, kept showing and
+                // controlling it after it sent its song over, and each device then showed the other as the one playing.
+                if (_activeOutput.value == m.deviceId) _activeOutput.value = null
                 val obj = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(m.body) as kotlinx.serialization.json.JsonObject }.getOrNull()
                 val action = runCatching { obj?.get("action")?.let { (it as kotlinx.serialization.json.JsonPrimitive).content } }.getOrNull()
                 if (action != null && action.startsWith("queue:")) {
