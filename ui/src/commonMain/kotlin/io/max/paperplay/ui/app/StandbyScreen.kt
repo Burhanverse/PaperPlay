@@ -184,14 +184,14 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
                 visual(Modifier.fillMaxWidth().height(boxHeight * 0.28f))
             }
         }
-        // Shown briefly on entry, then fades to invisible; it still works where it was.
+        // Both shown briefly on entry, then faded to invisible; they still work where they were.
         var hint by remember { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(3000); hint = false }
         val hintAlpha by androidx.compose.animation.core.animateFloatAsState(if (armed) 0.7f else if (hint) 0.35f else 0f, androidx.compose.animation.core.tween(1500))
         androidx.compose.foundation.layout.Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
             IconButton({ p.putLandscape(!p.landscape) }) {
                 AppIcon(Icons.Rounded.ScreenRotation, if (p.landscape) "Landscape standby on" else "Landscape standby off",
-                    tint = tone.copy(alpha = if (p.landscape) maxOf(hintAlpha, 0.5f) else hintAlpha))
+                    tint = tone.copy(alpha = hintAlpha))
             }
             IconButton({ sheet = true }) {
                 AppIcon(Icons.Rounded.Settings, "Customise standby", tint = tone.copy(alpha = hintAlpha))
