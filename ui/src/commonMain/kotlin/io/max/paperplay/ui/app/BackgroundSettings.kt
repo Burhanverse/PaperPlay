@@ -2,6 +2,7 @@ package io.max.paperplay.ui.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,13 +64,86 @@ fun BackgroundSettings(prefs: UiPrefs) {
     }
 }
 
+/** App-wide UI style selector (Android only) with a live split preview card. */
+@Composable
+fun UiStyleSettings(prefs: UiPrefs) {
+    SectionLabel("App style")
+    ChoiceRow(UiStyle.entries, prefs.uiStyle, { it.label }, prefs::putUiStyle)
+    val scheme = MaterialTheme.colorScheme
+    val modernActive = io.max.paperplay.ui.theme.LocalModernTokens.current.enabled
+    Row(
+        Modifier.padding(horizontal = 20.dp, vertical = 8.dp).fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        // Default preview half
+        val defSelected = prefs.uiStyle == UiStyle.Default
+        Box(
+            Modifier.weight(1f)
+                .clip(appShape(18.dp, CornerArea.Cards))
+                .background(scheme.surfaceContainerLow)
+                .then(
+                    if (!modernActive) Modifier.border(
+                        width = if (defSelected) 2.dp else 1.dp,
+                        color = if (defSelected) scheme.primary else scheme.outlineVariant.copy(alpha = 0.5f),
+                        shape = appShape(18.dp, CornerArea.Cards),
+                    ) else Modifier
+                )
+                .clickable { prefs.putUiStyle(UiStyle.Default) }
+                .padding(12.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Default", style = MaterialTheme.typography.titleSmall, color = scheme.onSurface)
+                Box(Modifier.fillMaxWidth().height(18.dp).clip(RoundedCornerShape(8.dp)).background(scheme.surfaceContainerHigh))
+                Box(Modifier.fillMaxWidth(0.65f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(scheme.primary.copy(alpha = 0.7f)))
+            }
+        }
+        // Modern preview half (borderless tonal glass card)
+        val modSelected = prefs.uiStyle == UiStyle.Modern
+        Box(
+            Modifier.weight(1f)
+                .clip(appShape(18.dp, CornerArea.Cards))
+                .background(Brush.linearGradient(listOf(lerp(scheme.primaryContainer, Color.Black, 0.42f), lerp(scheme.tertiaryContainer, Color.Black, 0.62f))))
+                .then(
+                    if (!modernActive && modSelected) Modifier.border(2.dp, scheme.primary, appShape(18.dp, CornerArea.Cards))
+                    else Modifier
+                )
+                .clickable { prefs.putUiStyle(UiStyle.Modern) }
+                .padding(12.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Modern", style = MaterialTheme.typography.titleSmall, color = Color.White)
+                Box(
+                    Modifier.fillMaxWidth().height(18.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(Color.White.copy(alpha = 0.18f)),
+                )
+                Box(Modifier.fillMaxWidth(0.65f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(if (modSelected) scheme.primary else Color.White.copy(alpha = 0.45f)))
+            }
+        }
+    }
+    Text(
+        when (prefs.uiStyle) {
+            UiStyle.Default -> "Classic Material 3 look with solid surfaces."
+            UiStyle.Modern -> "Blurred cover-tinted backdrop, frosted glass chrome, and expressive Material 3 shapes."
+        },
+        Modifier.padding(horizontal = 20.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (prefs.uiStyle == UiStyle.Modern) {
+        io.max.paperplay.ui.components.ModernControlsShowcase()
+    }
+}
+
 /** Full-screen player style selector under Settings > Appearance > Display (Android only). */
 @Composable
 fun PlayerStyleSettings(prefs: UiPrefs) {
     SectionLabel("Full-screen player")
     ChoiceRow(PlayerStyle.entries, prefs.playerStyle, { it.label }, prefs::putPlayerStyle)
+    val effective = resolveEffectivePlayerStyle(prefs, isAndroid = true)
     Text(
         when (prefs.playerStyle) {
+            PlayerStyle.FollowApp -> "Follows App style (currently ${effective.label})."
             PlayerStyle.Default -> "Cover-tinted theme with classic controls."
             PlayerStyle.Modern -> "Blurred cover backdrop with dark frosted glass controls and quality badges."
         },
@@ -77,7 +151,7 @@ fun PlayerStyleSettings(prefs: UiPrefs) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (prefs.playerStyle == PlayerStyle.Modern) {
+    if (effective == PlayerStyle.Modern || prefs.uiStyle == UiStyle.Modern) {
         SliderRow(
             title = "Backdrop blur: ${prefs.modernPlayerBlur.toInt()} dp",
             value = prefs.modernPlayerBlur,
