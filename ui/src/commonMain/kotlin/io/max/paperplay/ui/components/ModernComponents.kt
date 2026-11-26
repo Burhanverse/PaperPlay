@@ -484,19 +484,23 @@ fun ModernScallopedBadge(
     contentColor: Color = Color(0xFF141418),
     polygon: RoundedPolygon = MaterialShapes.Cookie9Sided,
 ) {
+    val morph = remember(polygon) { Morph(polygon, polygon) }
     Box(modifier.size(size), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.matchParentSize()) {
-            val path = Path()
-            val matrix = Matrix().apply { scale(this@Canvas.size.width, this@Canvas.size.height) }
-            val morph = Morph(polygon, polygon)
-            morph.forEachCubic(0f) { c: Cubic ->
-                if (path.isEmpty) path.moveTo(c.anchor0X, c.anchor0Y)
-                path.cubicTo(c.control0X, c.control0Y, c.control1X, c.control1Y, c.anchor1X, c.anchor1Y)
-            }
-            path.close()
-            path.transform(matrix)
-            drawPath(path = path, color = containerColor)
-        }
+        Box(
+            Modifier.matchParentSize().drawWithCache {
+                val path = Path()
+                val matrix = Matrix().apply { scale(this@drawWithCache.size.width, this@drawWithCache.size.height) }
+                morph.forEachCubic(0f) { c: Cubic ->
+                    if (path.isEmpty) path.moveTo(c.anchor0X, c.anchor0Y)
+                    path.cubicTo(c.control0X, c.control0Y, c.control1X, c.control1Y, c.anchor1X, c.anchor1Y)
+                }
+                path.close()
+                path.transform(matrix)
+                onDrawBehind {
+                    drawPath(path = path, color = containerColor)
+                }
+            },
+        )
         AppIcon(Icons.Rounded.PlayArrow, null, Modifier.size(size * 0.56f), tint = contentColor)
     }
 }

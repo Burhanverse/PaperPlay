@@ -41,6 +41,8 @@ class ModernNoOutlineLintTest {
             "io/max/paperplay/ui/app/ModernHome.kt",
             "io/max/paperplay/ui/app/ModernPlayerUi.kt",
             "io/max/paperplay/ui/app/ModernPlayerGlass.kt",
+            "io/max/paperplay/ui/app/AndroidProfile.kt",
+            "io/max/paperplay/ui/app/AndroidStats.kt",
         )
         val violations = mutableListOf<String>()
 
@@ -76,6 +78,8 @@ class ModernNoOutlineLintTest {
         val surfaceFiles = listOf(
             "io/max/paperplay/ui/components/ModernComponents.kt",
             "io/max/paperplay/ui/app/ModernHome.kt",
+            "io/max/paperplay/ui/app/AndroidProfile.kt",
+            "io/max/paperplay/ui/app/AndroidStats.kt",
         )
         val violations = mutableListOf<String>()
 

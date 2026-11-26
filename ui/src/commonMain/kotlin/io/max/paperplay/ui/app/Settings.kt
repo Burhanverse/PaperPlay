@@ -130,9 +130,19 @@ private fun SettingsScreen(
     page: String?, stack: MutableList<String>, prefs: UiPrefs, conn: ConnectionUi, songCount: Int, backend: CoreBackend,
     onRestore: () -> Unit, onExit: () -> Unit, bottomPadding: Dp, deep: Boolean,
 ) {
+    val goBack: () -> Unit = { if (stack.isEmpty() || (deep && stack.size <= 1)) onExit() else stack.removeAt(stack.lastIndex) }
+    if (page == "stats" && isPhone) {
+        AndroidStatsScreen(
+            backend = backend,
+            onBack = goBack,
+            onStartListening = onExit,
+            bottomPadding = bottomPadding,
+        )
+        return
+    }
     val title = categories.firstOrNull { it.id == page }?.title ?: settingsPageTitle(page) ?: "Settings"
     Column(Modifier.fillMaxSize()) {
-        BackTopBar(title, onBack = { if (stack.isEmpty() || (deep && stack.size <= 1)) onExit() else stack.removeAt(stack.lastIndex) }) {
+        BackTopBar(title, onBack = goBack) {
             val loggedIn by backend.account.loggedIn.collectAsState()
             if (page == "channels" && loggedIn) IconButton({ stack.add("index") }) { AppIcon(Icons.Rounded.Forum, "Your chats and channels") }
             if (page == "eq") EqualizerTopBarActions(backend)
@@ -533,6 +543,16 @@ internal fun SettingsPage(
             if (devUnlocked) {
                 SectionLabel("Developer")
                 NavRow("Motion Lab", "Live-tune motion tokens and inspect frame timings", Icons.Rounded.Animation) { stack.add("motion_lab") }
+                val previewMode by uiPreviewOverride.collectAsState()
+                DropdownRow(
+                    title = "Profile & Stats preview",
+                    selected = previewMode,
+                    options = UiPreviewOverride.entries,
+                    label = { it.label },
+                    onSelect = { uiPreviewOverride.value = it },
+                    icon = Icons.Rounded.Visibility,
+                    subtitle = "In-memory UI state override for Profile & Stats without touching your data",
+                )
             }
             if (isPhone && devUnlocked) {
                 val chain by backend.sinkChain.collectAsState()

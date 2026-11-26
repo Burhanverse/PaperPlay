@@ -209,8 +209,9 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
     val scope = rememberCoroutineScope()
     val loader = SharedCovers.loader
     // Glass needs blur layers; with every part on Material (and Default style) they are skipped.
+    // Modern chrome reads pageBackdrop via LocalGlassBackdrop, so it must not wrap the page in a second offscreen layerBackdrop or duplicate AppBackground.
     val modernUi = io.max.paperplay.ui.theme.LocalModernTokens.current.enabled
-    val navGlass = (modernUi && prefs.look(LookGroup.Nav) != Look.Material) || prefs.look(LookGroup.Nav) == Look.Glass
+    val navGlass = !modernUi && prefs.look(LookGroup.Nav) == Look.Glass
     val anyGlass = modernUi || LookGroup.entries.any { prefs.look(it) == Look.Glass }
     val backdrop = rememberLayerBackdrop()
     val pageBackdrop = rememberLayerBackdrop()
@@ -316,6 +317,11 @@ fun MainShell(backend: CoreBackend, prefs: UiPrefs, onRestore: () -> Unit, open:
                 playerController.close()
                 navigate { settings = true; settingsDeep = true; settingsStack.clear(); settingsStack.add("motion_lab") }
             }
+            "preview_live" -> if (backend.devOptionsUnlocked.value) uiPreviewOverride.value = UiPreviewOverride.Live
+            "preview_loading" -> if (backend.devOptionsUnlocked.value) uiPreviewOverride.value = UiPreviewOverride.Loading
+            "preview_empty" -> if (backend.devOptionsUnlocked.value) uiPreviewOverride.value = UiPreviewOverride.Empty
+            "preview_error" -> if (backend.devOptionsUnlocked.value) uiPreviewOverride.value = UiPreviewOverride.Error
+            "preview_no_avatar" -> if (backend.devOptionsUnlocked.value) uiPreviewOverride.value = UiPreviewOverride.NoAvatar
         }
         if (openRequest != null) open?.value = null
     }
