@@ -670,6 +670,39 @@ class AppServices(
     private var connectedBefore = false
     private var connectJob: Job? = null
     private val cachePending = HashMap<String, Pair<Long, Boolean>>()
+
+    /** Bytes each song's file grew by since the last report, for the log: what downloads, and why, when nothing seems to play. */
+    private val downloadSeen = HashMap<String, Long>()
+    private val downloadGrew = HashMap<String, Long>()
+
+    private fun countDownload(uid: String, downloaded: Long) = synchronized(downloadSeen) {
+        val before = downloadSeen.put(uid, downloaded) ?: downloaded
+        if (downloaded > before) downloadGrew[uid] = (downloadGrew[uid] ?: 0L) + (downloaded - before)
+    }
+
+    /** Logs what downloaded in the last minute, largest first, with why as far as can be told. Nothing when under 1 MB. */
+    private fun reportDownloads() {
+        val grew = synchronized(downloadSeen) { HashMap(downloadGrew).also { downloadGrew.clear() } }
+        val total = grew.values.sum()
+        if (total < (1L shl 20)) return
+        val np = if (playbackStarted) playback.nowPlayingStatic.value else null
+        val current = np?.song?.unique_id
+        val next = np?.let { n -> n.queue.drop(n.index + 1).take(3).map { it.unique_id }.toSet() }.orEmpty()
+        val playing = np?.isPlaying == true
+        fun mb(b: Long) = "${b / 100_000 / 10.0} MB"
+        val lines = grew.entries.sortedByDescending { it.value }.take(8).joinToString("; ") { (uid, bytes) ->
+            val s = library.songByUniqueId(uid)
+            val why = when {
+                uid == current -> if (playing) "playing" else "current song, paused"
+                uid in next -> "next in the queue"
+                s?.pinned == true -> "kept on this device"
+                s == null -> "not a library song"
+                else -> "nothing asked for it (cover search, filing or other)"
+            }
+            "${s?.title ?: uid} ${mb(bytes)} ($why)"
+        }
+        io.max.paperplay.player.PlayLog.log("download", "Last minute ${mb(total)} in ${grew.size} files, ${if (playing) "playing" else "nothing playing"}: $lines")
+    }
     private val clockMs = clock
     private var lastEvict = 0L
     private var cacheFlushJob: Job? = null
@@ -791,6 +824,7 @@ class AppServices(
                 botPool.load()
                 // A minute after startup (extra bots log in first) the full cleanup, then every 10 minutes only the cheap trim of open sessions, not only when the main bot downloads, or songs played through the account or extra bots pile up.
                 launch { kotlinx.coroutines.delay(60_000L); trimOtherStores(full = true); while (true) { kotlinx.coroutines.delay(600_000L); trimOtherStores(full = false) } }
+                launch { while (true) { kotlinx.coroutines.delay(60_000L); runCatching { reportDownloads() } } }
 
                 platform.secrets.get("restoredExtraBots")?.let { raw ->
                     val array = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonArray }.getOrNull()
@@ -1045,6 +1079,7 @@ class AppServices(
         val local = file.obj("local") ?: return
         val downloaded = local.long("downloaded_size") ?: return
         val completed = (local["is_downloading_completed"] as? JsonPrimitive)?.booleanOrNull == true
+        countDownload(uid, downloaded)
         synchronized(cachePending) { cachePending[uid] = downloaded to completed }
         if (completed) {
             local.str("path")?.takeIf { it.isNotEmpty() }?.let { path ->

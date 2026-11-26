@@ -664,6 +664,18 @@ class CoreBackend(val services: AppServices) : PlayerControls {
         val appDir = if (root.name == "files") root.parentFile else null
         val total = appDir?.listFiles().orEmpty().filter { it.name != "lib" }.sumOf { size(it) }.takeIf { appDir != null } ?: size(root)
         val other = (total - songs - covers - telegram - db).coerceAtLeast(0L)
+        // For a shared log: where the song bytes are and what is meant to keep them.
+        runCatching {
+            val all = repo.allSongs().first()
+            fun mb(b: Long) = "${b shr 20} MB"
+            val dirs = top.filter { it.isDirectory && (it.name.endsWith("_files") || it.name.startsWith("td_extra_files_")) }
+                .flatMap { d -> d.listFiles().orEmpty().filter { it.isDirectory }.map { "${d.name}/${it.name} ${mb(size(it))}" } }
+            io.max.paperplay.player.PlayLog.log(
+                "storage",
+                "Songs ${mb(songs)}: ${dirs.joinToString(", ")}. Limit ${mb(repo.cacheLimit())}. Kept on device: ${all.count { it.pinned }} songs, " +
+                    "${mb(all.filter { it.pinned }.sumOf { it.size })}. Cached per library: ${all.count { it.cached_bytes > 0 }} songs, ${mb(all.sumOf { it.cached_bytes })}",
+            )
+        }
         return listOf("Songs" to songs, "Covers" to covers, "Lyrics" to lyrics, "Song info" to db - lyrics, "Telegram data" to telegram, "Other" to other)
     }
 
