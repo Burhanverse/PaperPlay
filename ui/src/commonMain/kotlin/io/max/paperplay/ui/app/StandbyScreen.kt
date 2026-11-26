@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.ScreenLockRotation
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.FastForward
@@ -186,16 +187,24 @@ private fun StandbyContent(state: PlaybackUiState, backend: PlayerControls, p: S
         }
         // Both shown briefly on entry, then faded to invisible; they still work where they were.
         var hint by remember { mutableStateOf(true) }
-        LaunchedEffect(Unit) { delay(3000); hint = false }
+        // Raised by a tap on the rotation button, which shows both again with what the button is set to.
+        var shown by remember { mutableStateOf(0) }
+        LaunchedEffect(shown) { hint = true; delay(3000); hint = false }
         val hintAlpha by androidx.compose.animation.core.animateFloatAsState(if (armed) 0.7f else if (hint) 0.35f else 0f, androidx.compose.animation.core.tween(1500))
-        androidx.compose.foundation.layout.Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-            IconButton({ p.putLandscape(!p.landscape) }) {
-                AppIcon(Icons.Rounded.ScreenRotation, if (p.landscape) "Landscape standby on" else "Landscape standby off",
-                    tint = tone.copy(alpha = hintAlpha))
+        Column(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalAlignment = Alignment.End) {
+            androidx.compose.foundation.layout.Row {
+                IconButton({ p.putLandscape(!p.landscape); shown++ }) {
+                    AppIcon(if (p.landscape) Icons.Rounded.ScreenRotation else Icons.Rounded.ScreenLockRotation,
+                        if (p.landscape) "Turns with the phone, on" else "Turns with the phone, off", tint = tone.copy(alpha = hintAlpha))
+                }
+                IconButton({ sheet = true }) {
+                    AppIcon(Icons.Rounded.Settings, "Customise standby", tint = tone.copy(alpha = hintAlpha))
+                }
             }
-            IconButton({ sheet = true }) {
-                AppIcon(Icons.Rounded.Settings, "Customise standby", tint = tone.copy(alpha = hintAlpha))
-            }
+            if (shown > 0) Text(
+                if (p.landscape) "Turns with the phone" else "Stays as it is", Modifier.padding(end = 12.dp),
+                color = tone.copy(alpha = hintAlpha), style = MaterialTheme.typography.bodySmall,
+            )
         }
         if (sheet) StandbyCustomiseSheet(p) { sheet = false }
     }
