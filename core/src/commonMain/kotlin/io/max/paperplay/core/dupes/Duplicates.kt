@@ -160,14 +160,25 @@ fun findDuplicates(songs: List<Song>, copies: List<PostCopy>, rules: SongRules, 
 
     val byName = LinkedHashMap<String, MutableList<Song>>()
     for (s in songs) {
-        if (s.duration_sec <= 0 || (onlyChat != null && s.chat_id != onlyChat)) continue
+        if (onlyChat != null && s.chat_id != onlyChat) continue
         val title = rules.comparableTitle(s)
         if (title.isEmpty()) continue
         byName.getOrPut("$title|${rules.comparableArtist(s)}") { mutableListOf() }.add(s)
     }
-    for (same in byName.values) {
+    for (named in byName.values) {
+        if (named.size < 2) continue
+        // A song whose length was never read counts by its file: the length of a copy within 1% of its size, or 0 with another of exactly its size.
+        // Without this, copies whose length is unknown were never listed.
+        val lenOf = HashMap<String, Long>()
+        val known = named.filter { it.duration_sec > 0 }
+        for (s in known) lenOf[s.unique_id] = s.duration_sec
+        for (u in named.filter { it.duration_sec <= 0 }) {
+            val twin = known.firstOrNull { kotlin.math.abs(it.size - u.size) * 100 <= it.size }
+            if (twin != null) lenOf[u.unique_id] = twin.duration_sec
+            else if (named.any { it !== u && it.duration_sec <= 0 && it.size == u.size }) lenOf[u.unique_id] = 0
+        }
+        val same = named.filter { it.unique_id in lenOf }.sortedBy { lenOf.getValue(it.unique_id) }.toMutableList()
         if (same.size < 2) continue
-        same.sortBy { it.duration_sec }
         fun flush(run: List<Song>) {
             if (run.size < 2) return
             // Best quality, then the larger file, then the newest post. Depth and rate are known only once a song was played, so unless all
@@ -194,7 +205,7 @@ fun findDuplicates(songs: List<Song>, copies: List<PostCopy>, rules: SongRules, 
         // Runs of similar length, so an album version and a long mix stay apart.
         var run = mutableListOf(same.first())
         for (s in same.drop(1)) {
-            if (s.duration_sec - run.last().duration_sec <= LENGTH_TOLERANCE) {
+            if (lenOf.getValue(s.unique_id) - lenOf.getValue(run.last().unique_id) <= LENGTH_TOLERANCE) {
                 run.add(s)
             } else {
                 flush(run)

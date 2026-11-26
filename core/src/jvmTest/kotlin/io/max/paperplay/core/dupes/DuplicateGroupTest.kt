@@ -24,6 +24,15 @@ class DuplicateGroupTest {
 
     private fun only(vararg s: Song) = findDuplicates(s.toList(), emptyList(), DefaultSongRules).single()
 
+    /** Copies whose length was never read: found by their size, and only by it. */
+    @Test
+    fun copiesWithoutALengthAreFoundBySize() {
+        assertEquals(3, only(song(1, 15, sec = 107), song(2, 15, sec = 0), song(3, 15, sec = 0)).let { 1 + it.others.size })
+        assertEquals(2, only(song(1, 15, sec = 0), song(2, 15, sec = 0)).let { 1 + it.others.size })
+        // Another size and no length: nothing tells it is the same recording.
+        assertEquals(emptyList(), findDuplicates(listOf(song(1, 15, sec = 107), song(2, 30, sec = 0)), emptyList(), DefaultSongRules))
+    }
+
     @Test
     fun aSmallerLosslessFileIsAnotherReleaseAndIsNotTicked() {
         // Not measured, or measured alike: a smaller FLAC says nothing.
