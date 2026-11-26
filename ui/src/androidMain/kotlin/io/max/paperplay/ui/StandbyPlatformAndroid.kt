@@ -68,22 +68,22 @@ actual fun StandbyOrientation(on: Boolean) {
         val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
         if (!on || activity == null || sm == null || sensor == null) return@DisposableEffect onDispose {}
         val before = activity.requestedOrientation
+        val sides = intArrayOf(
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
+            // On its left edge the top points left: the phone's own landscape. It was the other way round, so the screen turned upside down.
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT,
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE,
+        )
         var current = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         var candidate = current
         var since = 0L
         val listener = object : android.hardware.SensorEventListener {
             override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
             override fun onSensorChanged(e: android.hardware.SensorEvent) {
-                val x = e.values[0]
-                val y = e.values[1]
-                // Gravity along the screen's long edge: upright. Along the short edge: lying on one side. Flat on a table: keep what it is.
-                val want = when {
-                    x > 6.5f && x > kotlin.math.abs(y) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-                    x < -6.5f && -x > kotlin.math.abs(y) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                    y > 6.5f && y > kotlin.math.abs(x) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    y < -6.5f && -y > kotlin.math.abs(x) -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-                    else -> return
-                }
+                // Reclined on a stand or a pillow counts too; only lying almost flat keeps what it is.
+                val side = io.max.paperplay.ui.gravitySide(e.values[0], e.values[1], sides.indexOf(current).takeIf { it >= 0 }) ?: return
+                val want = sides[side]
                 val now = e.timestamp / 1_000_000L
                 if (want != candidate) { candidate = want; since = now; return }
                 // Held for a third of a second, so a jolt does not turn the screen.
