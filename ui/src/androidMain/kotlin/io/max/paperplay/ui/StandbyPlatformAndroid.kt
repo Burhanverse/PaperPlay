@@ -65,7 +65,8 @@ actual fun StandbyOrientation(on: Boolean) {
     DisposableEffect(on) {
         val activity = generateSequence(ctx) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()
         val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
-        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+        // The raw motion sensor, as the system's own rotation uses: the gravity sensor is filtered and took seconds to follow on some phones.
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) ?: sm?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY)
         if (!on || activity == null || sm == null || sensor == null) return@DisposableEffect onDispose {}
         val before = activity.requestedOrientation
         val sides = intArrayOf(
@@ -78,22 +79,27 @@ actual fun StandbyOrientation(on: Boolean) {
         var current = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         var candidate = current
         var since = 0L
+        var gx = 0f
+        var gy = 0f
+        var started = false
         val listener = object : android.hardware.SensorEventListener {
             override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
             override fun onSensorChanged(e: android.hardware.SensorEvent) {
                 // Reclined on a stand or a pillow counts too; only lying almost flat keeps what it is.
-                val side = io.max.paperplay.ui.gravitySide(e.values[0], e.values[1], sides.indexOf(current).takeIf { it >= 0 }) ?: return
+                // Light smoothing (about a tenth of a second) so a shake or a tap on the screen does not count.
+                if (!started) { gx = e.values[0]; gy = e.values[1]; started = true } else { gx += (e.values[0] - gx) * 0.3f; gy += (e.values[1] - gy) * 0.3f }
+                val side = io.max.paperplay.ui.gravitySide(gx, gy, sides.indexOf(current).takeIf { it >= 0 }) ?: return
                 val want = sides[side]
                 val now = e.timestamp / 1_000_000L
                 if (want != candidate) { candidate = want; since = now; return }
                 // Held for a third of a second, so a jolt does not turn the screen.
-                if (want != current && now - since >= 350) {
+                if (want != current && now - since >= 250) {
                     current = want
                     runCatching { activity.requestedOrientation = want }
                 }
             }
         }
-        sm.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+        sm.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
         onDispose {
             runCatching { sm.unregisterListener(listener) }
             runCatching { activity.requestedOrientation = before }
